@@ -60,10 +60,10 @@ export function ConfirmationCard({
     <section
       role="group"
       aria-labelledby={titleId}
-      className={cx('overflow-hidden rounded-xl border bg-surface shadow-soft', isProd ? 'border-error/60' : 'border-warning/50')}
+      className={cx('overflow-hidden rounded-area border-2 bg-surface shadow-soft', isProd ? 'border-error' : 'border-warning')}
     >
-      <header className={cx('flex items-center justify-between gap-3 px-4 py-2.5', isProd ? 'bg-error-soft' : 'bg-warning-soft')}>
-        <h4 id={titleId} className="flex items-center gap-2 text-sm font-semibold text-ink">
+      <header className={cx('flex items-center justify-between gap-3 border-b px-4 py-2.5', isProd ? 'border-error/30 bg-error-soft' : 'border-warning/30 bg-warning-soft')}>
+        <h4 id={titleId} className="flex items-center gap-2 text-sm font-bold text-ink">
           <ShieldCheck size={16} aria-hidden className={isProd ? 'text-error' : 'text-warning'} />
           Confirm SAP action
         </h4>

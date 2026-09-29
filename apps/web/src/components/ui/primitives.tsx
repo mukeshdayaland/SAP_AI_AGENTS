@@ -15,7 +15,7 @@ export function ProwessMark({ size = 28, className }: { size?: number; className
       <rect x="0.5" y="0.5" width="31" height="31" rx="9" fill="var(--brand-primary)" />
       <path d="M10 24V8.5h7.2c3.7 0 6.3 2.3 6.3 5.6 0 3.4-2.6 5.7-6.3 5.7H13.6V24H10Z" fill="var(--on-brand)" />
       <path d="M13.6 11.6v5.1h3.3c1.7 0 2.8-1 2.8-2.55s-1.1-2.55-2.8-2.55h-3.3Z" fill="var(--brand-primary)" />
-      <circle cx="24" cy="24" r="2.6" fill="var(--brand-secondary)" />
+      <circle cx="24" cy="24" r="2.6" fill="var(--brand-secondary-soft)" />
     </svg>
   );
 }
@@ -113,7 +113,7 @@ export function Badge({ tone = 'neutral', children, className }: { tone?: Tone; 
   return (
     <span
       className={cx(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+        'inline-flex items-center gap-1 rounded-full border border-current/25 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide',
         tone === 'neutral' && 'bg-muted text-ink-2',
         tone === 'brand' && 'bg-brand-soft text-brand',
         tone === 'success' && 'bg-success-soft text-success',
@@ -156,7 +156,7 @@ export function Dialog({ open, onClose, title, children, wide }: { open: boolean
       aria-labelledby={titleId}
       onClose={onClose}
       onClick={(e) => e.target === ref.current && onClose()}
-      className={cx('m-auto w-[calc(100%-2rem)] rounded-2xl border border-line bg-elevated p-0 text-ink shadow-lift backdrop:bg-black/40', wide ? 'max-w-3xl' : 'max-w-md')}
+      className={cx('m-auto w-[calc(100%-2rem)] rounded-area border border-line bg-elevated p-0 text-ink shadow-lift backdrop:bg-black/40', wide ? 'max-w-3xl' : 'max-w-md')}
     >
       <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
         <h2 id={titleId} className="text-base font-semibold">
@@ -214,7 +214,7 @@ export function Menu({ trigger, label, children, align = 'right' }: { trigger: R
             if (e.key === 'ArrowDown') items[(i + 1) % items.length]?.focus();
             if (e.key === 'ArrowUp') items[(i - 1 + items.length) % items.length]?.focus();
           }}
-          className={cx('absolute z-40 mt-1 min-w-56 rounded-xl border border-line bg-elevated p-1.5 shadow-lift', align === 'right' ? 'right-0' : 'left-0')}
+          className={cx('absolute z-40 mt-1 min-w-56 rounded-area border border-line bg-elevated p-1.5 shadow-lift', align === 'right' ? 'right-0' : 'left-0')}
         >
           {children(() => setOpen(false))}
         </div>

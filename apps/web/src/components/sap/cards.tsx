@@ -5,7 +5,7 @@ import { Building2, Cog, FileText, Landmark, Package, PackageCheck, ScrollText, 
 import type { ComponentType } from 'react';
 import { formatDate, formatMoney, humanize } from '@/lib/format';
 import { Badge, cx, type Tone } from '../ui/primitives';
-import { Field, Fields, SapCard, toneText } from './card';
+import { Field, Fields, SapArea, SapCard, toneText } from './card';
 
 type Of<T extends UIComponent['type']> = Extract<UIComponent, { type: T }>['data'];
 
@@ -228,12 +228,12 @@ export function GoodsReceiptCard({ data }: { data: Of<'goods_receipt'> }) {
 
 function Table({ columns, rows }: Pick<Of<'business_object_table'>, 'columns' | 'rows'>) {
   return (
-    <div className="mt-2 overflow-x-auto rounded-lg border border-line">
+    <div className="mt-2 overflow-x-auto rounded-lg border border-area-sap/25">
       <table className="w-full border-collapse text-[13px]">
-        <thead className="bg-muted text-ink-2">
+        <thead className="bg-area-sap-fill text-ink">
           <tr>
             {columns.map((c) => (
-              <th key={c.key} scope="col" className={cx('px-3 py-2 font-medium', c.align === 'right' ? 'text-right' : 'text-left')}>
+              <th key={c.key} scope="col" className={cx('px-3 py-2 font-semibold', c.align === 'right' ? 'text-right' : 'text-left')}>
                 {c.label}
               </th>
             ))}
@@ -257,34 +257,31 @@ function Table({ columns, rows }: Pick<Of<'business_object_table'>, 'columns' | 
 
 export function BusinessObjectTable({ data }: { data: Of<'business_object_table'> }) {
   return (
-    <section aria-label={data.title} className="rounded-xl border border-line bg-surface p-4 shadow-soft">
-      <h4 className="text-sm font-semibold text-ink">{data.title}</h4>
+    <SapArea label={data.title}>
       <Table {...data} />
-    </section>
+    </SapArea>
   );
 }
 
 export function KPIBlock({ data }: { data: Of<'kpi_block'> }) {
   return (
-    <section aria-label={data.title ?? 'Key figures'} className="rounded-xl border border-line bg-surface p-4 shadow-soft">
-      {data.title && <h4 className="mb-3 text-sm font-semibold text-ink">{data.title}</h4>}
+    <SapArea label={data.title ?? 'Key figures'}>
       <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {data.items.map((k) => (
-          <div key={k.label} className="rounded-lg bg-muted px-3 py-2.5">
+          <div key={k.label} className="rounded-lg border border-area-sap/20 bg-area-sap-fill px-3 py-2.5">
             <dt className="text-xs text-ink-3">{k.label}</dt>
             <dd className={cx('mt-0.5 text-base font-semibold', toneText[k.tone === 'positive' ? 'success' : (k.tone ?? 'neutral')])}>{k.value}</dd>
           </div>
         ))}
       </dl>
-    </section>
+    </SapArea>
   );
 }
 
 export function Timeline({ data }: { data: Of<'timeline'> }) {
   const dot: Record<string, string> = { neutral: 'bg-line-strong', positive: 'bg-success', warning: 'bg-warning', critical: 'bg-error' };
   return (
-    <section aria-label={data.title} className="rounded-xl border border-line bg-surface p-4 shadow-soft">
-      <h4 className="mb-3 text-sm font-semibold text-ink">{data.title}</h4>
+    <SapArea label={data.title}>
       <ol className="relative ml-1.5 border-l border-line">
         {data.events.map((e, i) => (
           <li key={i} className="relative pb-3.5 pl-5 last:pb-0">
@@ -296,7 +293,7 @@ export function Timeline({ data }: { data: Of<'timeline'> }) {
           </li>
         ))}
       </ol>
-    </section>
+    </SapArea>
   );
 }
 

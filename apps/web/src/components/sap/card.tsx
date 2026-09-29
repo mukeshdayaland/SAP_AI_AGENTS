@@ -24,10 +24,12 @@ export function SapCard({
 }) {
   const ask = useAsk();
   return (
-    <section aria-label={`${kind} ${id}`} className="overflow-hidden rounded-xl border border-line bg-surface shadow-soft">
-      <header className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
+    // SAP-sourced data is drawn as an "SAP area" (BTP diagram guideline): blue outline,
+    // filled header, unfilled body — nested areas alternate fill / no fill.
+    <section aria-label={`${kind} ${id}`} className="overflow-hidden rounded-area border border-area-sap/60 bg-surface shadow-soft">
+      <header className="flex items-start justify-between gap-3 border-b border-area-sap/25 bg-area-sap-fill px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
-          {icon && <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">{icon}</span>}
+          {icon && <IconCircle>{icon}</IconCircle>}
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{kind}</p>
             <p className="truncate font-mono text-[15px] font-semibold text-ink">{id}</p>
@@ -37,19 +39,44 @@ export function SapCard({
       </header>
       <div className="px-4 py-3">{children}</div>
       {actions && actions.length > 0 && (
-        <footer className="flex flex-wrap gap-2 border-t border-line bg-muted/40 px-4 py-2.5">
+        <footer className="flex flex-wrap gap-2 border-t border-line px-4 py-2.5">
           {actions.map((a) => (
             <button
               key={a.label}
               type="button"
               onClick={() => ask(a.prompt)}
-              className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 transition-colors hover:border-brand hover:text-brand"
+              className="rounded-lg border border-brand/40 bg-surface px-2.5 py-1 text-xs font-semibold text-brand transition-colors hover:bg-brand-soft"
             >
               {a.label}
             </button>
           ))}
         </footer>
       )}
+    </section>
+  );
+}
+
+/** Service-icon treatment from the guideline: icon on a neutral grey background circle. */
+export function IconCircle({ children, size = 'md' }: { children: ReactNode; size?: 'sm' | 'md' }) {
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        'flex shrink-0 items-center justify-center rounded-full border border-line bg-area-nonsap-fill text-brand',
+        size === 'sm' ? 'h-7 w-7' : 'h-9 w-9',
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Area wrapper for SAP-derived tables, KPIs and timelines. */
+export function SapArea({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section aria-label={label} className="rounded-area border border-area-sap/60 bg-surface p-4 shadow-soft">
+      <h4 className="mb-3 text-[13px] font-bold text-ink">{label}</h4>
+      {children}
     </section>
   );
 }

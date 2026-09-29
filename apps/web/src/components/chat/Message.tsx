@@ -18,12 +18,12 @@ const Markdown = dynamic(() => import('./Markdown'), { ssr: false, loading: () =
 export function UserMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-brand-soft px-4 py-2.5 text-[15px] text-ink" title={formatDateTime(message.createdAt)}>
+      <div className="max-w-[85%] rounded-2xl rounded-br-md border border-area-nonsap/25 bg-area-nonsap-fill px-4 py-2.5 text-[15px] text-ink" title={formatDateTime(message.createdAt)}>
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
         {message.attachments && (
           <ul className="mt-2 flex flex-wrap gap-1.5">
             {message.attachments.map((a) => (
-              <li key={a.id} className="inline-flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-xs text-ink-2">
+              <li key={a.id} className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-0.5 text-xs text-ink-2">
                 <FileText size={12} aria-hidden /> {a.fileName}
               </li>
             ))}
@@ -98,7 +98,7 @@ export function AssistantMessage({
         )}
 
         {message.error && (
-          <div role="alert" className="mt-2 rounded-xl border border-error/30 bg-error-soft px-4 py-3 text-sm">
+          <div role="alert" className="mt-2 rounded-area border border-error/60 bg-error-soft px-4 py-3 text-sm">
             <p className="text-ink">{message.error.message}</p>
             {message.error.reference && (
               <p className="mt-1 text-xs text-ink-2">
@@ -115,7 +115,7 @@ export function AssistantMessage({
                 key={a.id}
                 type="button"
                 onClick={() => ask(a.prompt)}
-                className="rounded-full border border-line bg-surface px-3 py-1 text-[13px] text-ink-2 transition-colors hover:border-brand hover:text-brand"
+                className="rounded-full border border-brand/40 bg-surface px-3 py-1 text-[13px] font-medium text-brand transition-colors hover:bg-brand-soft"
               >
                 {a.label}
               </button>
@@ -124,13 +124,13 @@ export function AssistantMessage({
         )}
 
         {!streaming && message.sources.length > 0 && (
-          <details className="mt-3 rounded-lg border border-line bg-surface text-[13px]">
-            <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-ink-2 hover:text-ink">
+          <details className="mt-3 overflow-hidden rounded-area border border-area-sap/60 bg-surface text-[13px]">
+            <summary className="flex cursor-pointer items-center gap-2 bg-area-sap-fill px-4 py-2 font-semibold text-ink hover:text-brand">
               <Database size={13} aria-hidden /> Sources ({message.sources.length})
             </summary>
-            <ul className="divide-y divide-line border-t border-line">
+            <ul className="divide-y divide-line border-t border-area-sap/25">
               {message.sources.map((s) => (
-                <li key={s.id} className="grid grid-cols-1 gap-x-4 gap-y-0.5 px-3 py-2 sm:grid-cols-[1fr_auto]">
+                <li key={s.id} className="grid grid-cols-1 gap-x-4 gap-y-0.5 px-4 py-2 sm:grid-cols-[1fr_auto]">
                   <span className="text-ink">
                     <span className="font-medium">{s.mock ? 'Mock S/4HANA' : 'SAP S/4HANA'}</span> · {s.system} · {s.objectType} <span className="font-mono">{s.objectId}</span>
                   </span>
@@ -144,11 +144,11 @@ export function AssistantMessage({
         )}
 
         {!streaming && technical && message.execution && (
-          <details className="mt-2 rounded-lg border border-dashed border-line text-xs">
+          <details className="mt-2 rounded-area border border-dotted border-area-nonsap/50 text-xs">
             <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-ink-3 hover:text-ink-2">
               <Wrench size={12} aria-hidden /> Technical details
             </summary>
-            <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 border-t border-dashed border-line px-3 py-2 font-mono text-ink-2">
+            <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 border-t border-dotted border-area-nonsap/50 px-3 py-2 font-mono text-ink-2">
               <dt className="text-ink-3">Agent</dt>
               <dd>{message.execution.agent}</dd>
               <dt className="text-ink-3">Model tier</dt>

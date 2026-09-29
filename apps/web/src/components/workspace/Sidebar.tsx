@@ -108,7 +108,7 @@ export function Sidebar(p: Props) {
                             aria-current={c.id === p.activeId ? 'page' : undefined}
                             className={cx(
                               'w-full truncate rounded-lg py-1.5 pl-2 pr-8 text-left text-sm transition-colors',
-                              c.id === p.activeId ? 'bg-brand-soft font-medium text-ink' : 'text-ink-2 hover:bg-muted hover:text-ink',
+                              c.id === p.activeId ? 'bg-brand-soft font-semibold text-ink shadow-[inset_3px_0_0_var(--brand-primary)]' : 'text-ink-2 hover:bg-muted hover:text-ink',
                             )}
                           >
                             {c.title}

@@ -88,7 +88,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
 
   return (
     <div className="mx-auto w-full max-w-3xl">
-      <div className="rounded-2xl border border-line-strong bg-elevated shadow-lift transition-colors focus-within:border-brand">
+      <div className="rounded-area border border-line-strong bg-elevated shadow-lift transition-colors focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/15">
         {(attachments.length > 0 || uploading > 0) && (
           <ul className="flex flex-wrap gap-2 px-3 pt-3" aria-label="Attachments">
             {attachments.map((a) => (
@@ -145,7 +145,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
               {sendKey === 'enter' ? 'Enter to send · Shift + Enter for new line' : 'Ctrl/⌘ + Enter to send'}
             </span>
             {streaming ? (
-              <button type="button" onClick={onStop} aria-label="Stop generating" className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink text-bg transition-opacity hover:opacity-85">
+              <button type="button" onClick={onStop} aria-label="Stop generating" className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink text-bg transition-opacity hover:opacity-85">
                 <Square size={14} fill="currentColor" />
               </button>
             ) : (
@@ -154,7 +154,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
                 onClick={submit}
                 disabled={!canSend}
                 aria-label="Send message"
-                className={cx('flex h-9 w-9 items-center justify-center rounded-xl transition-colors', canSend ? 'bg-brand text-on-brand hover:bg-brand-hover' : 'bg-muted text-ink-3')}
+                className={cx('flex h-9 w-9 items-center justify-center rounded-lg transition-colors', canSend ? 'bg-brand text-on-brand hover:bg-brand-hover' : 'bg-muted text-ink-3')}
               >
                 <ArrowUp size={18} />
               </button>

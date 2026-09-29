@@ -1,104 +1,133 @@
 @import 'tailwindcss';
 
 /* ------------------------------------------------------------------
-   Prowess design tokens. Components reference tokens only — never raw
-   colors — so themes and brand refreshes happen in one place.
+   Design language: SAP BTP Solution Diagram guideline (Fiori Horizon).
+   https://github.com/SAP/btp-solution-diagrams — guideline/docs/btp_guideline
+   · SAP areas: #0070F2 outline / #EBF8FF fill · non-SAP areas: #475E75 / #F5F6F7
+   · title #1D2D3E · text #556B82 · semantic & accent pairs (outline / fill)
+   · areas use a 16px corner radius; nested areas alternate fill / no fill
+   · solid = direct/synchronous, dashed = asynchronous, dotted = optional
+   Components reference these tokens only — never raw colors.
    ------------------------------------------------------------------ */
 
 :root {
-  --background: #f5f6f8;
+  --background: #f5f6f7;
   --surface: #ffffff;
   --surface-elevated: #ffffff;
-  --surface-muted: #eef0f4;
-  --surface-sunken: #e7eaf0;
-  --border: #dde2ea;
-  --border-strong: #c5ccd8;
-  --text-primary: #0f1724;
-  --text-secondary: #4d5a6e;
-  --text-tertiary: #6b778a;
-  --brand-primary: #0b6f6a;
-  --brand-primary-hover: #095b57;
-  --brand-primary-soft: #e3f2f0;
-  --brand-secondary: #b8541c;
-  --brand-secondary-soft: #fbeee5;
+  --surface-muted: #f5f6f7;
+  --surface-sunken: #eaecee;
+  --border: #d5dadd;
+  --border-strong: #a9b4be;
+  --text-primary: #1d2d3e;
+  --text-secondary: #556b82;
+  --text-tertiary: #5b6f84;
+  --brand-primary: #0070f2;
+  --brand-primary-hover: #0064d9;
+  --brand-primary-soft: #ebf8ff;
+  --brand-secondary: #07838f;
+  --brand-secondary-soft: #dafdf5;
+  --area-sap: #0070f2;
+  --area-sap-fill: #ebf8ff;
+  --area-nonsap: #475e75;
+  --area-nonsap-fill: #f5f6f7;
+  --accent-indigo: #5d36ff;
+  --accent-indigo-soft: #f1ecff;
+  --accent-pink: #cc00dc;
+  --accent-pink-soft: #fff0fa;
   --on-brand: #ffffff;
-  --success: #17773d;
-  --success-soft: #e5f4ea;
-  --warning: #9a5b00;
-  --warning-soft: #fdf2dc;
-  --error: #b42318;
-  --error-soft: #fdecea;
-  --info: #2f55c4;
-  --info-soft: #e8eefc;
-  --focus: #0b6f6a;
-  --shadow-sm: 0 1px 2px rgb(15 23 36 / 0.06);
-  --shadow-md: 0 4px 16px -4px rgb(15 23 36 / 0.12), 0 1px 3px rgb(15 23 36 / 0.06);
-  --code-bg: #f3f5f8;
+  --success: #188918;
+  --success-soft: #f5fae5;
+  --warning: #c35500;
+  --warning-soft: #fff8d6;
+  --error: #d20a0a;
+  --error-soft: #ffeaf4;
+  --info: #0070f2;
+  --info-soft: #ebf8ff;
+  --focus: #0070f2;
+  --shadow-sm: 0 0 0 1px rgb(29 45 62 / 0.02), 0 2px 4px rgb(29 45 62 / 0.06);
+  --shadow-md: 0 0 0 1px rgb(29 45 62 / 0.03), 0 8px 24px -6px rgb(29 45 62 / 0.16);
+  --code-bg: #f5f6f7;
   color-scheme: light;
 }
 
 :root[data-theme='dark'] {
-  --background: #0b0f15;
-  --surface: #11161e;
-  --surface-elevated: #171e28;
-  --surface-muted: #1a222d;
-  --surface-sunken: #0e131a;
-  --border: #242e3b;
-  --border-strong: #354253;
-  --text-primary: #e7ecf3;
-  --text-secondary: #a3afc0;
-  --text-tertiary: #8290a3;
-  --brand-primary: #35b7aa;
-  --brand-primary-hover: #52c7bb;
-  --brand-primary-soft: #11302e;
-  --brand-secondary: #f0925a;
-  --brand-secondary-soft: #3a2316;
-  --on-brand: #06201e;
-  --success: #52cf83;
-  --success-soft: #11291a;
-  --warning: #f2b53f;
-  --warning-soft: #2e2410;
-  --error: #f47a6e;
-  --error-soft: #331714;
-  --info: #86a4ff;
-  --info-soft: #172240;
-  --focus: #52c7bb;
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 8px 24px -8px rgb(0 0 0 / 0.6), 0 1px 3px rgb(0 0 0 / 0.4);
-  --code-bg: #0e131a;
+  --background: #12171c;
+  --surface: #1d232a;
+  --surface-elevated: #232a32;
+  --surface-muted: #28313a;
+  --surface-sunken: #161b21;
+  --border: #354250;
+  --border-strong: #5b738b;
+  --text-primary: #eaecee;
+  --text-secondary: #a9b4be;
+  --text-tertiary: #9aa7b4;
+  --brand-primary: #4db1ff;
+  --brand-primary-hover: #7dc6ff;
+  --brand-primary-soft: #102a45;
+  --brand-secondary: #2ec4c4;
+  --brand-secondary-soft: #0f3334;
+  --area-sap: #4db1ff;
+  --area-sap-fill: #13263b;
+  --area-nonsap: #8396a8;
+  --area-nonsap-fill: #1d232a;
+  --accent-indigo: #a393ff;
+  --accent-indigo-soft: #25204a;
+  --accent-pink: #f47bff;
+  --accent-pink-soft: #3a1740;
+  --on-brand: #0b1a2b;
+  --success: #5dc122;
+  --success-soft: #16280f;
+  --warning: #ff8d2a;
+  --warning-soft: #33230f;
+  --error: #fa6161;
+  --error-soft: #3a1518;
+  --info: #4db1ff;
+  --info-soft: #102a45;
+  --focus: #4db1ff;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.45);
+  --shadow-md: 0 10px 28px -8px rgb(0 0 0 / 0.7), 0 1px 3px rgb(0 0 0 / 0.45);
+  --code-bg: #161b21;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root[data-theme='system'] {
-    --background: #0b0f15;
-    --surface: #11161e;
-    --surface-elevated: #171e28;
-    --surface-muted: #1a222d;
-    --surface-sunken: #0e131a;
-    --border: #242e3b;
-    --border-strong: #354253;
-    --text-primary: #e7ecf3;
-    --text-secondary: #a3afc0;
-    --text-tertiary: #8290a3;
-    --brand-primary: #35b7aa;
-    --brand-primary-hover: #52c7bb;
-    --brand-primary-soft: #11302e;
-    --brand-secondary: #f0925a;
-    --brand-secondary-soft: #3a2316;
-    --on-brand: #06201e;
-    --success: #52cf83;
-    --success-soft: #11291a;
-    --warning: #f2b53f;
-    --warning-soft: #2e2410;
-    --error: #f47a6e;
-    --error-soft: #331714;
-    --info: #86a4ff;
-    --info-soft: #172240;
-    --focus: #52c7bb;
-    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-    --shadow-md: 0 8px 24px -8px rgb(0 0 0 / 0.6), 0 1px 3px rgb(0 0 0 / 0.4);
-    --code-bg: #0e131a;
+    --background: #12171c;
+    --surface: #1d232a;
+    --surface-elevated: #232a32;
+    --surface-muted: #28313a;
+    --surface-sunken: #161b21;
+    --border: #354250;
+    --border-strong: #5b738b;
+    --text-primary: #eaecee;
+    --text-secondary: #a9b4be;
+    --text-tertiary: #9aa7b4;
+    --brand-primary: #4db1ff;
+    --brand-primary-hover: #7dc6ff;
+    --brand-primary-soft: #102a45;
+    --brand-secondary: #2ec4c4;
+    --brand-secondary-soft: #0f3334;
+    --area-sap: #4db1ff;
+    --area-sap-fill: #13263b;
+    --area-nonsap: #8396a8;
+    --area-nonsap-fill: #1d232a;
+    --accent-indigo: #a393ff;
+    --accent-indigo-soft: #25204a;
+    --accent-pink: #f47bff;
+    --accent-pink-soft: #3a1740;
+    --on-brand: #0b1a2b;
+    --success: #5dc122;
+    --success-soft: #16280f;
+    --warning: #ff8d2a;
+    --warning-soft: #33230f;
+    --error: #fa6161;
+    --error-soft: #3a1518;
+    --info: #4db1ff;
+    --info-soft: #102a45;
+    --focus: #4db1ff;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.45);
+    --shadow-md: 0 10px 28px -8px rgb(0 0 0 / 0.7), 0 1px 3px rgb(0 0 0 / 0.45);
+    --code-bg: #161b21;
     color-scheme: dark;
   }
 }
@@ -120,6 +149,12 @@
   --color-accent: var(--brand-secondary);
   --color-accent-soft: var(--brand-secondary-soft);
   --color-on-brand: var(--on-brand);
+  --color-area-sap: var(--area-sap);
+  --color-area-sap-fill: var(--area-sap-fill);
+  --color-area-nonsap: var(--area-nonsap);
+  --color-area-nonsap-fill: var(--area-nonsap-fill);
+  --color-indigo: var(--accent-indigo);
+  --color-indigo-soft: var(--accent-indigo-soft);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
@@ -130,7 +165,8 @@
   --color-info-soft: var(--info-soft);
   --shadow-soft: var(--shadow-sm);
   --shadow-lift: var(--shadow-md);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --radius-area: 16px;
+  --font-sans: '72', '72full', Arial, Helvetica, ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
 }
 

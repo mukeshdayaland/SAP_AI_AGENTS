@@ -28,7 +28,7 @@ const riskTone = (r: string): Tone => (r === 'HIGH_IMPACT' ? 'critical' : r === 
 
 function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+    <div className="overflow-x-auto rounded-area border border-line bg-surface">
       <table className="w-full text-left text-[13px]">
         <thead className="bg-muted text-ink-2">
           <tr>
@@ -134,7 +134,7 @@ export function AdminConsole() {
             </section>
             <section>
               <h2 className="mb-2 text-sm font-semibold text-ink">Platform settings</h2>
-              <pre className="overflow-x-auto rounded-xl border border-line bg-surface p-4 font-mono text-xs text-ink-2">{JSON.stringify(overview.settings, null, 2)}</pre>
+              <pre className="overflow-x-auto rounded-area border border-line bg-surface p-4 font-mono text-xs text-ink-2">{JSON.stringify(overview.settings, null, 2)}</pre>
             </section>
           </>
         )}
