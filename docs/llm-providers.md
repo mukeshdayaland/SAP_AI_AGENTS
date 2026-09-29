@@ -103,7 +103,7 @@ Federation: `GCP_WIF_AUDIENCE` (`//iam.googleapis.com/projects/…/workloadIdent
 for a Google AI Studio key, or `https://api.mistral.ai/v1`) and `OPENAI_COMPAT_API_KEY`.
 The adapter sends `max_tokens` and no `stream_options`, which strict APIs like Mistral require; set
 `OPENAI_COMPAT_STREAM_USAGE=true` for APIs that need `stream_options.include_usage` to report token usage (OpenAI,
-Gemini, Groq, OpenRouter). `models.json` ships Gemini model names (`gemini-3.5-flash` for Standard,
+Gemini, Groq, OpenRouter). `models.json` ships Gemini model names (`gemini-3.5-flash-lite` for Standard,
 `gemini-3.8-flash` for Advanced); change them when pointing at another API. This is separate from `gcp-vertex`,
 which calls Gemini through a GCP project with IAM credentials instead of an API key.
 For Gemini 3 set `OPENAI_COMPAT_REASONING_EFFORT=low` and `OPENAI_COMPAT_TIMEOUT_MS=90000`: the model always thinks

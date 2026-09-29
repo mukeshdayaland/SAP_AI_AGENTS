@@ -97,7 +97,9 @@ export async function* fromOpenAIStream(
   const pending: { id: string; name: string; args: string; extra?: Record<string, unknown> }[] = [];
   const slotByIndex = new Map<number, number>();
   let finish: FinishReason | undefined;
-  let usageEmitted = false;
+  // OpenAI reports usage once at the end; Gemini repeats the running total on
+  // every chunk. Keeping the last report is right for both — summing is not.
+  let usage = { inputTokens: 0, outputTokens: 0 };
 
   for await (const msg of messages) {
     if (msg.data === '[DONE]') break;
@@ -128,20 +130,16 @@ export async function* fromOpenAIStream(
       finish = mapOpenAIFinish(choice.finish_reason) ?? finish;
     }
     if (chunk.usage && (chunk.usage.prompt_tokens || chunk.usage.completion_tokens)) {
-      usageEmitted = true;
-      yield {
-        type: 'usage',
-        usage: { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0 },
-      };
+      usage = { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0 };
     }
   }
 
+  yield { type: 'usage', usage };
   for (const [slot, tc] of pending.entries()) {
     yield {
       type: 'tool_call',
       call: { id: tc.id || `call_${slot}`, name: tc.name, arguments: safeJsonObject(tc.args), ...(tc.extra && { providerMetadata: tc.extra }) },
     };
   }
-  if (!usageEmitted) yield { type: 'usage', usage: { inputTokens: 0, outputTokens: 0 } };
   yield { type: 'finish', reason: pending.length ? 'tool_calls' : (finish ?? 'stop') };
 }

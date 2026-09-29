@@ -209,6 +209,22 @@ describe('OpenAI-compatible', () => {
     expect(assistant.tool_calls![1]).not.toHaveProperty('extra_content');
   });
 
+  it('reports cumulative per-chunk usage (Gemini) once, not summed', async () => {
+    const { impl } = stubFetch(() =>
+      sseResponse(
+        [
+          { choices: [{ delta: { content: 'Invoice ' } }], usage: { prompt_tokens: 3000, completion_tokens: 2 } },
+          { choices: [{ delta: { content: 'is blocked.' } }], usage: { prompt_tokens: 3000, completion_tokens: 5 } },
+          { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 3000, completion_tokens: 6 } },
+        ],
+        { done: true },
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', streamUsage: true, fetchImpl: impl, policy: fastPolicy });
+    const chunks = await drain(provider.stream({ model: 'gemini-3.5-flash-lite', messages: [{ role: 'user', content: 'x' }] }));
+    expect(chunks.filter((c) => c.type === 'usage')).toEqual([{ type: 'usage', usage: { inputTokens: 3000, outputTokens: 6 } }]);
+  });
+
   it('requests stream usage only when enabled and omits auth for anonymous endpoints', async () => {
     const { impl, calls } = stubFetch(() => sseResponse(openAIToolStream(), { done: true }));
     const provider = new OpenAICompatibleProvider({ baseUrl: 'https://api.groq.com/openai/v1', streamUsage: true, fetchImpl: impl, policy: fastPolicy });
