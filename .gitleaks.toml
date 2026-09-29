@@ -1,0 +1,9 @@
+# Extends the default rules. The only allow-listed value is AWS's public
+# SigV4 documentation test vector used in packages/llm/test/aws.test.ts.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public AWS SigV4 test-suite example credentials"
+regexes = ['''wJalrXUtnFEMI/K7MDENG\+bPxRfiCYEXAMPLEKEY''', '''AKIDEXAMPLE''']
+paths = ['''packages/llm/test/aws\.test\.ts''']

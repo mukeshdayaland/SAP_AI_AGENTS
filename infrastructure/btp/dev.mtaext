@@ -1,0 +1,13 @@
+_schema-version: '3.3'
+ID: prowess-ai.dev
+extends: prowess-ai
+parameters:
+  env: DEV
+modules:
+  - name: prowess-ai-orchestrator
+    properties:
+      PROWESS_ENV: DEV
+      LOG_LEVEL: debug
+  - name: prowess-sap-mcp
+    properties:
+      PROWESS_ENV: DEV

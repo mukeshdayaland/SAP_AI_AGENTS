@@ -1,0 +1,9 @@
+{
+  "name": "prowess-ai-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SAP Application Router serving the Prowess AI static web app and proxying /api to the orchestrator",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node node_modules/@sap/approuter/approuter.js" },
+  "dependencies": { "@sap/approuter": "^23.0.0" }
+}

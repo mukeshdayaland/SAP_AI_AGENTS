@@ -1,0 +1,311 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------
+   Prowess design tokens. Components reference tokens only — never raw
+   colors — so themes and brand refreshes happen in one place.
+   ------------------------------------------------------------------ */
+
+:root {
+  --background: #f5f6f8;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-muted: #eef0f4;
+  --surface-sunken: #e7eaf0;
+  --border: #dde2ea;
+  --border-strong: #c5ccd8;
+  --text-primary: #0f1724;
+  --text-secondary: #4d5a6e;
+  --text-tertiary: #6b778a;
+  --brand-primary: #0b6f6a;
+  --brand-primary-hover: #095b57;
+  --brand-primary-soft: #e3f2f0;
+  --brand-secondary: #b8541c;
+  --brand-secondary-soft: #fbeee5;
+  --on-brand: #ffffff;
+  --success: #17773d;
+  --success-soft: #e5f4ea;
+  --warning: #9a5b00;
+  --warning-soft: #fdf2dc;
+  --error: #b42318;
+  --error-soft: #fdecea;
+  --info: #2f55c4;
+  --info-soft: #e8eefc;
+  --focus: #0b6f6a;
+  --shadow-sm: 0 1px 2px rgb(15 23 36 / 0.06);
+  --shadow-md: 0 4px 16px -4px rgb(15 23 36 / 0.12), 0 1px 3px rgb(15 23 36 / 0.06);
+  --code-bg: #f3f5f8;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --background: #0b0f15;
+  --surface: #11161e;
+  --surface-elevated: #171e28;
+  --surface-muted: #1a222d;
+  --surface-sunken: #0e131a;
+  --border: #242e3b;
+  --border-strong: #354253;
+  --text-primary: #e7ecf3;
+  --text-secondary: #a3afc0;
+  --text-tertiary: #8290a3;
+  --brand-primary: #35b7aa;
+  --brand-primary-hover: #52c7bb;
+  --brand-primary-soft: #11302e;
+  --brand-secondary: #f0925a;
+  --brand-secondary-soft: #3a2316;
+  --on-brand: #06201e;
+  --success: #52cf83;
+  --success-soft: #11291a;
+  --warning: #f2b53f;
+  --warning-soft: #2e2410;
+  --error: #f47a6e;
+  --error-soft: #331714;
+  --info: #86a4ff;
+  --info-soft: #172240;
+  --focus: #52c7bb;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 8px 24px -8px rgb(0 0 0 / 0.6), 0 1px 3px rgb(0 0 0 / 0.4);
+  --code-bg: #0e131a;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    --background: #0b0f15;
+    --surface: #11161e;
+    --surface-elevated: #171e28;
+    --surface-muted: #1a222d;
+    --surface-sunken: #0e131a;
+    --border: #242e3b;
+    --border-strong: #354253;
+    --text-primary: #e7ecf3;
+    --text-secondary: #a3afc0;
+    --text-tertiary: #8290a3;
+    --brand-primary: #35b7aa;
+    --brand-primary-hover: #52c7bb;
+    --brand-primary-soft: #11302e;
+    --brand-secondary: #f0925a;
+    --brand-secondary-soft: #3a2316;
+    --on-brand: #06201e;
+    --success: #52cf83;
+    --success-soft: #11291a;
+    --warning: #f2b53f;
+    --warning-soft: #2e2410;
+    --error: #f47a6e;
+    --error-soft: #331714;
+    --info: #86a4ff;
+    --info-soft: #172240;
+    --focus: #52c7bb;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 8px 24px -8px rgb(0 0 0 / 0.6), 0 1px 3px rgb(0 0 0 / 0.4);
+    --code-bg: #0e131a;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--background);
+  --color-surface: var(--surface);
+  --color-elevated: var(--surface-elevated);
+  --color-muted: var(--surface-muted);
+  --color-sunken: var(--surface-sunken);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text-primary);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-tertiary);
+  --color-brand: var(--brand-primary);
+  --color-brand-hover: var(--brand-primary-hover);
+  --color-brand-soft: var(--brand-primary-soft);
+  --color-accent: var(--brand-secondary);
+  --color-accent-soft: var(--brand-secondary-soft);
+  --color-on-brand: var(--on-brand);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-error: var(--error);
+  --color-error-soft: var(--error-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --shadow-soft: var(--shadow-sm);
+  --shadow-lift: var(--shadow-md);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--brand-primary-soft);
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 100;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--brand-primary);
+  color: var(--on-brand);
+}
+.skip-link:focus {
+  top: 12px;
+}
+
+/* Rendered model markdown — typographic defaults, no raw HTML is ever rendered. */
+.prose-prowess {
+  font-size: 0.95rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.prose-prowess > * + * {
+  margin-top: 0.75em;
+}
+.prose-prowess h1,
+.prose-prowess h2,
+.prose-prowess h3 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1.2em;
+}
+.prose-prowess h1 {
+  font-size: 1.25rem;
+}
+.prose-prowess h2 {
+  font-size: 1.1rem;
+}
+.prose-prowess h3 {
+  font-size: 1rem;
+}
+.prose-prowess ul {
+  list-style: disc;
+  padding-left: 1.35em;
+}
+.prose-prowess ol {
+  list-style: decimal;
+  padding-left: 1.35em;
+}
+.prose-prowess li + li {
+  margin-top: 0.25em;
+}
+.prose-prowess strong {
+  font-weight: 600;
+}
+.prose-prowess a {
+  color: var(--brand-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-prowess code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.1em 0.35em;
+}
+.prose-prowess pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9em 1em;
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+.prose-prowess pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.prose-prowess blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding-left: 0.9em;
+  color: var(--text-secondary);
+}
+.prose-prowess table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose-prowess th,
+.prose-prowess td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.45em 0.75em;
+  text-align: left;
+}
+.prose-prowess th {
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+.prose-prowess em {
+  color: var(--text-secondary);
+}
+
+/* highlight.js — token colors mapped to the design system */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in {
+  color: var(--brand-primary);
+}
+.hljs-string,
+.hljs-attr {
+  color: var(--brand-secondary);
+}
+.hljs-number,
+.hljs-literal {
+  color: var(--info);
+}
+.hljs-comment {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.streaming-caret::after {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--brand-primary);
+  border-radius: 1px;
+  animation: caret 1s steps(2, start) infinite;
+}
+@keyframes caret {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

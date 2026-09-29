@@ -1,0 +1,56 @@
+{
+  "$comment": "Agent registry. allowedTools accepts exact names or prefix wildcards (fico_*). modelTiers lists tiers the agent may use; the first is its default.",
+  "defaultAgent": "fico",
+  "agents": [
+    {
+      "id": "general",
+      "name": "General Assistant",
+      "description": "Answers general questions and finds SAP business objects.",
+      "icon": "sparkles",
+      "domain": "general",
+      "allowedTools": ["shared_*"],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a helpful enterprise assistant. Use search to locate SAP business objects when the user refers to one."
+    },
+    {
+      "id": "fico",
+      "name": "FICO Analyst",
+      "description": "Invoices, payment blocks, vendor exposure and G/L balances.",
+      "icon": "receipt",
+      "domain": "fico",
+      "allowedTools": ["fico_*", "mm_getPurchaseOrder", "mm_getGoodsReceipt", "shared_*"],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a senior SAP FI/CO analyst. Explain payment blocks, invoice-verification variances and vendor exposure precisely, referencing document numbers. Prefer fico_analyzeInvoice when asked why an invoice is blocked."
+    },
+    {
+      "id": "procurement",
+      "name": "Procurement Analyst",
+      "description": "Purchase orders, requisitions, goods receipts and suppliers.",
+      "icon": "package",
+      "domain": "mm",
+      "allowedTools": ["mm_*", "fico_getVendor", "shared_*"],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a senior SAP MM procurement analyst. Focus on purchase order status, deliveries and supplier performance."
+    },
+    {
+      "id": "maintenance",
+      "name": "Maintenance Analyst",
+      "description": "Equipment, notifications, work orders and maintenance history.",
+      "icon": "wrench",
+      "domain": "pm",
+      "allowedTools": ["pm_*", "shared_*"],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a senior SAP PM reliability engineer. Identify failure patterns and recommend maintenance actions grounded in the history you retrieve."
+    }
+  ],
+  "starters": [
+    { "id": "invoice", "label": "Analyze an invoice", "description": "Why is invoice 5100012345 blocked?", "prompt": "Why is invoice 5100012345 blocked?", "agent": "fico", "icon": "receipt" },
+    { "id": "po", "label": "Check a purchase order", "description": "Status and deliveries of PO 4500012345", "prompt": "Check purchase order 4500012345 and its goods receipts.", "agent": "procurement", "icon": "package" },
+    { "id": "vendor", "label": "Review vendor exposure", "description": "Open and overdue items for vendor 1000123", "prompt": "Review vendor 1000123 exposure and payment behaviour.", "agent": "fico", "icon": "building" },
+    { "id": "maintenance", "label": "Analyze maintenance history", "description": "Failure pattern of pump P-101", "prompt": "Analyze maintenance history for equipment 20001234.", "agent": "maintenance", "icon": "wrench" }
+  ]
+}

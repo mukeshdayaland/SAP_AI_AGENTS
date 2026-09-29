@@ -1,0 +1,163 @@
+_schema-version: '3.3'
+ID: prowess-ai
+version: 0.1.0
+description: Prowess AI — Enterprise Intelligence Workspace on SAP BTP Cloud Foundry
+
+parameters:
+  enable-parallel-deployments: true
+  env: DEV # overridden per landscape by infrastructure/btp/{dev,qa,prod}.mtaext
+
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npm ci
+        - npm run build:cf
+
+modules:
+  # Public entry point: XSUAA login, static UI, /api proxy with the user's token.
+  - name: prowess-ai-web
+    type: approuter.nodejs
+    path: infrastructure/approuter
+    build-parameters:
+      builder: custom
+      commands: []
+      build-result: dist
+    parameters:
+      memory: 256M
+      disk-quota: 512M
+    properties:
+      SESSION_TIMEOUT: 30
+      SEND_XFRAMEOPTIONS: false # CSP frame-ancestors is set in xs-app.json
+      INCOMING_CONNECTION_TIMEOUT: 300000 # long-lived SSE responses
+    requires:
+      - name: prowess-xsuaa
+      - name: prowess-orchestrator-api
+        group: destinations
+        properties:
+          name: prowess-orchestrator
+          url: ~{url}
+          forwardAuthToken: true
+          timeout: 300000
+
+  # AI orchestration service (API, model routing, MCP client, persistence, audit).
+  - name: prowess-ai-orchestrator
+    type: nodejs
+    path: apps/orchestrator
+    build-parameters:
+      builder: custom
+      commands: []
+      build-result: dist
+    parameters:
+      memory: 512M
+      disk-quota: 1024M
+      command: node --enable-source-maps server.mjs
+      health-check-type: http
+      health-check-http-endpoint: /api/health
+    properties:
+      PROWESS_ENV: ${env}
+      AUTH_MODE: xsuaa
+      PERSISTENCE: postgres
+      LLM_ALLOW_MOCK: false
+      DEFAULT_LLM_PROVIDER: sap-ai-core
+      UPLOADS_ENABLED: false # enable once MALWARE_SCANNER is configured
+      SAP_MCP_URL: ~{prowess-sap-mcp-api/url}/mcp
+      NODE_ENV: production
+    requires:
+      - name: prowess-xsuaa
+      - name: prowess-aicore
+      - name: prowess-postgres
+      - name: prowess-auditlog
+      - name: prowess-logging
+      - name: prowess-secrets
+      - name: prowess-sap-mcp-api
+    provides:
+      - name: prowess-orchestrator-api
+        properties:
+          url: ${default-url}
+
+  # MCP tool layer for SAP. One modular service; domains can be split later via MCP_DOMAINS.
+  - name: prowess-sap-mcp
+    type: nodejs
+    path: apps/sap-mcp
+    build-parameters:
+      builder: custom
+      commands: []
+      build-result: dist
+    parameters:
+      memory: 512M
+      disk-quota: 1024M
+      command: node --enable-source-maps server.mjs
+      health-check-type: http
+      health-check-http-endpoint: /health
+    properties:
+      PROWESS_ENV: ${env}
+      SAP_MODE: odata
+      SAP_DESTINATION: S4HANA
+      SAP_SYSTEM_ID: S4-${env}
+      SAP_ALLOW_TECHNICAL_USER: false
+      MCP_DOMAINS: fico,mm,pm,shared
+      NODE_ENV: production
+    requires:
+      - name: prowess-xsuaa # user token exchange for destination lookups
+      - name: prowess-destination
+      - name: prowess-connectivity
+      - name: prowess-logging
+      - name: prowess-secrets
+    provides:
+      - name: prowess-sap-mcp-api
+        properties:
+          url: ${default-url}
+
+resources:
+  - name: prowess-xsuaa
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      path: infrastructure/btp/xs-security.json
+      config:
+        xsappname: prowess-ai-${space}
+
+  - name: prowess-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+
+  - name: prowess-connectivity
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: connectivity
+      service-plan: lite
+
+  # SAP AI Core is usually provisioned once per subaccount (extended plan).
+  - name: prowess-aicore
+    type: org.cloudfoundry.existing-service
+    parameters:
+      service-name: prowess-aicore
+
+  # SAP BTP PostgreSQL, hyperscaler option (or swap for a HANA Cloud store implementation).
+  - name: prowess-postgres
+    type: org.cloudfoundry.existing-service
+    parameters:
+      service-name: prowess-postgres
+
+  - name: prowess-auditlog
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: auditlog
+      service-plan: oauth2
+
+  - name: prowess-logging
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: cloud-logging
+      service-plan: standard
+
+  # Secrets not covered by bindings (assertion secret, Azure/AWS/GCP credentials).
+  # Create per space: cf cups prowess-secrets -p secrets.json   (never commit secrets.json)
+  - name: prowess-secrets
+    type: org.cloudfoundry.existing-service
+    parameters:
+      service-name: prowess-secrets

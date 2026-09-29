@@ -1,0 +1,144 @@
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: '22'
+  # Model providers and SAP are always mocked in CI — no live LLM calls, no credentials.
+  LLM_ALLOW_MOCK: 'true'
+  SAP_MODE: mock
+
+jobs:
+  verify:
+    name: Install · Lint · Type check · Unit & integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit, API, authorization, MCP contract and LLM adapter tests
+        run: npm test
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - name: Dependency vulnerabilities (fail on high/critical in runtime deps)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: CodeQL init
+        uses: github/codeql-action/init@v3
+        with: { languages: javascript-typescript }
+      - name: CodeQL analyze
+        uses: github/codeql-action/analyze@v3
+
+  build:
+    name: Build & package
+    needs: [verify, security]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - name: Build services and static web
+        run: npm run build:cf
+      - name: End-to-end tests (mock SAP + mock model)
+        run: npx playwright install --with-deps chromium && npm run test:e2e
+      - name: Package MTA archive
+        run: |
+          npm install --no-save mbt@1
+          npx mbt build -p=cf --mtar prowess-ai.mtar -t dist-mta
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prowess-ai-mtar
+          path: dist-mta/prowess-ai.mtar
+          retention-days: 30
+
+  deploy-dev:
+    name: Deploy DEV
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: prowess-ai-mtar, path: dist-mta }
+      - uses: ./.github/actions/cf-deploy
+        with:
+          api: ${{ vars.CF_API }}
+          org: ${{ vars.CF_ORG }}
+          space: ${{ vars.CF_SPACE }}
+          username: ${{ secrets.CF_USERNAME }}
+          password: ${{ secrets.CF_PASSWORD }}
+          extension: infrastructure/btp/dev.mtaext
+
+  # QA and PROD are GitHub Environments with required reviewers → manual approval gates.
+  deploy-qa:
+    name: Deploy QA
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: qa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: prowess-ai-mtar, path: dist-mta }
+      - uses: ./.github/actions/cf-deploy
+        with:
+          api: ${{ vars.CF_API }}
+          org: ${{ vars.CF_ORG }}
+          space: ${{ vars.CF_SPACE }}
+          username: ${{ secrets.CF_USERNAME }}
+          password: ${{ secrets.CF_PASSWORD }}
+          extension: infrastructure/btp/qa.mtaext
+
+  deploy-prod:
+    name: Deploy PROD
+    # Only release tags, never arbitrary branches; plus the `prod` environment's approval rule.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: deploy-qa
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: prowess-ai-mtar, path: dist-mta }
+      - uses: ./.github/actions/cf-deploy
+        with:
+          api: ${{ vars.CF_API }}
+          org: ${{ vars.CF_ORG }}
+          space: ${{ vars.CF_SPACE }}
+          username: ${{ secrets.CF_USERNAME }}
+          password: ${{ secrets.CF_PASSWORD }}
+          extension: infrastructure/btp/prod.mtaext

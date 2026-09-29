@@ -1,0 +1,30 @@
+name: Deploy MTA to SAP BTP Cloud Foundry
+description: Logs in with a technical user and deploys the MTA archive with an environment extension.
+inputs:
+  api: { description: CF API endpoint, required: true }
+  org: { description: CF org, required: true }
+  space: { description: CF space, required: true }
+  username: { description: Technical deployment user, required: true }
+  password: { description: Password of the technical user, required: true }
+  extension: { description: MTA extension descriptor for the target landscape, required: true }
+runs:
+  using: composite
+  steps:
+    - name: Install CF CLI and MultiApps plugin
+      shell: bash
+      run: |
+        curl -sL "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8&source=github" | tar -zx cf8
+        sudo mv cf8 /usr/local/bin/cf
+        cf install-plugin multiapps -f
+    - name: Login
+      shell: bash
+      env:
+        CF_USERNAME: ${{ inputs.username }}
+        CF_PASSWORD: ${{ inputs.password }}
+      run: |
+        cf api "${{ inputs.api }}"
+        cf auth
+        cf target -o "${{ inputs.org }}" -s "${{ inputs.space }}"
+    - name: Deploy (blue-green)
+      shell: bash
+      run: cf deploy dist-mta/prowess-ai.mtar -e "${{ inputs.extension }}" --strategy blue-green -f

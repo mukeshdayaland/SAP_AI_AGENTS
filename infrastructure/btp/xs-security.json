@@ -1,0 +1,29 @@
+{
+  "xsappname": "prowess-ai",
+  "tenant-mode": "dedicated",
+  "description": "Prowess AI — Enterprise Intelligence Workspace. Scopes govern AI features only; SAP business authorization is enforced by S/4HANA.",
+  "scopes": [
+    { "name": "$XSAPPNAME.AI_USER", "description": "Use Prowess AI agents" },
+    { "name": "$XSAPPNAME.AI_POWER_USER", "description": "Advanced model tier and technical execution details" },
+    { "name": "$XSAPPNAME.AI_ADMIN", "description": "Administer models, agents, tools and view usage" },
+    { "name": "$XSAPPNAME.AI_AUDITOR", "description": "Read the audit trail" }
+  ],
+  "attributes": [],
+  "role-templates": [
+    { "name": "AI_User", "description": "Prowess AI user", "scope-references": ["$XSAPPNAME.AI_USER"] },
+    { "name": "AI_PowerUser", "description": "Prowess AI power user", "scope-references": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_POWER_USER"] },
+    { "name": "AI_Admin", "description": "Prowess AI administrator", "scope-references": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_ADMIN"] },
+    { "name": "AI_Auditor", "description": "Prowess AI auditor (read-only audit access)", "scope-references": ["$XSAPPNAME.AI_AUDITOR"] }
+  ],
+  "role-collections": [
+    { "name": "Prowess_AI_User", "description": "Business users", "role-template-references": ["$XSAPPNAME.AI_User"] },
+    { "name": "Prowess_AI_PowerUser", "description": "Analysts and key users", "role-template-references": ["$XSAPPNAME.AI_PowerUser"] },
+    { "name": "Prowess_AI_Admin", "description": "Platform administrators", "role-template-references": ["$XSAPPNAME.AI_Admin"] },
+    { "name": "Prowess_AI_Auditor", "description": "Internal audit / compliance", "role-template-references": ["$XSAPPNAME.AI_Auditor"] }
+  ],
+  "oauth2-configuration": {
+    "token-validity": 1800,
+    "refresh-token-validity": 28800,
+    "redirect-uris": ["https://*.hana.ondemand.com/**", "https://*.cloud.sap/**"]
+  }
+}

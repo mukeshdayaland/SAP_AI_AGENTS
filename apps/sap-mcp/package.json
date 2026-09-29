@@ -1,0 +1,21 @@
+{
+  "name": "@prowess/sap-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/main.ts",
+    "start": "node dist/server.mjs",
+    "build": "node ../../scripts/bundle.mjs sap-mcp",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@prowess/contracts": "*",
+    "@prowess/observability": "*",
+    "@prowess/security": "*",
+    "@sap-cloud-sdk/connectivity": "^4.9.1",
+    "@sap-cloud-sdk/http-client": "^4.9.1",
+    "zod": "^4.3.6"
+  }
+}
