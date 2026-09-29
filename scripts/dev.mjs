@@ -5,7 +5,7 @@
  *   sap-mcp :4100 → orchestrator :4000 → web :3000
  * Real provider credentials can be placed in `.env` (see .env.example).
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 
@@ -24,9 +24,16 @@ const apps = [
   { name: 'web', color: 33, cmd: ['run', 'dev', '-w', '@prowess/web'], env: { ORCHESTRATOR_URL: 'http://localhost:4000' } },
 ];
 
+// On Windows npm is `npm.cmd`, which Node can only start through a shell.
+const isWindows = process.platform === 'win32';
+
 const children = apps.map(({ name, color, cmd, env }) => {
-  const child = spawn('npm', cmd, { env: { ...process.env, ...shared, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   const prefix = `\x1b[${color}m${name.padEnd(12)}\x1b[0m│ `;
+  const child = spawn('npm', cmd, { env: { ...process.env, ...shared, ...env }, stdio: ['ignore', 'pipe', 'pipe'], shell: isWindows });
+  child.on('error', (err) => {
+    process.stdout.write(`${prefix}failed to start: ${err.message}\n`);
+    shutdown(1);
+  });
   const pipe = (stream) =>
     stream.on('data', (buf) => {
       for (const line of buf.toString().split('\n')) if (line.trim()) process.stdout.write(`${prefix}${line}\n`);
@@ -44,7 +51,12 @@ let stopping = false;
 function shutdown(code = 0) {
   if (stopping) return;
   stopping = true;
-  for (const c of children) c.kill('SIGTERM');
+  for (const c of children) {
+    if (c.exitCode !== null || !c.pid) continue;
+    // With a shell on Windows, kill() stops only cmd.exe; end the whole process tree instead.
+    if (isWindows) spawnSync('taskkill', ['/pid', String(c.pid), '/T', '/F'], { stdio: 'ignore' });
+    else c.kill('SIGTERM');
+  }
   setTimeout(() => process.exit(code), 500);
 }
 process.on('SIGINT', () => shutdown(0));
