@@ -12,11 +12,16 @@ import { safeJsonObject, type FinishReason, type LLMChunk, type LLMMessage, type
 export interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
-  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string }; extra_content?: Record<string, unknown> }[];
   tool_call_id?: string;
 }
 
-export function toOpenAIMessages(messages: LLMMessage[]): OpenAIMessage[] {
+/**
+ * `echoProviderMetadata` sends each tool call's `providerMetadata` back as
+ * `extra_content` — Gemini rejects follow-up requests whose tool calls lack
+ * the thought signature it returned there.
+ */
+export function toOpenAIMessages(messages: LLMMessage[], opts: { echoProviderMetadata?: boolean } = {}): OpenAIMessage[] {
   return messages.map((m): OpenAIMessage => {
     switch (m.role) {
       case 'assistant':
@@ -28,6 +33,7 @@ export function toOpenAIMessages(messages: LLMMessage[]): OpenAIMessage[] {
               id: c.id,
               type: 'function' as const,
               function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+              ...(opts.echoProviderMetadata && c.providerMetadata && { extra_content: c.providerMetadata }),
             })),
           }),
         };
@@ -70,7 +76,7 @@ export interface OpenAIStreamChunk {
   choices?: {
     delta?: {
       content?: string | null;
-      tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[];
+      tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string }; extra_content?: Record<string, unknown> }[];
     };
     finish_reason?: string | null;
   }[];
@@ -88,7 +94,8 @@ export async function* fromOpenAIStream(
   messages: AsyncIterable<SSEMessage>,
   unwrap: (json: Record<string, unknown>) => OpenAIStreamChunk | undefined = (j) => j as OpenAIStreamChunk,
 ): AsyncGenerator<LLMChunk> {
-  const pending = new Map<number, { id: string; name: string; args: string }>();
+  const pending: { id: string; name: string; args: string; extra?: Record<string, unknown> }[] = [];
+  const slotByIndex = new Map<number, number>();
   let finish: FinishReason | undefined;
   let usageEmitted = false;
 
@@ -106,11 +113,17 @@ export async function* fromOpenAIStream(
       const delta = choice.delta;
       if (delta?.content) yield { type: 'text', text: delta.content };
       for (const tc of delta?.tool_calls ?? []) {
-        const entry = pending.get(tc.index) ?? { id: '', name: '', args: '' };
+        // Deltas are grouped by `index`, but some APIs (Gemini) send parallel
+        // calls under the same index or none: a new id always starts a new call.
+        let slot = tc.index !== undefined ? slotByIndex.get(tc.index) : tc.id ? undefined : pending.length - 1;
+        if (slot !== undefined && slot >= 0 && tc.id && pending[slot]!.id && pending[slot]!.id !== tc.id) slot = undefined;
+        if (slot === undefined || slot < 0) slot = pending.push({ id: '', name: '', args: '' }) - 1;
+        if (tc.index !== undefined) slotByIndex.set(tc.index, slot);
+        const entry = pending[slot]!;
         if (tc.id) entry.id = tc.id;
         if (tc.function?.name) entry.name += tc.function.name;
         if (tc.function?.arguments) entry.args += tc.function.arguments;
-        pending.set(tc.index, entry);
+        if (tc.extra_content) entry.extra = tc.extra_content;
       }
       finish = mapOpenAIFinish(choice.finish_reason) ?? finish;
     }
@@ -123,9 +136,12 @@ export async function* fromOpenAIStream(
     }
   }
 
-  for (const [index, tc] of [...pending.entries()].sort(([a], [b]) => a - b)) {
-    yield { type: 'tool_call', call: { id: tc.id || `call_${index}`, name: tc.name, arguments: safeJsonObject(tc.args) } };
+  for (const [slot, tc] of pending.entries()) {
+    yield {
+      type: 'tool_call',
+      call: { id: tc.id || `call_${slot}`, name: tc.name, arguments: safeJsonObject(tc.args), ...(tc.extra && { providerMetadata: tc.extra }) },
+    };
   }
   if (!usageEmitted) yield { type: 'usage', usage: { inputTokens: 0, outputTokens: 0 } };
-  yield { type: 'finish', reason: pending.size ? 'tool_calls' : (finish ?? 'stop') };
+  yield { type: 'finish', reason: pending.length ? 'tool_calls' : (finish ?? 'stop') };
 }

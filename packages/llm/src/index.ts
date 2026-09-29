@@ -7,3 +7,4 @@ export { SapAiCoreProvider, type SapAiCoreConfig } from './providers/sap-ai-core
 export { AzureAIFoundryProvider, type AzureAIFoundryConfig } from './providers/azure-ai-foundry.js';
 export { AwsBedrockProvider, type AwsBedrockConfig } from './providers/aws-bedrock.js';
 export { GcpVertexProvider, type GcpVertexConfig } from './providers/gcp-vertex.js';
+export { OpenAICompatibleProvider, type OpenAICompatibleConfig } from './providers/openai-compatible.js';

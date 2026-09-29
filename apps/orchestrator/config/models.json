@@ -15,6 +15,7 @@
         { "provider": "azure-ai-foundry", "model": "gpt-4.1-mini" },
         { "provider": "aws-bedrock", "model": "eu.amazon.nova-pro-v1:0" },
         { "provider": "gcp-vertex", "model": "gemini-2.5-flash" },
+        { "provider": "openai-compatible", "model": "gemini-3.5-flash" },
         { "provider": "mock", "model": "prowess-mock" }
       ]
     },
@@ -32,6 +33,7 @@
         { "provider": "aws-bedrock", "model": "eu.anthropic.claude-sonnet-4-20250514-v1:0" },
         { "provider": "azure-ai-foundry", "model": "gpt-4.1" },
         { "provider": "gcp-vertex", "model": "gemini-2.5-pro" },
+        { "provider": "openai-compatible", "model": "gemini-3.8-flash" },
         { "provider": "mock", "model": "prowess-mock" }
       ]
     },

@@ -6,6 +6,7 @@ import { AwsBedrockProvider } from './providers/aws-bedrock.js';
 import { AzureAIFoundryProvider, type AzureAIFoundryConfig } from './providers/azure-ai-foundry.js';
 import { GcpVertexProvider } from './providers/gcp-vertex.js';
 import { MockProvider } from './providers/mock.js';
+import { OpenAICompatibleProvider } from './providers/openai-compatible.js';
 import { SapAiCoreProvider, sapAiCoreBindingFromVcap } from './providers/sap-ai-core.js';
 import { PROVIDER_IDS, type LLMProvider, type ProviderId } from './types.js';
 
@@ -114,6 +115,18 @@ function vertex(env: Env): GcpVertexProvider | null {
   return new GcpVertexProvider({ projectId: env.GCP_PROJECT_ID, location: env.GCP_LOCATION ?? 'europe-west3', auth });
 }
 
+function openAICompatible(env: Env): OpenAICompatibleProvider | null {
+  if (!env.OPENAI_COMPAT_BASE_URL) return null;
+  return new OpenAICompatibleProvider({
+    baseUrl: env.OPENAI_COMPAT_BASE_URL,
+    ...(env.OPENAI_COMPAT_API_KEY && { apiKey: env.OPENAI_COMPAT_API_KEY }),
+    streamUsage: flag(env.OPENAI_COMPAT_STREAM_USAGE),
+    ...(env.OPENAI_COMPAT_REASONING_EFFORT && { reasoningEffort: env.OPENAI_COMPAT_REASONING_EFFORT }),
+    // Thinking models can take well over the default 30 s before the first byte.
+    ...(Number(env.OPENAI_COMPAT_TIMEOUT_MS) > 0 && { policy: { connectTimeoutMs: Number(env.OPENAI_COMPAT_TIMEOUT_MS) } }),
+  });
+}
+
 /**
  * Instantiates every provider whose configuration is present. A provider with
  * partial configuration fails fast at startup rather than at first request.
@@ -128,6 +141,7 @@ export function createProvidersFromEnv(rawEnv: Env, opts: { allowMock: boolean; 
     ['azure-ai-foundry', () => azure(env)],
     ['aws-bedrock', () => bedrock(env)],
     ['gcp-vertex', () => vertex(env)],
+    ['openai-compatible', () => openAICompatible(env)],
   ];
   const disabled = new Set((env.LLM_DISABLED_PROVIDERS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
 

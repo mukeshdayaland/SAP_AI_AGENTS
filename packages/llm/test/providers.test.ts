@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createProvidersFromEnv } from '../src/factory.js';
 import { AzureAIFoundryProvider } from '../src/providers/azure-ai-foundry.js';
 import { GcpVertexProvider, toVertexSchema } from '../src/providers/gcp-vertex.js';
+import { OpenAICompatibleProvider } from '../src/providers/openai-compatible.js';
 import { SapAiCoreProvider } from '../src/providers/sap-ai-core.js';
 import { drain, fastPolicy, sseResponse, stubFetch } from './helpers.js';
 
@@ -161,7 +162,73 @@ describe('Google Vertex AI', () => {
   });
 });
 
+describe('OpenAI-compatible', () => {
+  it('posts to {baseUrl}/chat/completions with bearer auth and portable fields only', async () => {
+    const { impl, calls } = stubFetch(() => sseResponse(openAIToolStream(), { done: true }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://api.mistral.ai/v1/', apiKey: 'k', fetchImpl: impl, policy: fastPolicy });
+    const chunks = await drain(provider.stream({ model: 'mistral-small-latest', messages: [{ role: 'user', content: 'x' }], tools, maxOutputTokens: 500 }));
+    expect(chunks).toEqual(expected);
+    expect(calls[0]!.url).toBe('https://api.mistral.ai/v1/chat/completions');
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer k');
+    const body = calls[0]!.body as Record<string, unknown>;
+    expect(body).toMatchObject({ model: 'mistral-small-latest', max_tokens: 500, stream: true });
+    expect(body).not.toHaveProperty('stream_options');
+    expect(body).not.toHaveProperty('max_completion_tokens');
+  });
+
+  it('splits parallel calls sharing an index and echoes Gemini thought signatures', async () => {
+    const sig = { google: { thought_signature: 'sig-A' } };
+    const { impl, calls } = stubFetch(() =>
+      sseResponse(
+        [
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'fc-1', type: 'function', function: { name: 'shared_getUserContext', arguments: '{}' }, extra_content: sig }] } }] },
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: 'fc-2', type: 'function', function: { name: 'shared_getSystemInformation', arguments: '{}' } }] }, finish_reason: 'tool_calls' }] },
+        ],
+        { done: true },
+      ),
+    );
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: 'k', reasoningEffort: 'low', fetchImpl: impl, policy: fastPolicy });
+    const chunks = await drain(provider.stream({ model: 'gemini-3.5-flash', messages: [{ role: 'user', content: 'x' }], tools }));
+    const toolCalls = chunks.filter((c) => c.type === 'tool_call').map((c) => (c as { call: unknown }).call);
+    expect(toolCalls).toEqual([
+      { id: 'fc-1', name: 'shared_getUserContext', arguments: {}, providerMetadata: sig },
+      { id: 'fc-2', name: 'shared_getSystemInformation', arguments: {} },
+    ]);
+    expect((calls[0]!.body as Record<string, unknown>).reasoning_effort).toBe('low');
+
+    const { body } = provider.buildRequest({
+      model: 'gemini-3.5-flash',
+      messages: [
+        { role: 'user', content: 'x' },
+        { role: 'assistant', content: '', toolCalls: toolCalls as never },
+        { role: 'tool', toolCallId: 'fc-1', name: 'shared_getUserContext', content: '{}' },
+      ],
+    });
+    const assistant = (body.messages as { tool_calls?: { extra_content?: unknown }[] }[])[1]!;
+    expect(assistant.tool_calls![0]!.extra_content).toEqual(sig);
+    expect(assistant.tool_calls![1]).not.toHaveProperty('extra_content');
+  });
+
+  it('requests stream usage only when enabled and omits auth for anonymous endpoints', async () => {
+    const { impl, calls } = stubFetch(() => sseResponse(openAIToolStream(), { done: true }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://api.groq.com/openai/v1', streamUsage: true, fetchImpl: impl, policy: fastPolicy });
+    await drain(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] }));
+    expect((calls[0]!.body as Record<string, unknown>).stream_options).toEqual({ include_usage: true });
+    expect(calls[0]!.init.headers as Record<string, string>).not.toHaveProperty('authorization');
+  });
+});
+
 describe('provider factory', () => {
+  it('enables the OpenAI-compatible provider from OPENAI_COMPAT_BASE_URL', () => {
+    const { providers } = createProvidersFromEnv({ OPENAI_COMPAT_BASE_URL: 'https://api.mistral.ai/v1', OPENAI_COMPAT_API_KEY: 'k' }, { allowMock: false });
+    expect([...providers.keys()]).toEqual(['openai-compatible']);
+  });
+
+  it('applies OPENAI_COMPAT_TIMEOUT_MS as the time-to-first-byte limit', () => {
+    const { providers } = createProvidersFromEnv({ OPENAI_COMPAT_BASE_URL: 'https://x.example/v1', OPENAI_COMPAT_TIMEOUT_MS: '90000' }, { allowMock: false });
+    expect((providers.get('openai-compatible') as unknown as { policy: { connectTimeoutMs: number } }).policy.connectTimeoutMs).toBe(90_000);
+  });
+
   it('enables only providers with configuration present', () => {
     const { providers } = createProvidersFromEnv(
       { AZURE_AI_ENDPOINT: 'https://x.openai.azure.com', AZURE_AI_API_KEY: 'k', GCP_PROJECT_ID: 'prowess-ai-dev', GCP_ACCESS_TOKEN: 't' },

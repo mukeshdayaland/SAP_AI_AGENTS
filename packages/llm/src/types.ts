@@ -16,6 +16,8 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /** Opaque provider data that must be sent back verbatim with the call (e.g. Gemini thought signatures). */
+  providerMetadata?: Record<string, unknown>;
 }
 
 export type LLMMessage =
@@ -66,7 +68,7 @@ export interface LLMProvider {
   healthCheck(): Promise<boolean>;
 }
 
-export const PROVIDER_IDS = ['mock', 'sap-ai-core', 'azure-ai-foundry', 'aws-bedrock', 'gcp-vertex'] as const;
+export const PROVIDER_IDS = ['mock', 'sap-ai-core', 'azure-ai-foundry', 'aws-bedrock', 'gcp-vertex', 'openai-compatible'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
 /** Collects a stream into a full response. Shared by every provider's `complete`. */

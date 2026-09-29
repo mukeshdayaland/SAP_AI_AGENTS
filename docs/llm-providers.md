@@ -19,6 +19,7 @@ Neither the UI nor the MCP layer knows which vendor served a request.
 | `azure-ai-foundry` | `AzureAIFoundryProvider` | `/openai/v1/chat/completions`, classic deployments, or Model Inference API | Entra **workload identity** (federated token) · Entra client secret · API key (dev) |
 | `aws-bedrock` | `AwsBedrockProvider` | Converse `…/model/{id}/converse-stream` (binary event stream) | **SigV4 with temporary STS credentials** · Bedrock API key (dev) |
 | `gcp-vertex` | `GcpVertexProvider` | Gemini `…:streamGenerateContent?alt=sse` | **Workload Identity Federation** (+ SA impersonation) · service-account key · access token (dev) |
+| `openai-compatible` | `OpenAICompatibleProvider` | Any `{base}/chat/completions` (Gemini API key, Mistral, Groq, Cerebras, OpenRouter, NVIDIA NIM, ...) | Bearer API key |
 | `mock` | `MockProvider` | none (deterministic, offline) | none (DEV only) |
 
 No vendor SDKs are used. The adapters use `fetch`, with local SigV4 signing, event-stream decoding and Google JWT
@@ -95,6 +96,20 @@ model/inference-profile ARNs. Optional: `AWS_BEDROCK_GUARDRAIL_ID`/`VERSION` app
 Federation: `GCP_WIF_AUDIENCE` (`//iam.googleapis.com/projects/…/workloadIdentityPools/…/providers/…`),
 `GCP_WIF_SUBJECT_TOKEN_FILE`, and optionally `GCP_WIF_SERVICE_ACCOUNT` to impersonate a service account that has
 *Vertex AI User*.
+
+### OpenAI-compatible APIs (Gemini, Mistral, Groq, ...)
+
+`OPENAI_COMPAT_BASE_URL` (up to the version segment, e.g. `https://generativelanguage.googleapis.com/v1beta/openai`
+for a Google AI Studio key, or `https://api.mistral.ai/v1`) and `OPENAI_COMPAT_API_KEY`.
+The adapter sends `max_tokens` and no `stream_options`, which strict APIs like Mistral require; set
+`OPENAI_COMPAT_STREAM_USAGE=true` for APIs that need `stream_options.include_usage` to report token usage (OpenAI,
+Gemini, Groq, OpenRouter). `models.json` ships Gemini model names (`gemini-3.5-flash` for Standard,
+`gemini-3.8-flash` for Advanced); change them when pointing at another API. This is separate from `gcp-vertex`,
+which calls Gemini through a GCP project with IAM credentials instead of an API key.
+For Gemini 3 set `OPENAI_COMPAT_REASONING_EFFORT=low` and `OPENAI_COMPAT_TIMEOUT_MS=90000`: the model always thinks
+before the first streamed byte. Tool-call thought signatures (`tool_calls[].extra_content`) are kept on
+`ToolCall.providerMetadata` and sent back automatically; Gemini rejects tool follow-ups without them.
+Free tiers of these APIs may use prompts for training — check the provider's terms before sending business data.
 
 ## Adding a provider
 
