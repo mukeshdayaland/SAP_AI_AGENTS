@@ -122,7 +122,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
           onKeyDown={onKeyDown}
           placeholder="Ask Prowess AI…"
           aria-describedby="prowess-prompt-hint"
-          className="block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-relaxed text-ink placeholder:text-ink-3 focus:outline-none"
+          className="focus-bare block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-relaxed text-ink placeholder:text-ink-3"
         />
         <div className="flex items-center justify-between px-2.5 pb-2.5">
           <div className="flex items-center gap-1">
@@ -145,7 +145,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
               {sendKey === 'enter' ? 'Enter to send · Shift + Enter for new line' : 'Ctrl/⌘ + Enter to send'}
             </span>
             {streaming ? (
-              <button type="button" onClick={onStop} aria-label="Stop generating" className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink text-bg transition-opacity hover:opacity-85">
+              <button type="button" onClick={onStop} aria-label="Stop generating" className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-on-brand transition-colors hover:bg-brand-hover">
                 <Square size={14} fill="currentColor" />
               </button>
             ) : (

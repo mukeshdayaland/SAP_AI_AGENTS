@@ -27,20 +27,20 @@ describe('workflow runs', () => {
     const res = await stack.request('GET', '/api/v1/workflows', USERS.jordan);
     const o2c = (res.json as unknown as { id: string; steps: { id: string; agent: string }[] }[]).find((w) => w.id === 'order-to-cash')!;
     expect(o2c.steps.map((s) => `${s.id}:${s.agent}`)).toEqual([
-      'order:SD Agent',
-      'credit:Credit Agent',
-      'delivery:SD Agent',
-      'goodsIssue:SD Agent',
-      'billing:SD Agent',
-      'verify:SD Agent',
-      'receivable:FI-AR Agent',
+      'order:SD',
+      'credit:FICO',
+      'delivery:SD',
+      'goodsIssue:SD',
+      'billing:SD',
+      'verify:SD',
+      'receivable:FICO',
     ]);
     expect((await stack.request('GET', '/api/v1/workflows', USERS.casey)).json).toEqual([]);
   });
 
   it('runs the read steps, then pauses at the first posting; cancelling it ends the run without touching SAP', async () => {
     const { events, card, confirmations } = await startFromChat(USERS.jordan);
-    expect(ofType(events, 'tool.start').map((t) => `${t.tool.agent}/${t.tool.tool}`)).toEqual(['sd/sd_getSalesOrderFlow', 'credit/credit_getCreditExposure', 'sd/sd_createDelivery']);
+    expect(ofType(events, 'tool.start').map((t) => `${t.tool.agent}/${t.tool.tool}`)).toEqual(['sd/sd_getSalesOrderFlow', 'fico/credit_getCreditExposure', 'sd/sd_createDelivery']);
     expect(card!.status).toBe('awaiting_confirmation');
     expect(states(card!)).toEqual(['done', 'done', 'awaiting_confirmation', 'pending', 'pending', 'pending', 'pending']);
     expect(confirmations).toHaveLength(1);

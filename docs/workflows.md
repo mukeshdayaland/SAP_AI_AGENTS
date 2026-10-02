@@ -16,7 +16,7 @@ Workflows live in `apps/orchestrator/config/workflows.json` and are validated at
   "input": [{ "name": "salesOrder", "label": "Sales order", "pattern": "^\\d{1,10}$" }],
   "steps": [
     { "id": "order", "agent": "sd", "tool": "sd_getSalesOrderFlow", "arguments": { "salesOrder": "${input.salesOrder}" } },
-    { "id": "credit", "agent": "credit", "tool": "credit_getCreditExposure", "arguments": { "customer": "${steps.order.soldTo}" },
+    { "id": "credit", "agent": "fico", "tool": "credit_getCreditExposure", "arguments": { "customer": "${steps.order.soldTo}" },
       "haltWhen": [{ "value": "${steps.order.creditStatus}", "equals": "BLOCKED", "reason": "…" }] },
     { "id": "delivery", "agent": "sd", "tool": "sd_createDelivery", "arguments": { "salesOrder": "${input.salesOrder}" },
       "skipWhen": [{ "value": "${steps.order.hasDelivery}", "equals": "true" }] }
@@ -33,8 +33,8 @@ Workflows live in `apps/orchestrator/config/workflows.json` and are validated at
 
 | Workflow | Started by | Steps (owning agent) |
 | --- | --- | --- |
-| `order-to-cash` | SD agent | check order (SD) → credit exposure (Credit) → delivery (SD) → goods issue (SD) → billing (SD) → verify flow (SD) → customer account (FI-AR) |
-| `purchase-to-pay` | MM agent | check order (MM) → goods receipt (MM) → supplier invoice (MM) → verify flow (MM) → supplier account (FI-AP) |
+| `order-to-cash` | SD | check order (SD) → credit exposure (FICO) → delivery (SD) → goods issue (SD) → billing (SD) → verify flow (SD) → customer account (FICO) |
+| `purchase-to-pay` | MM | check order (MM) → goods receipt (MM) → supplier invoice (MM) → verify flow (MM) → supplier account (FICO) |
 
 Purchase-to-pay takes the purchase order, the company code, the supplier's invoice number and its gross amount. The
 goods receipt covers the quantity still open; the invoice covers the quantity received, at the order price. If

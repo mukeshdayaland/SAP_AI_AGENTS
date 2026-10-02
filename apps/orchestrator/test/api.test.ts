@@ -162,6 +162,37 @@ describe('role-based access', () => {
   });
 });
 
+describe('help', () => {
+  type Help = { agents: { id: string; capabilities: { title: string; description: string; risk: string; needsConfirmation: boolean }[] }[]; activity: { type: string; action?: string; object?: string; agent?: string; status: string }[] };
+
+  it('describes what each agent can do without tool names or configuration', async () => {
+    const res = await stack.request('GET', '/api/v1/help', USERS.jordan);
+    expect(res.status).toBe(200);
+    const help = res.json as unknown as Help;
+    expect(help.agents.map((a) => a.id)).toEqual(['fico', 'mm', 'sd']);
+    const receipt = help.agents.find((a) => a.id === 'mm')!.capabilities.find((c) => c.title === 'Post goods receipt')!;
+    expect(receipt).toMatchObject({ risk: 'HIGH_IMPACT', needsConfirmation: true });
+    expect(receipt.description).toMatch(/^Post the goods receipt .*\.$/);
+    expect(help.agents.find((a) => a.id === 'sd')!.capabilities.some((c) => c.title === 'Post goods receipt')).toBe(false);
+    expect(JSON.stringify(help.agents)).not.toMatch(/mm_|sd_|allowedTools|requiredRoles|instructions/);
+  });
+
+  it("lists only the caller's own SAP activity", async () => {
+    const activity = async (user: string) => ((await stack.request('GET', '/api/v1/help', user)).json as unknown as Help).activity;
+    const before = (await activity(USERS.jordan)).length;
+    await stack.chat(USERS.jordan, { message: 'Check purchase order 4200000402 and its goods receipts.', agent: 'mm' });
+    const mine = await activity(USERS.jordan);
+    expect(mine.length).toBeGreaterThan(before);
+    expect(mine[0]).toMatchObject({ type: 'SAP_READ', action: 'Get goods receipts', agent: 'MM', object: 'PurchaseOrder 4200000402', status: 'success' });
+    expect(JSON.stringify(mine)).not.toMatch(/USER_LOGIN|MODEL_PROVIDER|AGENT_INVOKED/);
+
+    // Another user's activity is not included, and a user who did nothing sees nothing.
+    await stack.chat(USERS.alex, { message: 'Check purchase order 4200000402 and its goods receipts.', agent: 'mm' });
+    expect(await activity(USERS.jordan)).toHaveLength(mine.length);
+    expect(await activity(USERS.casey)).toEqual([]);
+  });
+});
+
 describe('file uploads', () => {
   const upload = (name: string, content: Buffer | string, user = USERS.alex) => {
     const form = new FormData();
@@ -188,18 +219,20 @@ describe('file uploads', () => {
   });
 });
 
-describe('agents by SAP module', () => {
-  it('offers one agent per module', async () => {
+describe('agents by SAP area', () => {
+  it('offers FICO, MM and SD', async () => {
     const workspace = await stack.request('GET', '/api/v1/workspace', USERS.jordan);
     const ids = (workspace.json.agents as { id: string }[]).map((a) => a.id);
-    expect(ids).toEqual(['general', 'sd', 'credit', 'fi-ar', 'mm', 'fi-ap', 'fi-gl', 'controls', 'maintenance']);
+    expect(ids).toEqual(['fico', 'mm', 'sd']);
+    expect(workspace.json.defaultAgent).toBe('fico');
   });
 
   it('keeps conversations of a former agent id working', async () => {
-    const { status, events } = await stack.chat(USERS.jordan, { message: 'Why is invoice 5100012345 blocked?', agent: 'fico' });
+    const { status, events } = await stack.chat(USERS.jordan, { message: 'Why is invoice 5100012345 blocked?', agent: 'fi-ap' });
     expect(status).toBe(200);
     expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('mm_getInvoice');
     expect((await stack.chat(USERS.jordan, { message: 'Check purchase order 4500012345', agent: 'procurement' })).status).toBe(200);
+    expect((await stack.chat(USERS.jordan, { message: 'Analyze maintenance history for equipment 20001234.', agent: 'maintenance' })).status).toBe(200);
   });
 
   it('traces order-to-cash with the SD agent', async () => {
@@ -209,8 +242,8 @@ describe('agents by SAP module', () => {
     expect(ofType(events, 'source')[0]!.source).toMatchObject({ objectType: 'SalesOrder', objectId: '648', mock: true });
   });
 
-  it('shows cleared and open customer items with the FI-AR agent', async () => {
-    const { events } = await stack.chat(USERS.jordan, { message: 'Show all line items of customer 7000000010 in company code 1030.', agent: 'fi-ar' });
+  it('shows cleared and open customer items with the FICO agent', async () => {
+    const { events } = await stack.chat(USERS.jordan, { message: 'Show all line items of customer 7000000010 in company code 1030.', agent: 'fico' });
     expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('ar_listCustomerOpenItems');
     const card = ofType(events, 'component').find((c) => c.component.type === 'open_items');
     expect(card?.component.data).toMatchObject({ accountType: 'CUSTOMER', account: '7000000010', total: { amount: 2500, currency: 'SAR' } });
@@ -221,11 +254,8 @@ describe('agents by SAP module', () => {
     expect(ofType(events, 'tool.start')).toHaveLength(0);
   });
 
-  it('keeps the controls agent read-only', async () => {
-    const { events } = await stack.chat(USERS.alex, { message: 'Release the payment block on invoice 5100012345.', agent: 'controls' });
-    expect(ofType(events, 'confirmation.required')).toHaveLength(0);
-    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('mm_getInvoice');
-    const overdue = await stack.chat(USERS.jordan, { message: 'Which receivables are overdue in company code 1030?', agent: 'controls' });
+  it('covers financial controls with the FICO agent', async () => {
+    const overdue = await stack.chat(USERS.jordan, { message: 'Which receivables are overdue in company code 1030?', agent: 'fico' });
     expect(ofType(overdue.events, 'tool.start')[0]!.tool.tool).toBe('ar_listOverdueReceivables');
   });
 });

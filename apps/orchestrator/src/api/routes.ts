@@ -4,6 +4,7 @@ import {
   FeedbackRequestSchema,
   RenameConversationSchema,
   StartRunSchema,
+  type HelpOverview,
   type WorkspaceConfig,
 } from '@prowess/contracts';
 import { metrics } from '@prowess/observability';
@@ -36,6 +37,19 @@ function auth(req: FastifyRequest): AuthContext {
   if (!req.auth) throw AppError.unauthenticated();
   return req.auth;
 }
+
+const USER_ACTIVITY: ReadonlySet<string> = new Set([
+  'SAP_READ',
+  'SAP_WRITE_REQUESTED',
+  'SAP_WRITE_CONFIRMED',
+  'SAP_WRITE_CANCELLED',
+  'SAP_WRITE_COMPLETED',
+  'SAP_WRITE_FAILED',
+  'WORKFLOW_STARTED',
+  'WORKFLOW_ENDED',
+]);
+
+const firstSentence = (text: string) => /^.*?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? text.trim();
 
 export function registerRoutes(app: FastifyInstance, s: Services): void {
   /* ---------------- health (unauthenticated, no data) ---------------- */
@@ -153,6 +167,44 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   app.delete('/api/v1/files/:id', async (req, reply) => {
     await s.files.delete(auth(req), parse(IdParam, req.params).id);
     return reply.code(204).send();
+  });
+
+  /* ---------------- help: what the user's agents can do, and the user's own activity ---------------- */
+  app.get('/api/v1/help', async (req): Promise<HelpOverview> => {
+    const { user } = auth(req);
+    const tools = await s.mcp.listTools(s.config.environment).catch(() => []);
+    const titles = new Map(tools.map((t) => [t.name, t.title]));
+    const names = new Map(s.agents.all().map((a) => [a.id, a.name]));
+    return {
+      agents: s.agents.forUser(user).map((a) => ({
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        icon: a.icon,
+        capabilities: s.agents.toolsFor(a, tools).map((t) => {
+          const risk = s.policy.effectiveRisk(t.name, t.risk);
+          return { title: t.title, description: firstSentence(t.description), risk, needsConfirmation: risk !== 'READ' };
+        }),
+      })),
+      // Only the caller's own events: the full trail stays with auditors and administrators.
+      activity: s.auditBuffer.events
+        .filter((e) => e.userId === user.id && e.tenantId === user.tenantId && USER_ACTIVITY.has(e.type))
+        .slice(0, 100)
+        .map((e) => {
+          const object = [e.details?.objectType, e.details?.objectId].filter(Boolean).join(' ');
+          const action = e.tool ? (titles.get(e.tool) ?? e.tool) : e.details?.workflow ? String(e.details.workflow) : undefined;
+          return {
+            id: e.id,
+            timestamp: e.timestamp,
+            type: e.type,
+            status: e.status,
+            ...(e.agent && { agent: names.get(e.agent) ?? e.agent }),
+            ...(action && { action }),
+            ...(object && { object }),
+            ...(e.targetSystem && { system: e.targetSystem }),
+          };
+        }),
+    };
   });
 
   /* ---------------- administration ---------------- */

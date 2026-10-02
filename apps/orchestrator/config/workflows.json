@@ -22,7 +22,7 @@
         {
           "id": "credit",
           "title": "Check the credit exposure",
-          "agent": "credit",
+          "agent": "fico",
           "tool": "credit_getCreditExposure",
           "arguments": { "customer": "${steps.order.soldTo}" },
           "haltWhen": [
@@ -67,7 +67,7 @@
         {
           "id": "receivable",
           "title": "Check the customer account",
-          "agent": "fi-ar",
+          "agent": "fico",
           "tool": "ar_listCustomerOpenItems",
           "arguments": { "customer": "${steps.order.soldTo}", "companyCode": "${input.companyCode}", "status": "OPEN" }
         }
@@ -126,7 +126,7 @@
         {
           "id": "payable",
           "title": "Check the supplier account",
-          "agent": "fi-ap",
+          "agent": "fico",
           "tool": "ap_listVendorOpenItems",
           "arguments": { "supplier": "${steps.order.supplier}", "companyCode": "${input.companyCode}", "status": "OPEN" }
         }

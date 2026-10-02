@@ -117,6 +117,17 @@ describe('OData V2: purchase-to-pay postings', () => {
     expect(receipts).toEqual([expect.objectContaining({ materialDocument: '5000000012', item: '10', quantity: 2 })]);
   });
 
+  it('encodes query parameter values, which the SDK would otherwise send as they are', async () => {
+    sdk.reply = () => ({ d: { results: [] } });
+    await gateway.getGoodsReceipts(ctx, '4200000403');
+
+    const request = sdk.sent[0]!.request as unknown as { params: Record<string, string>; parameterEncoder: (p: Record<string, string>) => Record<string, string> };
+    expect(request.parameterEncoder(request.params)).toMatchObject({
+      $format: 'json',
+      $filter: "PurchaseOrder%20eq%20'4200000403'%20and%20GoodsMovementType%20eq%20'101'",
+    });
+  });
+
   it('does not post a goods receipt for an order that is completely received', async () => {
     sdk.reply = (r) => {
       if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [receipt('5000000011', '10', '3'), receipt('5000000011', '20', '2')] } };

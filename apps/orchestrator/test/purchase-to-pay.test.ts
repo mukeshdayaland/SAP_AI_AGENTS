@@ -31,7 +31,7 @@ describe('purchase-to-pay workflow', () => {
 
     expect(ofType(events, 'tool.start').map((t) => `${t.tool.agent}/${t.tool.tool}`)).toEqual(['mm/mm_getPurchaseOrderFlow', 'mm/mm_postGoodsReceipt']);
     const card = ofType(events, 'component').filter((c) => c.component.type === 'workflow_run').at(-1)!.component.data as Card;
-    expect(card.steps.map((s) => `${s.id}:${s.agent}`)).toEqual(['order:MM Agent', 'receipt:MM Agent', 'invoice:MM Agent', 'verify:MM Agent', 'payable:FI-AP Agent']);
+    expect(card.steps.map((s) => `${s.id}:${s.agent}`)).toEqual(['order:MM', 'receipt:MM', 'invoice:MM', 'verify:MM', 'payable:FICO']);
     expect(states(card)).toEqual(['done', 'awaiting_confirmation', 'pending', 'pending', 'pending']);
     const first = ofType(events, 'confirmation.required')[0]!.confirmation;
     expect(first).toMatchObject({ action: 'Post goods receipt', risk: 'HIGH_IMPACT', proposedChange: 'Receive 3 PC RAW MATERIAL:ACGC from AL-QASSIM.' });
@@ -81,7 +81,7 @@ describe('purchase-to-pay workflow', () => {
 
   it('offers the workflow to the MM agent only', async () => {
     const stack = await freshStack();
-    const { events } = await stack.chat(USERS.jordan, { message: 'Run purchase-to-pay for purchase order 4200000403 in company code 1030 with invoice VEN004 for 3360.', agent: 'fi-ap' });
+    const { events } = await stack.chat(USERS.jordan, { message: 'Run purchase-to-pay for purchase order 4200000403 in company code 1030 with invoice VEN004 for 3360.', agent: 'fico' });
     expect(ofType(events, 'component').some((c) => c.component.type === 'workflow_run')).toBe(false);
     expect(ofType(events, 'confirmation.required')).toHaveLength(0);
   });

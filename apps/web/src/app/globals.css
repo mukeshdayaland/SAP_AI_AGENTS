@@ -189,6 +189,11 @@ body {
   border-radius: 6px;
 }
 
+/* For a field inside a frame that shows the focus itself (focus-within). */
+.focus-bare:focus-visible {
+  outline: none;
+}
+
 ::selection {
   background: var(--brand-primary-soft);
 }

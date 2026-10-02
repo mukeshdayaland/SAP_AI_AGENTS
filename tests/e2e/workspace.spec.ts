@@ -36,8 +36,8 @@ test.describe('Prowess AI workspace', () => {
 
   test('keyboard: Enter sends and Shift+Enter adds a line; tools are scoped to the agent', async ({ page }) => {
     await page.goto('/');
-    // Tools are scoped per agent: PM tools belong to the Maintenance Analyst.
-    await page.getByLabel('Agent').selectOption('maintenance');
+    // Tools are scoped per agent: PM tools belong to MM.
+    await page.getByLabel('Agent').selectOption('mm');
     const input = page.getByLabel(/Message/);
     await input.fill('Analyze maintenance history');
     await input.press('Shift+Enter');
@@ -45,12 +45,14 @@ test.describe('Prowess AI workspace', () => {
     await expect(input).toHaveValue('Analyze maintenance history\nfor equipment 20001234.');
     await input.press('Enter');
     await expect(page.getByRole('region', { name: /Maintenance history · 20001234/ })).toBeVisible();
-    await expect(page.getByRole('article', { name: 'Maintenance Analyst response' })).toBeVisible();
+    await expect(page.getByRole('article', { name: 'MM response' })).toBeVisible();
   });
 
   test('theme can be switched and persists', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: /^Theme:/ }).click();
+    await page.getByRole('button', { name: 'Account' }).click();
+    await page.getByRole('menuitem', { name: 'Settings' }).click();
+    await page.getByRole('radio', { name: 'Dark' }).click();
     const theme = await page.evaluate(() => document.documentElement.dataset.theme);
     await page.reload();
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);

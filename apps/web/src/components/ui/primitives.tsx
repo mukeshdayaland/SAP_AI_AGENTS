@@ -48,7 +48,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }>(
   function IconButton({ label, active, className, children, ...props }, ref) {
     return (
-      <Tooltip label={label}>
+      <Tooltip label={label} side="bottom">
         <button
           ref={ref}
           type="button"
@@ -94,7 +94,7 @@ export function Tooltip({ label, children, side = 'top' }: { label: string; chil
           role="tooltip"
           id={id}
           className={cx(
-            'pointer-events-none absolute left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-md bg-ink px-2 py-1 text-xs font-medium text-bg shadow-lift',
+            'pointer-events-none absolute left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-md border border-line bg-elevated px-2 py-1 text-xs font-medium text-ink-2 shadow-lift',
             side === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5',
           )}
         >
@@ -174,7 +174,21 @@ export function Dialog({ open, onClose, title, children, wide }: { open: boolean
 /* ------------------------------ Menu ------------------------------ */
 
 /** Minimal accessible popover menu (button + role=menu, Escape/outside click closes). */
-export function Menu({ trigger, label, children, align = 'right' }: { trigger: ReactNode; label: string; children: (close: () => void) => ReactNode; align?: 'left' | 'right' }) {
+export function Menu({
+  trigger,
+  label,
+  children,
+  align = 'right',
+  side = 'bottom',
+  triggerClassName = 'inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-muted',
+}: {
+  trigger: ReactNode;
+  label: string;
+  children: (close: () => void) => ReactNode;
+  align?: 'left' | 'right';
+  side?: 'top' | 'bottom';
+  triggerClassName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -199,7 +213,7 @@ export function Menu({ trigger, label, children, align = 'right' }: { trigger: R
         aria-controls={id}
         aria-label={label}
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-muted"
+        className={triggerClassName}
       >
         {trigger}
       </button>
@@ -214,7 +228,7 @@ export function Menu({ trigger, label, children, align = 'right' }: { trigger: R
             if (e.key === 'ArrowDown') items[(i + 1) % items.length]?.focus();
             if (e.key === 'ArrowUp') items[(i - 1 + items.length) % items.length]?.focus();
           }}
-          className={cx('absolute z-40 mt-1 min-w-56 rounded-area border border-line bg-elevated p-1.5 shadow-lift', align === 'right' ? 'right-0' : 'left-0')}
+          className={cx('absolute z-40 min-w-56 rounded-area border border-line bg-elevated p-1.5 shadow-lift', side === 'top' ? 'bottom-full mb-1' : 'mt-1', align === 'right' ? 'right-0' : 'left-0')}
         >
           {children(() => setOpen(false))}
         </div>

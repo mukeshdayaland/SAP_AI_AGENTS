@@ -166,6 +166,7 @@ export function Workspace() {
           collapsed={collapsed}
           mobileOpen={mobileOpen}
           user={config.user}
+          showAdmin={config.features.admin || config.features.audit}
           onToggle={() => {
             prefs.setSidebarCollapsed(!collapsed);
             setCollapsed(!collapsed);
@@ -192,13 +193,10 @@ export function Workspace() {
             agent={agent}
             tier={tier}
             title={chat.title}
-            theme={theme}
             locked={chat.streaming}
             onAgent={setAgent}
             onTier={setTier}
-            onTheme={changeTheme}
             onOpenSidebar={() => setMobileOpen(true)}
-            onSettings={() => setSettingsOpen(true)}
           />
 
           <main
@@ -278,7 +276,6 @@ export function Workspace() {
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        config={config}
         theme={theme}
         onTheme={changeTheme}
         sendKey={sendKey}

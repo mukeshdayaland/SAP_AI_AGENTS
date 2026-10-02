@@ -3,6 +3,7 @@ import type {
   ConfirmationRequest,
   ConversationDetail,
   ConversationSummary,
+  HelpOverview,
   MessageDTO,
   PublicError,
   StreamEvent,
@@ -73,6 +74,7 @@ export const api = {
   confirm: (id: string, acknowledgeEnvironment?: string) =>
     request<{ confirmation: ConfirmationRequest; message: MessageDTO; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/confirm`, acknowledgeEnvironment ? { acknowledgeEnvironment } : {}),
   cancel: (id: string) => request<{ confirmation: ConfirmationRequest; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/cancel`, {}),
+  help: () => request<HelpOverview>('GET', '/help'),
   adminOverview: () => request<Record<string, unknown>>('GET', '/admin/overview'),
   audit: () => request<{ events: Record<string, unknown>[] }>('GET', '/admin/audit'),
 

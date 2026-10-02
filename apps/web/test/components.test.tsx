@@ -130,14 +130,14 @@ describe('SAP component registry', () => {
         status: 'blocked',
         reason: 'The sales order is blocked by the credit check.',
         steps: [
-          { id: 'order', title: 'Check the sales order', agent: 'SD Agent', state: 'done', detail: 'Sales order 650 is worth SAR 140,000.' },
-          { id: 'credit', title: 'Check the credit exposure', agent: 'Credit Agent', state: 'done' },
-          { id: 'delivery', title: 'Create the outbound delivery', agent: 'SD Agent', state: 'pending' },
+          { id: 'order', title: 'Check the sales order', agent: 'SD', state: 'done', detail: 'Sales order 650 is worth SAR 140,000.' },
+          { id: 'credit', title: 'Check the credit exposure', agent: 'FICO', state: 'done' },
+          { id: 'delivery', title: 'Create the outbound delivery', agent: 'SD', state: 'pending' },
         ],
       },
     };
     const html = renderToStaticMarkup(<SapComponent component={run} />);
-    for (const text of ['Process run', 'Order-to-cash for sales order 650', 'Blocked', '2 of 3 steps done', 'Credit Agent', 'Not started', 'blocked by the credit check']) {
+    for (const text of ['Process run', 'Order-to-cash for sales order 650', 'Blocked', '2 of 3 steps done', 'FICO', 'Not started', 'blocked by the credit check']) {
       expect(html).toContain(text);
     }
   });

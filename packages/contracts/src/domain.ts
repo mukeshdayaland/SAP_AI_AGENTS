@@ -238,6 +238,40 @@ export interface WorkspaceConfig {
   uploads: { maxBytes: number; accept: string[] };
 }
 
+/** What one agent can do for the user, in business terms. */
+export interface HelpCapability {
+  title: string;
+  description: string;
+  risk: ToolRisk;
+  /** A change in SAP: the user confirms it before it is posted. */
+  needsConfirmation: boolean;
+}
+
+export interface HelpAgent {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  capabilities: HelpCapability[];
+}
+
+/** One of the user's own SAP reads, changes or process runs. */
+export interface ActivityEntry {
+  id: string;
+  timestamp: string;
+  type: string;
+  agent?: string;
+  action?: string;
+  object?: string;
+  system?: string;
+  status: 'success' | 'failure' | 'denied' | 'pending';
+}
+
+export interface HelpOverview {
+  agents: HelpAgent[];
+  activity: ActivityEntry[];
+}
+
 /* ------------------------------------------------------------------ */
 /* Errors                                                              */
 /* ------------------------------------------------------------------ */

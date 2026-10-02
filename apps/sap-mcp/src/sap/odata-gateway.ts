@@ -128,6 +128,8 @@ function odataDate(v: unknown): string | undefined {
 const toODataDate = (isoDate: string) => `/Date(${Date.parse(`${isoDate}T00:00:00Z`)})/`;
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
+const encodeParameterValues = (params: Record<string, unknown>) => Object.fromEntries(Object.entries(params).map(([key, value]) => [key, encodeURIComponent(String(value))]));
+
 const num = (v: unknown) => (typeof v === 'number' ? v : Number.parseFloat(String(v ?? '0')) || 0);
 
 function statusOf(err: unknown): number | undefined {
@@ -207,7 +209,8 @@ export class ODataSapGateway implements SapGateway {
         {
           method,
           url,
-          ...(params && { params }),
+          // The SDK sends parameters of a plain request config as they are, so $filter values must be encoded here.
+          ...(params && { params, parameterEncoder: encodeParameterValues }),
           ...(write?.body !== undefined && { data: write.body }),
           headers: { accept: 'application/json', 'x-correlation-id': ctx.correlationId, ...write?.headers },
           timeout: 20_000,
