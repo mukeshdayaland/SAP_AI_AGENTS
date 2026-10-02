@@ -31,6 +31,9 @@ import {
   type MaintenanceEvent,
   type MaintenanceNotification,
   type MaterialStock,
+  type NewPurchaseOrder,
+  type NewPurchaseRequisition,
+  type NewSupplierInvoice,
   type OpenItem,
   type OpenItemQuery,
   type OutboundDelivery,
@@ -229,6 +232,10 @@ const GL: GLBalance[] = [
 
 /** Assumed valuation price per unit of the scenario material, used to value mock goods issues. */
 const MOCK_VALUATION_PRICE = 1_000;
+/** VAT rate of the scenario tax code V1 and the invoice-verification price tolerance. */
+const MOCK_TAX_RATE = 0.12;
+const MOCK_PRICE_TOLERANCE = 0.02;
+const fmtSar = (amount: number) => `SAR ${amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 
 /** Simulated SAP authorizations per user (the SAP system's view, not Prowess roles). */
 interface SapAuth {
@@ -245,6 +252,9 @@ export class MockSapGateway implements SapGateway {
   readonly mock = true;
   private readonly invoices = structuredClone(INVOICES);
   private readonly notes = new Map<string, string[]>();
+  private readonly purchaseOrders = structuredClone(PURCHASE_ORDERS);
+  private readonly goodsReceipts = structuredClone(GOODS_RECEIPTS);
+  private readonly requisitions = structuredClone(REQUISITIONS);
   // Order-to-cash documents are mutable so the write tools can be exercised end to end.
   private readonly salesOrders = structuredClone(SCENARIO_SALES_ORDERS);
   private readonly deliveries = structuredClone(SCENARIO_DELIVERIES);
@@ -253,7 +263,18 @@ export class MockSapGateway implements SapGateway {
   private readonly journals = structuredClone(SCENARIO_JOURNALS);
   private readonly lineItems = structuredClone(SCENARIO_LINE_ITEMS);
   private readonly stock = structuredClone(SCENARIO_STOCK);
-  private readonly lastNumber = { delivery: 80000257, goodsIssue: 1000000009, billing: 90000181, accounting: 1000000019 };
+  private readonly lastNumber = {
+    delivery: 80000257,
+    goodsIssue: 1000000009,
+    billing: 90000181,
+    accounting: 1000000019,
+    requisition: 1000056789,
+    purchaseOrder: 4200000403,
+    materialDocument: 7000000461,
+    goodsReceiptPosting: 1002001,
+    invoice: 5105600002,
+    invoicePosting: 2001001,
+  };
 
   constructor(private readonly latencyMs = 150) {}
 
@@ -302,19 +323,19 @@ export class MockSapGateway implements SapGateway {
 
   async getPurchaseOrder(ctx: SapCallContext, number: string): Promise<PurchaseOrder> {
     await this.latency();
-    const po = this.find(PURCHASE_ORDERS, (p) => p.number === number, 'Purchase order', number);
+    const po = this.find(this.purchaseOrders, (p) => p.number === number, 'Purchase order', number);
     this.requireCompanyCode(ctx, po.companyCode, `purchase order ${number}`);
     return po;
   }
 
   async getPurchaseRequisition(_ctx: SapCallContext, number: string): Promise<PurchaseRequisition> {
     await this.latency();
-    return this.find(REQUISITIONS, (p) => p.number === number, 'Purchase requisition', number);
+    return this.find(this.requisitions, (p) => p.number === number, 'Purchase requisition', number);
   }
 
   async getGoodsReceipts(ctx: SapCallContext, purchaseOrder: string): Promise<GoodsReceipt[]> {
     await this.getPurchaseOrder(ctx, purchaseOrder);
-    return structuredClone(GOODS_RECEIPTS.filter((g) => g.purchaseOrder === purchaseOrder));
+    return structuredClone(this.goodsReceipts.filter((g) => g.purchaseOrder === purchaseOrder));
   }
 
   async getEquipment(_ctx: SapCallContext, number: string): Promise<Equipment> {
@@ -345,7 +366,7 @@ export class MockSapGateway implements SapGateway {
       ...this.invoices
         .filter((i) => allowed.includes(i.companyCode))
         .map((i) => ({ objectType: 'SupplierInvoice', objectId: i.number, title: `Invoice ${i.number}`, subtitle: `${i.vendorName} · ${i.status}` })),
-      ...PURCHASE_ORDERS.map((p) => ({ objectType: 'PurchaseOrder', objectId: p.number, title: `Purchase order ${p.number}`, subtitle: p.vendorName })),
+      ...this.purchaseOrders.map((p) => ({ objectType: 'PurchaseOrder', objectId: p.number, title: `Purchase order ${p.number}`, subtitle: p.vendorName })),
       ...this.salesOrders.map((o) => ({ objectType: 'SalesOrder', objectId: o.number, title: `Sales order ${o.number}`, subtitle: o.soldToName })),
       ...SCENARIO_CUSTOMERS.map((c) => ({ objectType: 'Customer', objectId: c.id, title: c.name, subtitle: `${c.city}, ${c.country}` })),
       ...VENDORS.map((v) => ({ objectType: 'Supplier', objectId: v.id, title: v.name, subtitle: `${v.city}, ${v.country}` })),
@@ -438,6 +459,177 @@ export class MockSapGateway implements SapGateway {
 
   private nextNumber(kind: keyof MockSapGateway['lastNumber']): string {
     return String(++this.lastNumber[kind]);
+  }
+
+  async getInvoicesForPurchaseOrder(ctx: SapCallContext, purchaseOrder: string): Promise<Invoice[]> {
+    await this.getPurchaseOrder(ctx, purchaseOrder);
+    return structuredClone(this.invoices.filter((i) => i.purchaseOrder === purchaseOrder && i.status !== 'REVERSED'));
+  }
+
+  async createPurchaseRequisition(_ctx: SapCallContext, requisition: NewPurchaseRequisition): Promise<PurchaseRequisition> {
+    await this.latency();
+    const source = SCENARIO_INFO_RECORDS.find((r) => r.material === requisition.material);
+    if (!source) throw new SapError('BUSINESS_RULE', `Material ${requisition.material} is not maintained for purchasing in plant ${requisition.plant}.`);
+    const created: PurchaseRequisition = {
+      number: this.nextNumber('requisition'),
+      requester: 'Prowess AI',
+      value: { amount: source.netPrice.amount * requisition.quantity, currency: source.netPrice.currency },
+      status: 'OPEN',
+      createdOn: new Date().toISOString().slice(0, 10),
+      description: `${requisition.quantity} x material ${requisition.material} for plant ${requisition.plant}`,
+    };
+    this.requisitions.push(created);
+    return structuredClone(created);
+  }
+
+  async createPurchaseOrder(ctx: SapCallContext, order: NewPurchaseOrder): Promise<PurchaseOrder> {
+    await this.latency();
+    this.requireCompanyCode(ctx, order.companyCode, 'creating a purchase order');
+    const vendor = VENDORS.find((v) => v.id === order.supplier);
+    if (!vendor) throw new SapError('NOT_FOUND', `Supplier ${order.supplier} was not found in SAP.`);
+    if (vendor.postingBlocked) throw new SapError('BUSINESS_RULE', `Supplier ${order.supplier} is blocked for purchasing.`);
+    const source = SCENARIO_INFO_RECORDS.find((r) => r.material === order.material && r.supplier === order.supplier);
+    const price = order.netPrice ?? source?.netPrice.amount;
+    if (price === undefined) throw new SapError('BUSINESS_RULE', `No net price was given and no info record exists for material ${order.material} and supplier ${order.supplier}.`);
+    const stock = this.stock.find((r) => r.material === order.material);
+    const created: PurchaseOrder = {
+      number: this.nextNumber('purchaseOrder'),
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+      value: SAR(price * order.quantity),
+      status: 'RELEASED',
+      createdOn: new Date().toISOString().slice(0, 10),
+      purchasingGroup: order.purchasingGroup,
+      companyCode: order.companyCode,
+      items: [{ item: '10', material: order.material, description: stock?.description ?? order.material, quantity: order.quantity, unit: stock?.unit ?? 'PC', netPrice: SAR(price), netValue: SAR(price * order.quantity) }],
+    };
+    this.purchaseOrders.push(created);
+    return structuredClone(created);
+  }
+
+  async postGoodsReceipt(ctx: SapCallContext, purchaseOrder: string): Promise<GoodsReceipt[]> {
+    await this.latency();
+    const po = this.purchaseOrders.find((p) => p.number === purchaseOrder);
+    if (!po) throw new SapError('NOT_FOUND', `Purchase order ${purchaseOrder} was not found in SAP.`);
+    this.requireCompanyCode(ctx, po.companyCode, `purchase order ${purchaseOrder}`);
+    if (po.status === 'DRAFT' || po.status === 'AWAITING_APPROVAL') throw new SapError('BUSINESS_RULE', `Purchase order ${purchaseOrder} is not released, so goods cannot be received against it.`);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const posted: GoodsReceipt[] = [];
+    for (const i of po.items) {
+      const received = this.goodsReceipts.filter((g) => g.purchaseOrder === po.number && g.item === i.item).reduce((sum, g) => sum + g.quantity, 0);
+      const open = i.quantity - received;
+      if (open <= 0) continue;
+      posted.push({ materialDocument: '', year: today.slice(0, 4), purchaseOrder: po.number, item: i.item, postingDate: today, quantity: open, unit: i.unit, value: { amount: open * i.netPrice.amount, currency: i.netPrice.currency } });
+      const row = this.stock.find((r) => r.material === i.material);
+      if (row) row.unrestricted += open;
+    }
+    if (!posted.length) throw new SapError('BUSINESS_RULE', `Purchase order ${purchaseOrder} is already completely received.`);
+
+    const materialDocument = this.nextNumber('materialDocument');
+    for (const g of posted) g.materialDocument = materialDocument;
+    this.goodsReceipts.push(...posted);
+    po.status = 'DELIVERED';
+
+    const value = posted.reduce((sum, g) => sum + (g.value?.amount ?? 0), 0);
+    const document = this.nextNumber('goodsReceiptPosting');
+    this.journals.push({
+      companyCode: po.companyCode,
+      fiscalYear: today.slice(0, 4),
+      number: document,
+      documentType: 'WE',
+      postingDate: today,
+      documentDate: today,
+      reference: po.number,
+      items: [
+        { item: '1', account: '200040', description: 'RAW MATERIAL', amount: SAR(value), debitCredit: 'D' },
+        { item: '2', account: '500030', description: 'GR/IR Clearing', amount: SAR(-value), debitCredit: 'C' },
+      ],
+    });
+    this.lineItems.push({ companyCode: po.companyCode, fiscalYear: today.slice(0, 4), document, item: '2', documentType: 'WE', accountType: 'GL', account: '500030', accountName: 'GR/IR Clearing', postingDate: today, amount: SAR(-value), assignment: po.number });
+    return structuredClone(posted);
+  }
+
+  async createSupplierInvoice(ctx: SapCallContext, invoice: NewSupplierInvoice): Promise<Invoice> {
+    await this.latency();
+    const po = this.purchaseOrders.find((p) => p.number === invoice.purchaseOrder);
+    if (!po) throw new SapError('NOT_FOUND', `Purchase order ${invoice.purchaseOrder} was not found in SAP.`);
+    this.requireCompanyCode(ctx, po.companyCode, `purchase order ${po.number}`);
+    if (this.invoices.some((i) => i.purchaseOrder === po.number && i.status !== 'REVERSED')) {
+      throw new SapError('BUSINESS_RULE', `Purchase order ${po.number} has already been invoiced.`);
+    }
+    if (this.invoices.some((i) => i.vendorId === po.vendorId && i.reference === invoice.reference)) {
+      throw new SapError('BUSINESS_RULE', `Supplier ${po.vendorId} already has an invoice with reference ${invoice.reference} (duplicate invoice check).`);
+    }
+
+    // Three-way match: the invoice is compared with what was received at the order price.
+    const receivedNet = this.goodsReceipts.filter((g) => g.purchaseOrder === po.number).reduce((sum, g) => sum + (g.value?.amount ?? 0), 0);
+    const expectedGross = Math.round(receivedNet * (1 + MOCK_TAX_RATE) * 100) / 100;
+    const variances: NonNullable<Invoice['varianceChecks']> = [];
+    if (receivedNet === 0) {
+      variances.push({ type: 'QUANTITY', message: `Invoice received for purchase order ${po.number}, but no goods receipt has been posted.`, withinTolerance: false });
+    } else if (Math.abs(invoice.grossAmount - expectedGross) > expectedGross * MOCK_PRICE_TOLERANCE) {
+      variances.push({
+        type: 'PRICE',
+        message: `Invoiced ${fmtSar(invoice.grossAmount)} gross, but the goods received are worth ${fmtSar(expectedGross)} gross (tolerance ${MOCK_PRICE_TOLERANCE * 100}%).`,
+        withinTolerance: false,
+      });
+    }
+    const blocked = variances.length > 0;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const created: Invoice = {
+      number: this.nextNumber('invoice'),
+      fiscalYear: today.slice(0, 4),
+      companyCode: po.companyCode,
+      vendorId: po.vendorId,
+      vendorName: po.vendorName,
+      gross: SAR(invoice.grossAmount),
+      postingDate: today,
+      dueDate: today,
+      status: blocked ? 'PAYMENT_BLOCKED' : 'OPEN',
+      paymentBlock: blocked ? { code: 'R', description: 'Invoice verification' } : null,
+      purchaseOrder: po.number,
+      varianceChecks: variances,
+      reference: invoice.reference,
+    };
+    this.invoices.push(created);
+
+    const net = Math.round((invoice.grossAmount / (1 + MOCK_TAX_RATE)) * 100) / 100;
+    const document = this.nextNumber('invoicePosting');
+    this.journals.push({
+      companyCode: po.companyCode,
+      fiscalYear: created.fiscalYear,
+      number: document,
+      documentType: 'RE',
+      postingDate: today,
+      documentDate: invoice.invoiceDate ?? today,
+      reference: invoice.reference,
+      items: [
+        { item: '1', account: po.vendorId, description: po.vendorName, amount: SAR(-invoice.grossAmount), debitCredit: 'C' },
+        { item: '2', account: '500030', description: 'GR/IR Clearing', amount: SAR(net), debitCredit: 'D' },
+        { item: '3', account: '200025', description: 'VAT 12%-PURC TAX', amount: SAR(Math.round((invoice.grossAmount - net) * 100) / 100), debitCredit: 'D' },
+      ],
+    });
+    this.lineItems.push(
+      {
+        companyCode: po.companyCode,
+        fiscalYear: created.fiscalYear,
+        document,
+        item: '1',
+        documentType: 'RE',
+        accountType: 'SUPPLIER',
+        account: po.vendorId,
+        accountName: po.vendorName,
+        postingDate: today,
+        dueDate: today,
+        amount: SAR(-invoice.grossAmount),
+        assignment: invoice.reference,
+        ...(blocked && { paymentBlock: 'R' }),
+      },
+      { companyCode: po.companyCode, fiscalYear: created.fiscalYear, document, item: '2', documentType: 'RE', accountType: 'GL', account: '500030', accountName: 'GR/IR Clearing', postingDate: today, amount: SAR(net), assignment: po.number },
+    );
+    return structuredClone(created);
   }
 
   async createDelivery(_ctx: SapCallContext, salesOrder: string): Promise<OutboundDelivery> {

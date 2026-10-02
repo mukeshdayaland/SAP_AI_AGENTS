@@ -72,6 +72,65 @@
           "arguments": { "customer": "${steps.order.soldTo}", "companyCode": "${input.companyCode}", "status": "OPEN" }
         }
       ]
+    },
+    {
+      "id": "purchase-to-pay",
+      "name": "Purchase-to-pay",
+      "description": "Takes a purchase order through goods receipt and supplier invoice with three-way match, then verifies the document flow and the supplier account.",
+      "agents": ["mm"],
+      "subject": "purchase order ${input.purchaseOrder}",
+      "input": [
+        { "name": "purchaseOrder", "label": "Purchase order", "pattern": "^\\d{10}$" },
+        { "name": "companyCode", "label": "Company code", "pattern": "^[A-Z0-9]{4}$" },
+        { "name": "invoiceReference", "label": "Supplier invoice number", "pattern": "^[A-Za-z0-9./-]{1,16}$" },
+        { "name": "invoiceAmount", "label": "Invoice gross amount", "pattern": "^\\d{1,12}(\\.\\d{1,2})?$" }
+      ],
+      "steps": [
+        {
+          "id": "order",
+          "title": "Check the purchase order",
+          "agent": "mm",
+          "tool": "mm_getPurchaseOrderFlow",
+          "arguments": { "purchaseOrderNumber": "${input.purchaseOrder}" }
+        },
+        {
+          "id": "receipt",
+          "title": "Post the goods receipt",
+          "agent": "mm",
+          "tool": "mm_postGoodsReceipt",
+          "arguments": { "purchaseOrder": "${input.purchaseOrder}" },
+          "skipWhen": [{ "value": "${steps.order.received}", "equals": "true" }]
+        },
+        {
+          "id": "invoice",
+          "title": "Enter the supplier invoice",
+          "agent": "mm",
+          "tool": "mm_createSupplierInvoice",
+          "arguments": { "purchaseOrder": "${input.purchaseOrder}", "reference": "${input.invoiceReference}", "grossAmount": "${input.invoiceAmount}" },
+          "skipWhen": [{ "value": "${steps.order.invoiced}", "equals": "true" }]
+        },
+        {
+          "id": "verify",
+          "title": "Verify the document flow",
+          "agent": "mm",
+          "tool": "mm_getPurchaseOrderFlow",
+          "arguments": { "purchaseOrderNumber": "${input.purchaseOrder}" },
+          "haltWhen": [
+            {
+              "value": "${steps.verify.paymentBlocked}",
+              "equals": "true",
+              "reason": "The supplier invoice is blocked for payment by invoice verification. The variance must be resolved before it can be paid."
+            }
+          ]
+        },
+        {
+          "id": "payable",
+          "title": "Check the supplier account",
+          "agent": "fi-ap",
+          "tool": "ap_listVendorOpenItems",
+          "arguments": { "supplier": "${steps.order.supplier}", "companyCode": "${input.companyCode}", "status": "OPEN" }
+        }
+      ]
     }
   ]
 }

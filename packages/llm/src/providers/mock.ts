@@ -21,6 +21,20 @@ const INTENTS: Intent[] = [
   { tool: 'addInvoiceNote', when: /\b(add|attach|post) (a )?(note|comment)\b/i, pattern: /\b(51\d{8})\b/, args: (m, t) => ({ invoiceNumber: m[1], note: (/["“](.+?)["”]/.exec(t)?.[1] ?? 'Reviewed via Prowess AI').slice(0, 200) }) },
   { tool: 'getPaymentStatus', when: /\bpayment status|paid\b/i, pattern: /\b(51\d{8})\b/, args: (m) => ({ invoiceNumber: m[1] }) },
   { tool: 'getInvoice', pattern: /\b(51\d{8})\b/, args: (m) => ({ invoiceNumber: m[1] }) },
+  {
+    tool: 'start',
+    when: /\b(run|start|process|carry out)\b/i,
+    pattern: /\bpurchase order\D{0,12}(4[25]\d{8})\b/i,
+    args: (m, t) => ({
+      workflow: 'purchase-to-pay',
+      input: {
+        purchaseOrder: m[1],
+        companyCode: companyCodeIn(t),
+        invoiceReference: /\binvoice\s+([A-Z0-9./-]{1,16})\b/i.exec(t)?.[1] ?? '',
+        invoiceAmount: (/\bfor\s+(?:[A-Z]{3}\s*)?(\d[\d,]*(?:\.\d{1,2})?)(?!\d)/i.exec(t.replace(m[1]!, ''))?.[1] ?? '').replaceAll(',', ''),
+      },
+    }),
+  },
   { tool: 'getGoodsReceipt', when: /\bgoods receipt|GR\b/i, pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrder: m[1] }) },
   { tool: 'getPurchaseOrder', pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrderNumber: m[1] }) },
   {

@@ -33,6 +33,11 @@ authorizes them, and the MCP server executes them against SAP.
 | MM | `mm_getInvoice` | READ | Header, payment block, verification issues (MIRO) |
 | MM | `mm_analyzeInvoice` | READ | Invoice vs PO vs goods receipts → findings and next steps |
 | MM | `mm_listBlockedInvoices` | READ | Invoices blocked for payment (MRBR worklist) |
+| MM | `mm_getPurchaseOrderFlow` | READ | Order → goods receipt → supplier invoice, with open quantities and the outstanding step |
+| MM | `mm_createPurchaseRequisition` | BUSINESS_WRITE | Confirmation required. Requisition for a material (ME51N) |
+| MM | `mm_createPurchaseOrder` | HIGH_IMPACT | Confirmation required. Standard order; price from the info record unless given (ME21N) |
+| MM | `mm_postGoodsReceipt` | HIGH_IMPACT | Confirmation required. Receives the open quantity of a purchase order (MIGO, movement 101) |
+| MM | `mm_createSupplierInvoice` | HIGH_IMPACT | Confirmation required. Invoice for the received quantity (MIRO); SAP blocks it for payment on a variance |
 | MM | `mm_addInvoiceNote` | LOW_RISK_WRITE | Confirmation required |
 | MM | `mm_releaseInvoicePaymentBlock` | HIGH_IMPACT | Confirmation required; SAP release authorization |
 | PM | `pm_getEquipment`, `pm_getNotification`, `pm_getWorkOrder`, `pm_getMaintenanceHistory` | READ | |

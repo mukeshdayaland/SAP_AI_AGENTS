@@ -29,6 +29,18 @@ Workflows live in `apps/orchestrator/config/workflows.json` and are validated at
 - `skipWhen` makes a run safe to repeat: a posting that is already done in SAP is skipped, not posted twice.
 - `haltWhen` stops the run as **blocked** after the step, with the given reason (for example a credit block).
 
+## Delivered workflows
+
+| Workflow | Started by | Steps (owning agent) |
+| --- | --- | --- |
+| `order-to-cash` | SD agent | check order (SD) → credit exposure (Credit) → delivery (SD) → goods issue (SD) → billing (SD) → verify flow (SD) → customer account (FI-AR) |
+| `purchase-to-pay` | MM agent | check order (MM) → goods receipt (MM) → supplier invoice (MM) → verify flow (MM) → supplier account (FI-AP) |
+
+Purchase-to-pay takes the purchase order, the company code, the supplier's invoice number and its gross amount. The
+goods receipt covers the quantity still open; the invoice covers the quantity received, at the order price. If
+invoice verification blocks the invoice for payment (price or quantity variance), the run ends as **blocked** and the
+block is released separately with `mm_releaseInvoicePaymentBlock`. Payment itself is not part of the workflow.
+
 ## How a run executes
 
 ```mermaid
@@ -76,5 +88,7 @@ PostgreSQL (migration 2). Runs are owner-scoped like conversations.
 
 - Runs start from a chat turn or an API call. There is no scheduler yet.
 - A run's confirmation can only be given by the user who started it. Approval by a second person is not built yet.
-- Against real S/4HANA, the three postings are mapped (`sd_createBillingDocument` through the OData V4 action
-  `CreateFromSDDocument`) but have not yet been run against the system.
+- Against real S/4HANA, the order-to-cash postings (`sd_createBillingDocument` through the OData V4 action
+  `CreateFromSDDocument`) and the purchase-to-pay postings are mapped but have not yet been run against the system.
+- The demo gateway checks an invoice against the goods received with a fixed 12 % tax rate and a 2 % tolerance. In
+  S/4HANA the tax code and the tolerance keys of the company code decide.

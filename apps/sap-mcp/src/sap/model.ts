@@ -23,6 +23,8 @@ export interface Invoice {
   varianceChecks?: { type: 'PRICE' | 'QUANTITY' | 'DATE' | 'OTHER'; message: string; withinTolerance: boolean }[];
   paidOn?: string;
   paymentDocument?: string;
+  /** The supplier's own invoice number. */
+  reference?: string;
 }
 
 export interface Vendor {
@@ -58,6 +60,35 @@ export interface PurchaseOrder {
   purchasingGroup?: string;
   companyCode: string;
   items: PurchaseOrderItem[];
+}
+
+export interface NewPurchaseRequisition {
+  material: string;
+  plant: string;
+  quantity: number;
+  deliveryDate?: string;
+}
+
+export interface NewPurchaseOrder {
+  supplier: string;
+  material: string;
+  plant: string;
+  quantity: number;
+  companyCode: string;
+  purchasingOrganization: string;
+  purchasingGroup: string;
+  /** Net price per unit. Omit to let SAP take it from the info record. */
+  netPrice?: number;
+}
+
+export interface NewSupplierInvoice {
+  purchaseOrder: string;
+  /** The supplier's own invoice number. */
+  reference: string;
+  /** Gross amount as printed on the supplier's invoice, in the purchase order currency. */
+  grossAmount: number;
+  taxCode?: string;
+  invoiceDate?: string;
 }
 
 export interface PurchaseRequisition {
@@ -371,6 +402,14 @@ export interface SapGateway {
   getMaterialStock(ctx: SapCallContext, material: string, plant?: string): Promise<MaterialStock[]>;
   getInfoRecords(ctx: SapCallContext, material: string, supplier?: string): Promise<InfoRecord[]>;
   listBlockedInvoices(ctx: SapCallContext, companyCode: string): Promise<Invoice[]>;
+
+  getInvoicesForPurchaseOrder(ctx: SapCallContext, purchaseOrder: string): Promise<Invoice[]>;
+  createPurchaseRequisition(ctx: SapCallContext, requisition: NewPurchaseRequisition): Promise<PurchaseRequisition>;
+  createPurchaseOrder(ctx: SapCallContext, order: NewPurchaseOrder): Promise<PurchaseOrder>;
+  /** Posts a goods receipt (movement type 101) for all open quantities of a purchase order (MIGO). */
+  postGoodsReceipt(ctx: SapCallContext, purchaseOrder: string): Promise<GoodsReceipt[]>;
+  /** Posts a supplier invoice against a purchase order (MIRO). SAP may post it blocked for payment. */
+  createSupplierInvoice(ctx: SapCallContext, invoice: NewSupplierInvoice): Promise<Invoice>;
 
   /** Creates an outbound delivery for all open items of a sales order (VL01N). */
   createDelivery(ctx: SapCallContext, salesOrder: string): Promise<OutboundDelivery>;

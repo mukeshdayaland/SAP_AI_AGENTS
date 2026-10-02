@@ -64,7 +64,17 @@ describe('tool domains follow SAP modules', () => {
     }
     expect([...byDomain.keys()].sort()).toEqual([...BUSINESS_DOMAINS, 'system'].sort());
     const writes = tools.filter((t) => t._meta?.[MCP_META.risk] !== 'READ').map((t) => t.name);
-    expect(writes.sort()).toEqual(['mm_addInvoiceNote', 'mm_releaseInvoicePaymentBlock', 'sd_createBillingDocument', 'sd_createDelivery', 'sd_postGoodsIssue']);
+    expect(writes.sort()).toEqual([
+      'mm_addInvoiceNote',
+      'mm_createPurchaseOrder',
+      'mm_createPurchaseRequisition',
+      'mm_createSupplierInvoice',
+      'mm_postGoodsReceipt',
+      'mm_releaseInvoicePaymentBlock',
+      'sd_createBillingDocument',
+      'sd_createDelivery',
+      'sd_postGoodsIssue',
+    ]);
   });
 
   it('expands the former fico domain so existing deployments keep their tools', () => {

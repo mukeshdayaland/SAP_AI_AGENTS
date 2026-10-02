@@ -15,6 +15,9 @@ import {
   type MaintenanceEvent,
   type MaintenanceNotification,
   type MaterialStock,
+  type NewPurchaseOrder,
+  type NewPurchaseRequisition,
+  type NewSupplierInvoice,
   type OpenItem,
   type OpenItemQuery,
   type OutboundDelivery,
@@ -120,6 +123,10 @@ function odataDate(v: unknown): string | undefined {
   if (ms) return new Date(Number(ms)).toISOString().slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : undefined;
 }
+
+/** OData V2 date literal for request bodies: `2026-10-02` -> `/Date(1790899200000)/`. */
+const toODataDate = (isoDate: string) => `/Date(${Date.parse(`${isoDate}T00:00:00Z`)})/`;
+const todayIso = () => new Date().toISOString().slice(0, 10);
 
 const num = (v: unknown) => (typeof v === 'number' ? v : Number.parseFloat(String(v ?? '0')) || 0);
 
@@ -237,21 +244,21 @@ export class ODataSapGateway implements SapGateway {
     let e: ODataEntity;
     if (fiscalYear) {
       e = (await this.request(ctx, what, 'get', `${SERVICES.invoice}/A_SupplierInvoice(SupplierInvoice=${lit(number)},FiscalYear=${lit(fiscalYear)})`, {
-        $expand: 'to_SupplierInvoiceItemPurOrdRef',
+        $expand: 'to_SuplrInvcItemPurOrdRef',
       })) as ODataEntity;
     } else {
       const res = (await this.request(ctx, what, 'get', `${SERVICES.invoice}/A_SupplierInvoice`, {
         $filter: `SupplierInvoice eq ${lit(number)}`,
         $orderby: 'FiscalYear desc',
         $top: '1',
-        $expand: 'to_SupplierInvoiceItemPurOrdRef',
+        $expand: 'to_SuplrInvcItemPurOrdRef',
       })) as { results?: ODataEntity[] };
       const first = res.results?.[0];
       if (!first) throw new SapError('NOT_FOUND', `${what} was not found in SAP.`);
       e = first;
     }
     const block = String(e.PaymentBlockingReason ?? '').trim();
-    const poRefs = ((e.to_SupplierInvoiceItemPurOrdRef as { results?: ODataEntity[] } | undefined)?.results ?? []) as ODataEntity[];
+    const poRefs = ((e.to_SuplrInvcItemPurOrdRef as { results?: ODataEntity[] } | undefined)?.results ?? []) as ODataEntity[];
     const vendorId = String(e.InvoicingParty ?? '');
     const vendorName = vendorId ? await this.getVendor(ctx, vendorId).then((v) => v.name, () => vendorId) : '';
     return {
@@ -722,6 +729,129 @@ export class ODataSapGateway implements SapGateway {
         paymentBlock: { code: block, description: block === 'R' ? 'Invoice verification' : `Payment block ${block}` },
       };
     });
+  }
+
+  async getInvoicesForPurchaseOrder(ctx: SapCallContext, purchaseOrder: string): Promise<Invoice[]> {
+    const refs = results(
+      await this.request(ctx, `Invoices for purchase order ${purchaseOrder}`, 'get', `${SERVICES.invoice}/A_SuplrInvcItemPurOrdRef`, {
+        $filter: `PurchaseOrder eq ${lit(purchaseOrder)}`,
+        $select: 'SupplierInvoice,FiscalYear',
+        $top: '100',
+      }),
+    );
+    const keys = [...new Set(refs.map((r) => `${str(r.SupplierInvoice)}/${str(r.FiscalYear)}`))].slice(0, 20);
+    const invoices = await Promise.all(keys.map((key) => this.getInvoice(ctx, key.split('/')[0]!, key.split('/')[1])));
+    return invoices.filter((i) => i.status !== 'REVERSED');
+  }
+
+  async createPurchaseRequisition(ctx: SapCallContext, requisition: NewPurchaseRequisition): Promise<PurchaseRequisition> {
+    const created = (await this.request(ctx, `Purchase requisition for material ${requisition.material}`, 'post', `${SERVICES.pr}/A_PurchaseRequisitionHeader`, undefined, {
+      body: {
+        PurchaseRequisitionType: 'NB',
+        to_PurchaseReqnItem: {
+          results: [
+            {
+              Material: requisition.material,
+              Plant: requisition.plant,
+              RequestedQuantity: String(requisition.quantity),
+              ...(requisition.deliveryDate && { DeliveryDate: toODataDate(requisition.deliveryDate) }),
+            },
+          ],
+        },
+      },
+    })) as ODataEntity;
+    return this.getPurchaseRequisition(ctx, str(created.PurchaseRequisition));
+  }
+
+  async createPurchaseOrder(ctx: SapCallContext, order: NewPurchaseOrder): Promise<PurchaseOrder> {
+    const created = (await this.request(ctx, `Purchase order for supplier ${order.supplier}`, 'post', `${SERVICES.po}/A_PurchaseOrder`, undefined, {
+      body: {
+        PurchaseOrderType: 'NB',
+        CompanyCode: order.companyCode,
+        PurchasingOrganization: order.purchasingOrganization,
+        PurchasingGroup: order.purchasingGroup,
+        Supplier: order.supplier,
+        to_PurchaseOrderItem: {
+          results: [
+            {
+              Material: order.material,
+              Plant: order.plant,
+              OrderQuantity: String(order.quantity),
+              // Without a price SAP takes it from the purchasing info record.
+              ...(order.netPrice !== undefined && { NetPriceAmount: String(order.netPrice) }),
+            },
+          ],
+        },
+      },
+    })) as ODataEntity;
+    return this.getPurchaseOrder(ctx, str(created.PurchaseOrder));
+  }
+
+  async postGoodsReceipt(ctx: SapCallContext, purchaseOrder: string): Promise<GoodsReceipt[]> {
+    const [po, received] = await Promise.all([this.getPurchaseOrder(ctx, purchaseOrder), this.getGoodsReceipts(ctx, purchaseOrder)]);
+    const open = po.items
+      .map((i) => ({ ...i, open: i.quantity - received.filter((g) => g.item === i.item).reduce((sum, g) => sum + g.quantity, 0) }))
+      .filter((i) => i.open > 0);
+    if (!open.length) throw new SapError('BUSINESS_RULE', `Purchase order ${purchaseOrder} is already completely received.`);
+
+    const today = toODataDate(todayIso());
+    const created = (await this.request(ctx, `Goods receipt for purchase order ${purchaseOrder}`, 'post', `${SERVICES.gr}/A_MaterialDocumentHeader`, undefined, {
+      body: {
+        GoodsMovementCode: '01', // goods receipt for purchase order (MIGO A01 / R01)
+        PostingDate: today,
+        DocumentDate: today,
+        to_MaterialDocumentItem: {
+          results: open.map((i) => ({
+            Material: i.material,
+            GoodsMovementType: '101',
+            GoodsMovementRefDocType: 'B',
+            PurchaseOrder: purchaseOrder,
+            PurchaseOrderItem: i.item,
+            QuantityInEntryUnit: String(i.open),
+            EntryUnit: i.unit,
+          })),
+        },
+      },
+    })) as ODataEntity;
+    const document = str(created.MaterialDocument);
+    return (await this.getGoodsReceipts(ctx, purchaseOrder)).filter((g) => g.materialDocument === document);
+  }
+
+  async createSupplierInvoice(ctx: SapCallContext, invoice: NewSupplierInvoice): Promise<Invoice> {
+    const [po, received] = await Promise.all([this.getPurchaseOrder(ctx, invoice.purchaseOrder), this.getGoodsReceipts(ctx, invoice.purchaseOrder)]);
+    const currency = po.value.currency;
+    const date = toODataDate(invoice.invoiceDate ?? todayIso());
+    // Each order item is invoiced for the quantity received so far, at the order price.
+    const items = po.items
+      .map((i) => ({ ...i, received: received.filter((g) => g.item === i.item).reduce((sum, g) => sum + g.quantity, 0) }))
+      .filter((i) => i.received > 0);
+    if (!items.length) throw new SapError('BUSINESS_RULE', `No goods receipt has been posted for purchase order ${invoice.purchaseOrder}, so there is nothing to invoice.`);
+
+    const created = (await this.request(ctx, `Supplier invoice for purchase order ${invoice.purchaseOrder}`, 'post', `${SERVICES.invoice}/A_SupplierInvoice`, undefined, {
+      body: {
+        CompanyCode: po.companyCode,
+        DocumentDate: date,
+        PostingDate: toODataDate(todayIso()),
+        InvoicingParty: po.vendorId,
+        DocumentCurrency: currency,
+        InvoiceGrossAmount: String(invoice.grossAmount),
+        SupplierInvoiceIDByInvcgParty: invoice.reference,
+        TaxIsCalculatedAutomatically: true,
+        to_SuplrInvcItemPurOrdRef: {
+          results: items.map((i, index) => ({
+            SupplierInvoiceItem: String(index + 1),
+            PurchaseOrder: invoice.purchaseOrder,
+            PurchaseOrderItem: i.item,
+            DocumentCurrency: currency,
+            SupplierInvoiceItemAmount: String(i.netPrice.amount * i.received),
+            PurchaseOrderQuantityUnit: i.unit,
+            QuantityInPurchaseOrderUnit: String(i.received),
+            ...(invoice.taxCode && { TaxCode: invoice.taxCode }),
+          })),
+        },
+      },
+    })) as ODataEntity;
+    return this.getInvoice(ctx, str(created.SupplierInvoice), str(created.FiscalYear) || undefined);
   }
 
   async createDelivery(ctx: SapCallContext, salesOrder: string): Promise<OutboundDelivery> {

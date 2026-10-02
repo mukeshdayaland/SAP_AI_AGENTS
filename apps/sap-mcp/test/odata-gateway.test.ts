@@ -72,6 +72,138 @@ describe('OData V4: billing document', () => {
   });
 });
 
+describe('OData V2: purchase-to-pay postings', () => {
+  const odataDate = expect.stringMatching(/^\/Date\(\d+\)\/$/);
+  const purchaseOrder = {
+    d: {
+      PurchaseOrder: '4200000403',
+      Supplier: '7002200010',
+      CompanyCode: '1030',
+      DocumentCurrency: 'SAR',
+      to_PurchaseOrderItem: {
+        results: [
+          { PurchaseOrderItem: '10', Material: '5496', OrderQuantity: '3', PurchaseOrderQuantityUnit: 'PC', NetPriceAmount: '1000.00' },
+          { PurchaseOrderItem: '20', Material: '5497', OrderQuantity: '2', PurchaseOrderQuantityUnit: 'PC', NetPriceAmount: '50.00' },
+        ],
+      },
+    },
+  };
+  const receipt = (document: string, item: string, quantity: string) => ({ MaterialDocument: document, MaterialDocumentYear: '2026', PurchaseOrderItem: item, QuantityInEntryUnit: quantity, EntryUnit: 'PC' });
+  const posted = () => sdk.sent.find((s) => s.request.method === 'post')!;
+
+  it('receives only the quantity that is still open on each order item', async () => {
+    let done = false;
+    sdk.reply = (r) => {
+      if (r.method === 'post') {
+        done = true;
+        return { d: { MaterialDocument: '5000000012', MaterialDocumentYear: '2026' } };
+      }
+      if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [receipt('5000000011', '10', '1'), receipt('5000000011', '20', '2'), ...(done ? [receipt('5000000012', '10', '2')] : [])] } };
+      if (r.url.includes('A_PurchaseOrder')) return purchaseOrder;
+      return { d: { Supplier: '7002200010', SupplierName: 'AL-QASSIM' } };
+    };
+    const receipts = await gateway.postGoodsReceipt(ctx, '4200000403');
+
+    expect(posted().request.url).toBe('/sap/opu/odata/sap/API_MATERIAL_DOCUMENT_SRV/A_MaterialDocumentHeader');
+    expect(posted().options.fetchCsrfToken).toBe(true);
+    expect(posted().request.data).toEqual({
+      GoodsMovementCode: '01',
+      PostingDate: odataDate,
+      DocumentDate: odataDate,
+      to_MaterialDocumentItem: {
+        results: [{ Material: '5496', GoodsMovementType: '101', GoodsMovementRefDocType: 'B', PurchaseOrder: '4200000403', PurchaseOrderItem: '10', QuantityInEntryUnit: '2', EntryUnit: 'PC' }],
+      },
+    });
+    expect(receipts).toEqual([expect.objectContaining({ materialDocument: '5000000012', item: '10', quantity: 2 })]);
+  });
+
+  it('does not post a goods receipt for an order that is completely received', async () => {
+    sdk.reply = (r) => {
+      if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [receipt('5000000011', '10', '3'), receipt('5000000011', '20', '2')] } };
+      if (r.url.includes('A_PurchaseOrder')) return purchaseOrder;
+      return { d: {} };
+    };
+    await expect(gateway.postGoodsReceipt(ctx, '4200000403')).rejects.toMatchObject({ code: 'BUSINESS_RULE' });
+    expect(sdk.sent.some((s) => s.request.method === 'post')).toBe(false);
+  });
+
+  it('invoices the received quantity of each order item at the order price', async () => {
+    sdk.reply = (r) => {
+      if (r.method === 'post') return { d: { SupplierInvoice: '5105600003', FiscalYear: '2026' } };
+      if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [receipt('5000000011', '10', '3')] } };
+      if (r.url.includes('A_PurchaseOrder')) return purchaseOrder;
+      if (r.url.includes('A_SupplierInvoice')) {
+        return { d: { SupplierInvoice: '5105600003', FiscalYear: '2026', CompanyCode: '1030', InvoicingParty: '7002200010', InvoiceGrossAmount: '3360.00', DocumentCurrency: 'SAR', PaymentBlockingReason: 'R', to_SuplrInvcItemPurOrdRef: { results: [{ PurchaseOrder: '4200000403' }] } } };
+      }
+      return { d: { Supplier: '7002200010', SupplierName: 'AL-QASSIM' } };
+    };
+    const invoice = await gateway.createSupplierInvoice(ctx, { purchaseOrder: '4200000403', reference: 'VEN004', grossAmount: 3360, invoiceDate: '2026-10-01' });
+
+    expect(posted().request.url).toBe('/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice');
+    expect(posted().request.data).toEqual({
+      CompanyCode: '1030',
+      DocumentDate: `/Date(${Date.UTC(2026, 9, 1)})/`,
+      PostingDate: odataDate,
+      InvoicingParty: '7002200010',
+      DocumentCurrency: 'SAR',
+      InvoiceGrossAmount: '3360',
+      SupplierInvoiceIDByInvcgParty: 'VEN004',
+      TaxIsCalculatedAutomatically: true,
+      to_SuplrInvcItemPurOrdRef: {
+        results: [{ SupplierInvoiceItem: '1', PurchaseOrder: '4200000403', PurchaseOrderItem: '10', DocumentCurrency: 'SAR', SupplierInvoiceItemAmount: '3000', PurchaseOrderQuantityUnit: 'PC', QuantityInPurchaseOrderUnit: '3' }],
+      },
+    });
+    // The block SAP sets during invoice verification is reported, not hidden.
+    expect(invoice).toMatchObject({ number: '5105600003', status: 'PAYMENT_BLOCKED', paymentBlock: { code: 'R' } });
+    expect(sdk.sent.some((s) => s.request.params?.$expand === 'to_SuplrInvcItemPurOrdRef')).toBe(true);
+  });
+
+  it('refuses an invoice before any goods receipt', async () => {
+    sdk.reply = (r) => {
+      if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [] } };
+      if (r.url.includes('A_PurchaseOrder')) return purchaseOrder;
+      return { d: {} };
+    };
+    await expect(gateway.createSupplierInvoice(ctx, { purchaseOrder: '4200000403', reference: 'VEN004', grossAmount: 3360 })).rejects.toMatchObject({ code: 'BUSINESS_RULE' });
+    expect(sdk.sent.some((s) => s.request.method === 'post')).toBe(false);
+  });
+
+  it('creates a purchase order and leaves the price to the info record unless one is given', async () => {
+    sdk.reply = (r) => {
+      if (r.method === 'post') return { d: { PurchaseOrder: '4200000404' } };
+      if (r.url.includes('A_PurchaseOrder')) return purchaseOrder;
+      return { d: { Supplier: '7002200010', SupplierName: 'AL-QASSIM' } };
+    };
+    const order = { supplier: '7002200010', material: '5496', plant: '1030', quantity: 4, companyCode: '1030', purchasingOrganization: '1030', purchasingGroup: '103' };
+    await gateway.createPurchaseOrder(ctx, order);
+
+    expect(posted().request.url).toBe('/sap/opu/odata/sap/API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder');
+    expect(posted().request.data).toEqual({
+      PurchaseOrderType: 'NB',
+      CompanyCode: '1030',
+      PurchasingOrganization: '1030',
+      PurchasingGroup: '103',
+      Supplier: '7002200010',
+      to_PurchaseOrderItem: { results: [{ Material: '5496', Plant: '1030', OrderQuantity: '4' }] },
+    });
+
+    sdk.sent.length = 0;
+    await gateway.createPurchaseOrder(ctx, { ...order, netPrice: 900 });
+    expect((posted().request.data as { to_PurchaseOrderItem: { results: unknown[] } }).to_PurchaseOrderItem.results[0]).toMatchObject({ NetPriceAmount: '900' });
+  });
+
+  it('creates a purchase requisition', async () => {
+    sdk.reply = (r) => (r.method === 'post' ? { d: { PurchaseRequisition: '10000123' } } : { d: { PurchaseRequisition: '10000123', to_PurchaseReqnItem: { results: [] } } });
+    await gateway.createPurchaseRequisition(ctx, { material: '5496', plant: '1030', quantity: 5, deliveryDate: '2026-10-15' });
+
+    expect(posted().request.url).toBe('/sap/opu/odata/sap/API_PURCHASEREQ_PROCESS_SRV/A_PurchaseRequisitionHeader');
+    expect(posted().request.data).toEqual({
+      PurchaseRequisitionType: 'NB',
+      to_PurchaseReqnItem: { results: [{ Material: '5496', Plant: '1030', RequestedQuantity: '5', DeliveryDate: `/Date(${Date.UTC(2026, 9, 15)})/` }] },
+    });
+  });
+});
+
 describe('OData V2: delivery and goods issue', () => {
   it('creates a delivery that references every item of the sales order', async () => {
     sdk.reply = (r) => {
@@ -110,6 +242,13 @@ describe('OData V2: delivery and goods issue', () => {
     await expect(gateway.getDelivery(ctx, '80000258')).rejects.toMatchObject({ code: 'INVALID_INPUT', message: 'SAP rejected the request for Outbound delivery 80000258.' });
   });
 
+  it('maps authorization and availability failures for purchasing postings too', async () => {
+    sdk.reply = () => {
+      throw rejected(403, {});
+    };
+    await expect(gateway.createPurchaseOrder(ctx, { supplier: '7002200010', material: '5496', plant: '1030', quantity: 1, companyCode: '1030', purchasingOrganization: '1030', purchasingGroup: '103' })).rejects.toMatchObject({ code: 'NOT_AUTHORIZED' });
+  });
+
   it('maps authorization and availability failures', async () => {
     sdk.reply = () => {
       throw rejected(403, {});
@@ -122,6 +261,7 @@ describe('OData V2: delivery and goods issue', () => {
   });
 
   it('refuses to call SAP without an end-user identity', async () => {
+    await expect(gateway.postGoodsReceipt({ principal: { sub: 'u' }, correlationId: 'c' } as never, '4200000403')).rejects.toMatchObject({ code: 'NOT_AUTHORIZED' });
     await expect(gateway.createBillingDocument({ principal: { sub: 'u' }, correlationId: 'c' } as never, '80000258')).rejects.toMatchObject({ code: 'NOT_AUTHORIZED' });
     expect(sdk.sent).toHaveLength(0);
   });
