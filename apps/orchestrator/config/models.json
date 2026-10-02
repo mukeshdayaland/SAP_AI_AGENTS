@@ -1,0 +1,56 @@
+{
+  "$comment": "Business-facing model tiers. Targets are tried in order; providers without configuration are skipped. DEFAULT_LLM_PROVIDER moves a provider's targets to the front. Model names must match deployments in your tenants.",
+  "tiers": [
+    {
+      "id": "standard",
+      "label": "Standard",
+      "description": "Fast, cost-efficient answers for everyday questions.",
+      "requiredRoles": ["AI_USER"],
+      "fallback": true,
+      "maxOutputTokens": 1500,
+      "maxContextTokens": 24000,
+      "temperature": 0.2,
+      "targets": [
+        { "provider": "sap-ai-core", "model": "gpt-4.1-mini" },
+        { "provider": "azure-ai-foundry", "model": "gpt-4.1-mini" },
+        { "provider": "aws-bedrock", "model": "eu.amazon.nova-pro-v1:0" },
+        { "provider": "gcp-vertex", "model": "gemini-2.5-flash" },
+        { "provider": "openai-compatible", "model": "gemini-3.5-flash-lite" },
+        { "provider": "mock", "model": "prowess-mock" }
+      ]
+    },
+    {
+      "id": "advanced",
+      "label": "Advanced",
+      "description": "Deeper reasoning for multi-step analysis.",
+      "requiredRoles": ["AI_POWER_USER"],
+      "fallback": true,
+      "maxOutputTokens": 4000,
+      "maxContextTokens": 64000,
+      "temperature": 0.2,
+      "targets": [
+        { "provider": "sap-ai-core", "model": "anthropic--claude-4-sonnet" },
+        { "provider": "aws-bedrock", "model": "eu.anthropic.claude-sonnet-4-20250514-v1:0" },
+        { "provider": "azure-ai-foundry", "model": "gpt-4.1" },
+        { "provider": "gcp-vertex", "model": "gemini-2.5-pro" },
+        { "provider": "openai-compatible", "model": "gemini-3.8-flash" },
+        { "provider": "mock", "model": "prowess-mock" }
+      ]
+    },
+    {
+      "id": "private",
+      "label": "Private",
+      "description": "Inference stays within SAP AI Core in your SAP BTP landscape. No public-cloud fallback.",
+      "requiredRoles": ["AI_USER"],
+      "fallback": false,
+      "privateOnly": true,
+      "maxOutputTokens": 2000,
+      "maxContextTokens": 24000,
+      "temperature": 0.1,
+      "targets": [
+        { "provider": "sap-ai-core", "model": "gpt-4.1" },
+        { "provider": "mock", "model": "prowess-mock" }
+      ]
+    }
+  ]
+}

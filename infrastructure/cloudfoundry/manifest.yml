@@ -1,0 +1,63 @@
+# Alternative to the MTA for teams deploying with plain `cf push`.
+# Build first:  npm ci && npm run build:cf
+# Then:         cf push -f infrastructure/cloudfoundry/manifest.yml --vars-file vars-<env>.yml
+# Services referenced below must exist in the space (see docs/btp-deployment.md).
+---
+applications:
+  - name: prowess-sap-mcp
+    path: ../../apps/sap-mcp/dist
+    memory: 512M
+    instances: ((instances))
+    buildpacks: [nodejs_buildpack]
+    command: node --enable-source-maps server.mjs
+    health-check-type: http
+    health-check-http-endpoint: /health
+    routes:
+      # Internal route: reachable only via container-to-container networking.
+      - route: prowess-sap-mcp-((env)).apps.internal
+    env:
+      PROWESS_ENV: ((ENV))
+      SAP_MODE: odata
+      SAP_DESTINATION: S4HANA
+      SAP_SYSTEM_ID: S4-((ENV))
+      SAP_ALLOW_TECHNICAL_USER: 'false'
+      NODE_ENV: production
+    services: [prowess-xsuaa, prowess-destination, prowess-connectivity, prowess-logging, prowess-secrets]
+
+  - name: prowess-ai-orchestrator
+    path: ../../apps/orchestrator/dist
+    memory: 512M
+    instances: ((instances))
+    buildpacks: [nodejs_buildpack]
+    command: node --enable-source-maps server.mjs
+    health-check-type: http
+    health-check-http-endpoint: /api/health
+    routes:
+      - route: prowess-ai-orchestrator-((env)).apps.internal
+    env:
+      PROWESS_ENV: ((ENV))
+      AUTH_MODE: xsuaa
+      PERSISTENCE: postgres
+      LLM_ALLOW_MOCK: 'false'
+      DEFAULT_LLM_PROVIDER: sap-ai-core
+      UPLOADS_ENABLED: 'false'
+      SAP_MCP_URL: http://prowess-sap-mcp-((env)).apps.internal:8080/mcp
+      NODE_ENV: production
+    services: [prowess-xsuaa, prowess-aicore, prowess-postgres, prowess-auditlog, prowess-logging, prowess-secrets]
+
+  - name: prowess-ai-web
+    path: ../approuter/dist
+    memory: 256M
+    instances: ((instances))
+    buildpacks: [nodejs_buildpack]
+    routes:
+      - route: prowess-ai-((env)).((domain))
+    env:
+      INCOMING_CONNECTION_TIMEOUT: 300000
+      destinations: >
+        [{"name":"prowess-orchestrator","url":"http://prowess-ai-orchestrator-((env)).apps.internal:8080","forwardAuthToken":true,"timeout":300000}]
+    services: [prowess-xsuaa]
+
+# After the first push, allow internal traffic (orchestrator/MCP have no public route):
+#   cf add-network-policy prowess-ai-web prowess-ai-orchestrator --protocol tcp --port 8080
+#   cf add-network-policy prowess-ai-orchestrator prowess-sap-mcp --protocol tcp --port 8080

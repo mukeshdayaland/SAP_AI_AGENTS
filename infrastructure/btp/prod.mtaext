@@ -1,0 +1,17 @@
+_schema-version: '3.3'
+ID: prowess-ai.prod
+extends: prowess-ai
+parameters:
+  env: PROD
+modules:
+  - name: prowess-ai-orchestrator
+    parameters:
+      instances: 2
+    properties:
+      PROWESS_ENV: PROD
+      LOG_LEVEL: info
+  - name: prowess-sap-mcp
+    parameters:
+      instances: 2
+    properties:
+      PROWESS_ENV: PROD

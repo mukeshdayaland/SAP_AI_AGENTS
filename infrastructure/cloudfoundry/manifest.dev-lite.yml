@@ -1,0 +1,75 @@
+# Lightweight DEV landscape: no SAP AI Core, PostgreSQL or Audit Log service.
+# LLM: any OpenAI-compatible API (Google Gemini by default), SAP data: MCP mock mode,
+# persistence: in-memory (lost on restart). Not permitted for QA/PROD.
+#
+# Build first:  npm ci && npm run build:cf
+# Services (once per space):
+#   cf create-service xsuaa application prowess-xsuaa -c <xs-security.json with a space-unique xsappname>
+#   cf create-service destination lite prowess-destination
+#   cf create-service connectivity lite prowess-connectivity
+#   cf create-service application-logs lite prowess-logging
+#   cf cups prowess-secrets -p '{"SERVICE_ASSERTION_SECRET":"<≥32 random chars>"}'
+# Then:  cf push -f infrastructure/cloudfoundry/manifest.dev-lite.yml --var env=<space-suffix> --var domain=<cf-domain>
+#        cf set-env prowess-ai-orchestrator OPENAI_COMPAT_API_KEY <key> && cf restart prowess-ai-orchestrator
+---
+applications:
+  - name: prowess-sap-mcp
+    path: ../../apps/sap-mcp/dist
+    memory: 256M
+    instances: 1
+    buildpacks: [nodejs_buildpack]
+    command: node --enable-source-maps server.mjs
+    health-check-type: http
+    health-check-http-endpoint: /health
+    routes:
+      # Public route like the MTA: /mcp rejects calls without an orchestrator-signed assertion.
+      - route: prowess-sap-mcp-((env)).((domain))
+    env:
+      PROWESS_ENV: DEV
+      SAP_MODE: mock
+      NODE_ENV: production
+    services: [prowess-xsuaa, prowess-destination, prowess-connectivity, prowess-logging, prowess-secrets]
+
+  - name: prowess-ai-orchestrator
+    path: ../../apps/orchestrator/dist
+    memory: 512M
+    instances: 1
+    buildpacks: [nodejs_buildpack]
+    command: node --enable-source-maps server.mjs
+    health-check-type: http
+    health-check-http-endpoint: /api/health
+    routes:
+      # Public route like the MTA: every /api call requires an XSUAA token.
+      - route: prowess-ai-orchestrator-((env)).((domain))
+    env:
+      PROWESS_ENV: DEV
+      AUTH_MODE: xsuaa
+      PERSISTENCE: memory
+      LLM_ALLOW_MOCK: 'false'
+      DEFAULT_LLM_PROVIDER: openai-compatible
+      OPENAI_COMPAT_BASE_URL: https://generativelanguage.googleapis.com/v1beta/openai
+      OPENAI_COMPAT_STREAM_USAGE: 'true'
+      # Gemini 3 always thinks before streaming; keep it short and allow for it.
+      OPENAI_COMPAT_REASONING_EFFORT: minimal
+      OPENAI_COMPAT_TIMEOUT_MS: '90000'
+      LLM_REQUEST_TIMEOUT_MS: '240000'
+      UPLOADS_ENABLED: 'false'
+      SAP_MCP_URL: https://prowess-sap-mcp-((env)).((domain))/mcp
+      NODE_ENV: production
+    services: [prowess-xsuaa, prowess-logging, prowess-secrets]
+
+  - name: prowess-ai-web
+    path: ../approuter/dist
+    memory: 256M
+    instances: 1
+    buildpacks: [nodejs_buildpack]
+    routes:
+      - route: prowess-ai-((env)).((domain))
+    env:
+      INCOMING_CONNECTION_TIMEOUT: 300000
+      destinations: >
+        [{"name":"prowess-orchestrator","url":"https://prowess-ai-orchestrator-((env)).((domain))","forwardAuthToken":true,"timeout":300000}]
+    services: [prowess-xsuaa]
+
+# Backend routes are public, as in mta.yaml: container-to-container network policies need
+# network.write, which space developers do not have on every BTP landscape.

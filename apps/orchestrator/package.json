@@ -1,0 +1,27 @@
+{
+  "name": "@prowess/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/main.ts",
+    "start": "node dist/server.mjs",
+    "build": "node ../../scripts/bundle.mjs orchestrator",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.1.2",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@prowess/contracts": "*",
+    "@prowess/llm": "*",
+    "@prowess/observability": "*",
+    "@prowess/security": "*",
+    "@sap/xssec": "^4.15.0",
+    "fastify": "^5.12.5",
+    "pg": "^8.23.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

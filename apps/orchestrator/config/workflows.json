@@ -1,0 +1,77 @@
+{
+  "$comment": "Workflow catalog. A workflow is an ordered list of steps, each owned by a module agent and bound to one SAP tool. Read steps run at once; a write step waits for the user's confirmation and the run resumes afterwards. Arguments and conditions may use ${input.<name>} and ${steps.<stepId>.<output>}.",
+  "workflows": [
+    {
+      "id": "order-to-cash",
+      "name": "Order-to-cash",
+      "description": "Takes a sales order through credit check, outbound delivery, goods issue and billing, then verifies the accounting document and the customer account.",
+      "agents": ["sd"],
+      "subject": "sales order ${input.salesOrder}",
+      "input": [
+        { "name": "salesOrder", "label": "Sales order", "pattern": "^\\d{1,10}$" },
+        { "name": "companyCode", "label": "Company code", "pattern": "^[A-Z0-9]{4}$" }
+      ],
+      "steps": [
+        {
+          "id": "order",
+          "title": "Check the sales order",
+          "agent": "sd",
+          "tool": "sd_getSalesOrderFlow",
+          "arguments": { "salesOrder": "${input.salesOrder}" }
+        },
+        {
+          "id": "credit",
+          "title": "Check the credit exposure",
+          "agent": "credit",
+          "tool": "credit_getCreditExposure",
+          "arguments": { "customer": "${steps.order.soldTo}" },
+          "haltWhen": [
+            {
+              "value": "${steps.order.creditStatus}",
+              "equals": "BLOCKED",
+              "reason": "The sales order is blocked by the credit check. A credit manager must release it before it can be delivered."
+            }
+          ]
+        },
+        {
+          "id": "delivery",
+          "title": "Create the outbound delivery",
+          "agent": "sd",
+          "tool": "sd_createDelivery",
+          "arguments": { "salesOrder": "${input.salesOrder}" },
+          "skipWhen": [{ "value": "${steps.order.hasDelivery}", "equals": "true" }]
+        },
+        {
+          "id": "goodsIssue",
+          "title": "Post goods issue",
+          "agent": "sd",
+          "tool": "sd_postGoodsIssue",
+          "arguments": { "salesOrder": "${input.salesOrder}" },
+          "skipWhen": [{ "value": "${steps.order.goodsIssued}", "equals": "true" }]
+        },
+        {
+          "id": "billing",
+          "title": "Create the billing document",
+          "agent": "sd",
+          "tool": "sd_createBillingDocument",
+          "arguments": { "salesOrder": "${input.salesOrder}" },
+          "skipWhen": [{ "value": "${steps.order.billed}", "equals": "true" }]
+        },
+        {
+          "id": "verify",
+          "title": "Verify the document flow",
+          "agent": "sd",
+          "tool": "sd_getSalesOrderFlow",
+          "arguments": { "salesOrder": "${input.salesOrder}" }
+        },
+        {
+          "id": "receivable",
+          "title": "Check the customer account",
+          "agent": "fi-ar",
+          "tool": "ar_listCustomerOpenItems",
+          "arguments": { "customer": "${steps.order.soldTo}", "companyCode": "${input.companyCode}", "status": "OPEN" }
+        }
+      ]
+    }
+  ]
+}

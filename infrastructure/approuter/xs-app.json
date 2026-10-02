@@ -1,0 +1,26 @@
+{
+  "welcomeFile": "/index.html",
+  "authenticationMethod": "route",
+  "sessionTimeout": 30,
+  "logout": { "logoutEndpoint": "/logout", "logoutPage": "/logged-out.html" },
+  "responseHeaders": [
+    { "name": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
+    { "name": "X-Content-Type-Options", "value": "nosniff" },
+    { "name": "Referrer-Policy", "value": "no-referrer" },
+    { "name": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
+    { "name": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" }
+  ],
+  "routes": [
+    { "source": "^/logged-out.html$", "localDir": "resources", "authenticationType": "none" },
+    {
+      "source": "^/api/(.*)$",
+      "target": "/api/$1",
+      "destination": "prowess-orchestrator",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false,
+      "scope": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_ADMIN", "$XSAPPNAME.AI_AUDITOR"]
+    },
+    { "source": "^/admin/?(.*)$", "target": "/admin/$1", "localDir": "resources", "authenticationType": "xsuaa", "scope": ["$XSAPPNAME.AI_ADMIN", "$XSAPPNAME.AI_AUDITOR"] },
+    { "source": "^/(.*)$", "target": "$1", "localDir": "resources", "authenticationType": "xsuaa", "cacheControl": "no-cache" }
+  ]
+}
