@@ -11,7 +11,7 @@ import {
 } from '@prowess/contracts';
 import type { LLMMessage, ModelRouter, RoutedSelection, ToolCall, ToolSpec } from '@prowess/llm';
 import { currentContext, enrichContext, M, type Logger } from '@prowess/observability';
-import { detectInjectionMarkers, fenceUntrusted, hashArguments } from '@prowess/security';
+import { detectInjectionMarkers, fenceUntrusted } from '@prowess/security';
 import type { AgentRegistry } from '../agents/registry.js';
 import type { AuditTrail } from '../audit/audit.js';
 import type { AuthContext } from '../auth/types.js';
@@ -20,10 +20,12 @@ import type { OrchestratorConfig } from '../config/env.js';
 import { AppError, toAppError, toPublicError } from '../errors/app-error.js';
 import { buildContext, systemPrompt, updateSummary, withAttachments } from '../llm/context.js';
 import type { McpGateway, McpSession, McpToolInfo } from '../mcp/gateway.js';
-import type { ConversationRecord, MessageRecord, Owner, PendingActionRecord, Store } from '../persistence/types.js';
+import type { ConversationRecord, MessageRecord, Owner, Store } from '../persistence/types.js';
 import type { ToolPolicy } from '../security/tool-policy.js';
 import { today, type QuotaService } from '../usage/limits.js';
+import { WORKFLOW_TOOL, type WorkflowService } from '../workflows/workflow-service.js';
 import { newId, titleFrom, toConfirmation } from './mappers.js';
+import { preparePendingAction } from './pending-action.js';
 
 export interface ChatDeps {
   store: Store;
@@ -33,6 +35,7 @@ export interface ChatDeps {
   policy: ToolPolicy;
   audit: AuditTrail;
   quota: QuotaService;
+  workflows: WorkflowService;
   logger: Logger;
   config: OrchestratorConfig;
 }
@@ -146,7 +149,7 @@ export class ChatService {
 
   /** Runs the agent loop and streams events. Never throws; failures become `error` events. */
   async execute(turn: PreparedTurn, emit: Emit, signal: AbortSignal): Promise<void> {
-    const { store, router, mcp, agents, config, logger } = this.deps;
+    const { store, router, mcp, agents, workflows, config, logger } = this.deps;
     const started = Date.now();
     const state: TurnState = { text: '', components: [], sources: [], followUps: [], confirmations: [], tools: [], toolContext: [], usage: { inputTokens: 0, outputTokens: 0 } };
     let status: 'complete' | 'stopped' = 'complete';
@@ -173,6 +176,9 @@ export class ChatService {
       }
       const agentTools = agents.toolsFor(turn.agent, allTools);
       const toolSpecs: ToolSpec[] = agentTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+      // Workflow runs execute SAP tools, so the entry point is only offered while those are reachable.
+      const workflowSpec = allTools.length ? workflows.toolSpec(turn.agent, turn.auth.user) : undefined;
+      if (workflowSpec) toolSpecs.push(workflowSpec);
       if (!allTools.length && turn.agent.allowedTools.length) {
         emit({ type: 'status', step: { id: 'tools', label: 'SAP tools are temporarily unavailable', state: 'skipped' } });
       }
@@ -310,7 +316,8 @@ export class ChatService {
     emit: Emit,
     signal: AbortSignal,
   ): Promise<{ content: string; isError?: boolean }> {
-    const { audit, policy, config, store, logger } = this.deps;
+    const { audit, policy, config, logger } = this.deps;
+    if (call.name === WORKFLOW_TOOL && this.deps.workflows.toolSpec(turn.agent, turn.auth.user)) return this.startWorkflow(turn, call, state, emit, signal);
     const tool = agentTools.find((t) => t.name === call.name);
     const base = { ...turn.owner, agent: turn.agent.id, tool: call.name };
 
@@ -326,51 +333,27 @@ export class ChatService {
     emit({ type: 'tool.start', tool: meta, label: tool.statusLabel });
 
     if (policy.requiresConfirmation(risk, config.environment)) {
-      const preview = allTools.find((t) => t.name === 'system_previewAction' && t.serverId === tool.serverId);
-      const out = preview ? await session.callTool(preview, { tool: tool.name, arguments: call.arguments }, signal) : undefined;
-      if (!out?.ok) {
-        const message = out?.errorMessage ?? 'This action cannot be prepared right now.';
-        const m: ToolExecutionMetadata = { ...meta, durationMs: out?.durationMs ?? 0, status: 'error', correlationId: turn.correlationId, mock: false };
-        state.tools.push(m);
-        emit({ type: 'tool.error', tool: m, message });
-        return { content: JSON.stringify({ error: message }), isError: true };
-      }
-      const data = (out.structured?.data ?? {}) as {
-        preview: PendingActionRecord['preview'];
-        normalizedArguments: Record<string, unknown>;
-        targetSystem: string;
-        mock: boolean;
-      };
-      const now = Date.now();
-      const action: PendingActionRecord = {
-        id: newId('a'),
-        ...turn.owner,
+      const prepared = await preparePendingAction(this.deps, {
+        owner: turn.owner,
         conversationId: turn.conversation.id,
         messageId: turn.assistantMessageId,
         agent: turn.agent.id,
-        tool: tool.name,
-        arguments: data.normalizedArguments,
-        argumentsHash: hashArguments(data.normalizedArguments),
-        environment: config.environment,
-        targetSystem: data.targetSystem,
+        tool,
         risk,
-        preview: data.preview,
-        status: 'pending',
-        createdAt: new Date(now).toISOString(),
-        expiresAt: new Date(now + config.confirmations.ttlSeconds * 1_000).toISOString(),
-      };
-      await store.actions.create(action);
-      const confirmation = toConfirmation(action);
-      state.confirmations.push(confirmation);
-      audit.record({
-        type: 'SAP_WRITE_REQUESTED',
-        ...base,
-        targetSystem: action.targetSystem,
-        operation: 'SAP_WRITE',
-        status: 'pending',
-        details: { actionId: action.id, objectType: action.preview.businessObject.type, objectId: action.preview.businessObject.id, risk },
+        arguments: call.arguments,
+        allTools,
+        session,
+        signal,
       });
-      const m: ToolExecutionMetadata = { ...meta, durationMs: out.durationMs, status: 'pending_confirmation', correlationId: turn.correlationId, mock: data.mock };
+      if (!prepared.ok) {
+        const m: ToolExecutionMetadata = { ...meta, durationMs: prepared.durationMs, status: 'error', correlationId: turn.correlationId, mock: false };
+        state.tools.push(m);
+        emit({ type: 'tool.error', tool: m, message: prepared.message });
+        return { content: JSON.stringify({ error: prepared.message }), isError: true };
+      }
+      const confirmation = toConfirmation(prepared.action);
+      state.confirmations.push(confirmation);
+      const m: ToolExecutionMetadata = { ...meta, durationMs: prepared.durationMs, status: 'pending_confirmation', correlationId: turn.correlationId, mock: prepared.mock };
       state.tools.push(m);
       emit({ type: 'tool.complete', tool: m });
       emit({ type: 'confirmation.required', confirmation });
@@ -378,8 +361,8 @@ export class ChatService {
         content: JSON.stringify({
           status: 'AWAITING_USER_CONFIRMATION',
           note: 'The action has NOT been executed. The user sees a confirmation card and must confirm or cancel it. Briefly tell the user what will happen and that it needs their confirmation.',
-          action: data.preview.action,
-          impact: data.preview.impact,
+          action: prepared.action.preview.action,
+          impact: prepared.action.preview.impact,
         }),
       };
     }
@@ -441,6 +424,56 @@ export class ChatService {
     if (typeof summary === 'string') state.toolContext.push(`${tool.name}: ${summary.slice(0, 500)}`);
     emit({ type: 'tool.complete', tool: m });
     return { content: fenceUntrusted('tool_result', payload) };
+  }
+
+  /** Starts a workflow run from the chat turn; its cards and first confirmation stream into this answer. */
+  private async startWorkflow(turn: PreparedTurn, call: ToolCall, state: TurnState, emit: Emit, signal: AbortSignal): Promise<{ content: string; isError?: boolean }> {
+    const { workflows } = this.deps;
+    const args = call.arguments as { workflow?: unknown; input?: unknown };
+    const input = args.input && typeof args.input === 'object' ? (args.input as Record<string, unknown>) : {};
+    try {
+      const run = await workflows.start(
+        { auth: turn.auth, conversationId: turn.conversation.id, messageId: turn.assistantMessageId, correlationId: turn.correlationId, signal },
+        String(args.workflow ?? ''),
+        input,
+        {
+          component: (component) => {
+            state.components.push(component);
+            emit({ type: 'component', component });
+          },
+          source: (source) => {
+            state.sources.push(source);
+            emit({ type: 'source', source });
+          },
+          confirmation: (confirmation) => {
+            state.confirmations.push(confirmation);
+            emit({ type: 'confirmation.required', confirmation });
+          },
+          toolStart: (tool, label) => emit({ type: 'tool.start', tool, label }),
+          toolEnd: (tool, error) => {
+            state.tools.push(tool);
+            emit(error === undefined ? { type: 'tool.complete', tool } : { type: 'tool.error', tool, message: error });
+          },
+        },
+      );
+      const summary = workflows.summarize(run);
+      state.toolContext.push(`${WORKFLOW_TOOL}: ${summary.slice(0, 500)}`);
+      return {
+        content: fenceUntrusted(
+          'tool_result',
+          JSON.stringify({
+            summary,
+            status: run.status,
+            note: 'The user sees the run, its cards and any confirmation card. Postings happen only after the user confirms; never claim a step was posted unless its state is "done".',
+            steps: workflows.toDTO(run).steps.map((s) => ({ step: s.title, agent: s.agent, state: s.state, detail: s.detail })),
+          }),
+        ),
+      };
+    } catch (err) {
+      const appError = toAppError(err);
+      if (appError.category !== 'VALIDATION' && appError.category !== 'AUTHORIZATION') throw err;
+      return { content: JSON.stringify({ error: appError.message }), isError: true };
+    }
   }
 
   private execution(turn: PreparedTurn, state: TurnState, started: number): ExecutionMetadata {

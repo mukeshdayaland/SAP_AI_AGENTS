@@ -1,7 +1,7 @@
 'use client';
 
 import type { UIComponent } from '@prowess/contracts';
-import { BookOpen, Building2, Cog, FileText, Landmark, ListChecks, Package, PackageCheck, ReceiptText, ScrollText, ShoppingCart, Truck, UserRound, Wrench } from 'lucide-react';
+import { BookOpen, Building2, Check, CircleDashed, Cog, FileText, Hourglass, Landmark, ListChecks, Minus, Workflow, X, Package, PackageCheck, ReceiptText, ScrollText, ShoppingCart, Truck, UserRound, Wrench } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { formatDate, formatMoney, humanize } from '@/lib/format';
 import { Badge, cx, type Tone } from '../ui/primitives';
@@ -493,6 +493,67 @@ export function AccountingDocumentCard({ data }: { data: Of<'accounting_document
   );
 }
 
+type RunStatus = Of<'workflow_run'>['status'];
+type RunStepState = Of<'workflow_run'>['steps'][number]['state'];
+const runTone: Record<RunStatus, Tone> = { running: 'info', awaiting_confirmation: 'warning', completed: 'success', blocked: 'critical', failed: 'critical', cancelled: 'neutral' };
+const runLabel: Record<RunStatus, string> = {
+  running: 'Running',
+  awaiting_confirmation: 'Waiting for confirmation',
+  completed: 'Completed',
+  blocked: 'Blocked',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+};
+const stepLabel: Record<RunStepState, string> = { pending: 'Not started', done: 'Done', skipped: 'Skipped', awaiting_confirmation: 'Waiting for confirmation', failed: 'Failed', cancelled: 'Cancelled' };
+const stepStyle: Record<RunStepState, string> = {
+  pending: 'border-line text-ink-3',
+  done: 'border-success bg-success text-surface',
+  skipped: 'border-line-strong text-ink-3',
+  awaiting_confirmation: 'border-warning bg-warning-soft text-warning',
+  failed: 'border-error bg-error-soft text-error',
+  cancelled: 'border-line-strong text-ink-3',
+};
+
+function StepIcon({ state }: { state: RunStepState }) {
+  const size = 12;
+  if (state === 'done') return <Check size={size} strokeWidth={3} />;
+  if (state === 'skipped') return <Minus size={size} />;
+  if (state === 'awaiting_confirmation') return <Hourglass size={size} />;
+  if (state === 'failed' || state === 'cancelled') return <X size={size} />;
+  return <CircleDashed size={size} />;
+}
+
+/** A process run: every step, the module agent that owns it, and how far the run has come. */
+export function WorkflowRunCard({ data }: { data: Of<'workflow_run'> }) {
+  const settled = data.steps.filter((s) => s.state === 'done' || s.state === 'skipped').length;
+  return (
+    <SapCard kind={`Process run · ${data.workflow}`} id={data.title} icon={<Workflow size={18} />} status={{ label: runLabel[data.status], tone: runTone[data.status] }}>
+      <p className="mb-3 text-xs text-ink-3">
+        {settled} of {data.steps.length} steps done
+      </p>
+      <ol className="space-y-2.5">
+        {data.steps.map((s) => (
+          <li key={s.id} className="flex gap-3">
+            <span aria-hidden className={cx('mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border', stepStyle[s.state])}>
+              <StepIcon state={s.state} />
+            </span>
+            <div className="min-w-0">
+              <p className={cx('text-sm', s.state === 'pending' ? 'text-ink-2' : 'text-ink')}>
+                {s.title} <span className="text-ink-3">· {s.agent}</span>
+                <span className="sr-only"> — {stepLabel[s.state]}</span>
+              </p>
+              {s.detail && <p className="text-[13px] text-ink-2">{s.detail}</p>}
+            </div>
+          </li>
+        ))}
+      </ol>
+      {data.reason && data.status !== 'completed' && (
+        <p className={cx('mt-3 rounded-lg border px-3 py-2 text-[13px] text-ink', data.status === 'cancelled' ? 'border-line bg-area-nonsap-fill' : 'border-error/25 bg-error-soft')}>{data.reason}</p>
+      )}
+    </SapCard>
+  );
+}
+
 function Table({ columns, rows }: Pick<Of<'business_object_table'>, 'columns' | 'rows'>) {
   return (
     <div className="mt-2 overflow-x-auto rounded-lg border border-area-sap/25">
@@ -583,6 +644,7 @@ const REGISTRY: { [K in UIComponent['type']]: ComponentType<{ data: Of<K> }> } =
   customer: CustomerCard,
   open_items: OpenItemsCard,
   accounting_document: AccountingDocumentCard,
+  workflow_run: WorkflowRunCard,
   business_object_table: BusinessObjectTable,
   kpi_block: KPIBlock,
   timeline: Timeline,

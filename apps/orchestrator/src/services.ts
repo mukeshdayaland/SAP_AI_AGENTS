@@ -5,7 +5,7 @@ import { AuditTrail, BtpAuditLogSink, RingBufferAuditSink, StdoutAuditSink, type
 import { DevAuthenticator } from './auth/dev.js';
 import type { Authenticator } from './auth/types.js';
 import { XsuaaAuthenticator } from './auth/xsuaa.js';
-import { loadCatalogs, type AgentCatalog } from './config/catalog.js';
+import { loadCatalogs, type AgentCatalog, type WorkflowCatalog } from './config/catalog.js';
 import { withBoundSecrets, type OrchestratorConfig } from './config/env.js';
 import { ActionService } from './conversations/action-service.js';
 import { ChatService } from './conversations/chat-service.js';
@@ -18,6 +18,7 @@ import { PostgresStore } from './persistence/postgres.js';
 import type { Store } from './persistence/types.js';
 import { ToolPolicy } from './security/tool-policy.js';
 import { ConcurrencyGuard, QuotaService, RateLimiter } from './usage/limits.js';
+import { WorkflowService } from './workflows/workflow-service.js';
 
 /** Composition root: every dependency is constructed here and injected. */
 export interface Services {
@@ -35,6 +36,7 @@ export interface Services {
   chat: ChatService;
   conversations: ConversationService;
   actions: ActionService;
+  workflows: WorkflowService;
   files: FileService;
   rateLimiter: RateLimiter;
   streams: ConcurrencyGuard;
@@ -43,7 +45,7 @@ export interface Services {
 export interface ServiceOverrides {
   store?: Store;
   providers?: Map<ProviderId, LLMProvider>;
-  catalogs?: { models: ModelCatalog; agents: AgentCatalog };
+  catalogs?: { models: ModelCatalog; agents: AgentCatalog; workflows?: WorkflowCatalog };
   authenticator?: Authenticator;
   logger?: Logger;
   scanner?: MalwareScanner;
@@ -99,7 +101,8 @@ export async function createServices(config: OrchestratorConfig, env = process.e
   }
 
   const quota = new QuotaService(store, config.limits);
-  const chat = new ChatService({ store, router, mcp, agents, policy, audit, quota, logger, config });
+  const workflows = new WorkflowService({ store, mcp, agents, policy, audit, logger, config, catalog: catalogs.workflows ?? { workflows: [] } });
+  const chat = new ChatService({ store, router, mcp, agents, policy, audit, quota, workflows, logger, config });
 
   return {
     config,
@@ -115,7 +118,8 @@ export async function createServices(config: OrchestratorConfig, env = process.e
     authenticator,
     chat,
     conversations: new ConversationService(store, audit),
-    actions: new ActionService({ store, mcp, agents, audit, logger, config }),
+    actions: new ActionService({ store, mcp, agents, audit, workflows, logger, config }),
+    workflows,
     files: new FileService({ store, scanner, audit, logger, config: config.uploads }),
     rateLimiter: new RateLimiter(config.limits.requestsPerMinute),
     streams: new ConcurrencyGuard(config.limits.maxConcurrentStreamsPerUser),

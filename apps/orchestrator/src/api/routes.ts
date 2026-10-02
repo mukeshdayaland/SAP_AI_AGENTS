@@ -3,6 +3,7 @@ import {
   ConfirmActionSchema,
   FeedbackRequestSchema,
   RenameConversationSchema,
+  StartRunSchema,
   type WorkspaceConfig,
 } from '@prowess/contracts';
 import { metrics } from '@prowess/observability';
@@ -11,6 +12,7 @@ import { z } from 'zod';
 import type { AuthContext } from '../auth/types.js';
 import { hasAnyRole, hasRole } from '../auth/types.js';
 import { AppError } from '../errors/app-error.js';
+import { toMessageDTO } from '../conversations/mappers.js';
 import { SSEStream } from '../streaming/sse.js';
 import type { Services } from '../services.js';
 
@@ -21,6 +23,7 @@ declare module 'fastify' {
 }
 
 const IdParam = z.object({ id: z.string().regex(/^[a-z]_[A-Za-z0-9_-]{16,40}$/) });
+const WorkflowParam = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/) });
 const MessageParams = IdParam.extend({ messageId: z.string().regex(/^m_[A-Za-z0-9_-]{16,40}$/) });
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -121,7 +124,19 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     const body = parse(ConfirmActionSchema, req.body ?? {});
     return s.actions.confirm(auth(req), parse(IdParam, req.params).id, body.acknowledgeEnvironment);
   });
-  app.post('/api/v1/actions/:id/cancel', async (req) => ({ confirmation: await s.actions.cancel(auth(req), parse(IdParam, req.params).id) }));
+  app.post('/api/v1/actions/:id/cancel', async (req) => s.actions.cancel(auth(req), parse(IdParam, req.params).id));
+
+  /* ---------------- workflow runs ---------------- */
+  app.get('/api/v1/workflows', async (req) => s.workflows.describe(auth(req).user));
+  app.post('/api/v1/workflows/:id/runs', async (req, reply) => {
+    const a = auth(req);
+    const { id } = parse(WorkflowParam, req.params);
+    const { input } = parse(StartRunSchema, req.body);
+    s.rateLimiter.take(a.user.id);
+    const { run, message } = await s.workflows.startStandalone(a, id, input, req.id);
+    return reply.code(201).send({ run: s.workflows.toDTO(run), conversationId: run.conversationId, message: toMessageDTO(message, a.user) });
+  });
+  app.get('/api/v1/runs/:id', async (req) => s.workflows.get(auth(req), parse(IdParam, req.params).id));
 
   /* ---------------- files ---------------- */
   app.post('/api/v1/files', async (req, reply) => {

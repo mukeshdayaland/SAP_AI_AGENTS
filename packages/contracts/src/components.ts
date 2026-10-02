@@ -286,6 +286,32 @@ export const AccountingDocumentComponent = z.object({
   }),
 });
 
+export const WORKFLOW_RUN_STATUSES = ['running', 'awaiting_confirmation', 'completed', 'blocked', 'failed', 'cancelled'] as const;
+export const WORKFLOW_STEP_STATES = ['pending', 'done', 'skipped', 'awaiting_confirmation', 'failed', 'cancelled'] as const;
+
+/** Snapshot of a multi-step process run: which module agent owns each step and how far the run has come. */
+export const WorkflowRunComponent = z.object({
+  type: z.literal('workflow_run'),
+  data: z.object({
+    id: text(64),
+    workflow: text(60),
+    title: text(),
+    status: z.enum(WORKFLOW_RUN_STATUSES),
+    reason: text(400).optional(),
+    steps: z
+      .array(
+        z.object({
+          id: text(40),
+          title: text(120),
+          agent: text(60),
+          state: z.enum(WORKFLOW_STEP_STATES),
+          detail: text(400).optional(),
+        }),
+      )
+      .max(30),
+  }),
+});
+
 export const BusinessObjectTableComponent = z.object({
   type: z.literal('business_object_table'),
   data: z.object({
@@ -343,6 +369,7 @@ export const UIComponentSchema = z.discriminatedUnion('type', [
   CustomerComponent,
   OpenItemsComponent,
   AccountingDocumentComponent,
+  WorkflowRunComponent,
   BusinessObjectTableComponent,
   KPIBlockComponent,
   TimelineComponent,

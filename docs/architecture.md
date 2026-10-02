@@ -56,6 +56,7 @@ flowchart TB
 | --- | --- | --- |
 | User experience | `apps/web` | `@prowess/contracts` (DTOs, SSE events, UI components) |
 | AI orchestration | `orchestrator/src/conversations/chat-service.ts` | `ChatService.prepare/execute` |
+| Process runs | `orchestrator/src/workflows/workflow-service.ts` | `WorkflowService.start/onActionResolved` |
 | Model inference | `packages/llm` | `LLMProvider`, `ModelRouter` |
 | MCP/tool execution | `orchestrator/src/mcp`, `apps/sap-mcp` | MCP over Streamable HTTP |
 | SAP connectivity | `apps/sap-mcp/src/sap` | `SapGateway` (mock / OData) |
@@ -117,5 +118,6 @@ tier's `maxContextTokens`, and the current turn. Turns that overflow are folded 
   renamed, list its old id under `aliases` so stored conversations keep working.
 - **New tool/domain**: add a module under `apps/sap-mcp/src/tools/`, register it in `registry.ts`, and extend `SapGateway`.
 - **New MCP server** (HCM, Ariba, SuccessFactors…): deploy it and add it to `MCP_SERVERS`. Tool names must be unique.
+- **New workflow**: add it to `apps/orchestrator/config/workflows.json` (steps, module agents, tools). See [workflows.md](workflows.md).
 - **New model provider**: implement `LLMProvider`, add it to `factory.ts` and reference it in `models.json`.
 - **HANA Cloud persistence**: implement the `Store` port with `@sap/hana-client` (same queries, owner-scoped).

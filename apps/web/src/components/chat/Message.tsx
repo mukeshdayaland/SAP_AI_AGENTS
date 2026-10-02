@@ -49,7 +49,7 @@ export function AssistantMessage({
   agentName: string;
   onRegenerate: () => void;
   onRate: (rating: 'up' | 'down') => void;
-  onConfirmation: (c: ConfirmationRequest, m?: MessageDTO) => void;
+  onConfirmation: (c: ConfirmationRequest, messages?: MessageDTO[]) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const ask = useAsk();

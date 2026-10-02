@@ -120,6 +120,28 @@ describe('SAP component registry', () => {
     expect(journalHtml).not.toContain('-5,000');
   });
 
+  it('renders a workflow run with the agent and state of each step', () => {
+    const run: UIComponent = {
+      type: 'workflow_run',
+      data: {
+        id: 'r_1',
+        workflow: 'Order-to-cash',
+        title: 'Order-to-cash for sales order 650',
+        status: 'blocked',
+        reason: 'The sales order is blocked by the credit check.',
+        steps: [
+          { id: 'order', title: 'Check the sales order', agent: 'SD Agent', state: 'done', detail: 'Sales order 650 is worth SAR 140,000.' },
+          { id: 'credit', title: 'Check the credit exposure', agent: 'Credit Agent', state: 'done' },
+          { id: 'delivery', title: 'Create the outbound delivery', agent: 'SD Agent', state: 'pending' },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(<SapComponent component={run} />);
+    for (const text of ['Process run', 'Order-to-cash for sales order 650', 'Blocked', '2 of 3 steps done', 'Credit Agent', 'Not started', 'blocked by the credit check']) {
+      expect(html).toContain(text);
+    }
+  });
+
   it('renders nothing for unknown component types', () => {
     const html = renderToStaticMarkup(<SapComponent component={{ type: 'html', data: '<b>x</b>' } as unknown as UIComponent} />);
     expect(html).toBe('');

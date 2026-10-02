@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { APP_ROLES } from '@prowess/contracts';
 import { PROVIDER_IDS, type ModelCatalog } from '@prowess/llm';
@@ -55,7 +55,53 @@ export const AgentCatalogSchema = z
     for (const s of cat.starters) if (!ids.has(s.agent)) ctx.addIssue({ code: 'custom', message: `Starter "${s.id}" references unknown agent` });
   });
 
+const name = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,39}$/);
+/** `${input.name}` or `${steps.stepId.outputName}`, resolved against the run when a step starts. */
+const ConditionSchema = z.object({ value: z.string().max(120), equals: z.string().max(60) });
+
+const WorkflowStepSchema = z.object({
+  id: name,
+  title: z.string().min(1).max(120),
+  /** The module agent that owns the step. Its tool allow-list and required roles apply. */
+  agent: z.string(),
+  tool: z.string().regex(/^[a-z]+_[A-Za-z]+$/),
+  arguments: z.record(name, z.string().max(200)).default({}),
+  /** The step is skipped when any condition holds (for example: the delivery already exists). */
+  skipWhen: z.array(ConditionSchema).default([]),
+  /** After the step, the run stops as "blocked" when any condition holds. */
+  haltWhen: z.array(ConditionSchema.extend({ reason: z.string().min(1).max(400) })).default([]),
+});
+
+const WorkflowSchema = z
+  .object({
+    id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/),
+    name: z.string().min(1).max(60),
+    description: z.string().max(300),
+    /** Agents whose chats may start this workflow. */
+    agents: z.array(z.string()).min(1),
+    /** What the run is about, shown in its title: `Sales order ${input.salesOrder}`. */
+    subject: z.string().max(120),
+    input: z.array(z.object({ name, label: z.string().min(1).max(60), pattern: z.string().max(120) })).min(1),
+    steps: z.array(WorkflowStepSchema).min(1).max(30),
+  })
+  .superRefine((w, ctx) => {
+    const ids = w.steps.map((s) => s.id);
+    if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', message: `Workflow "${w.id}" has duplicate step ids` });
+    for (const i of w.input) {
+      try {
+        new RegExp(i.pattern);
+      } catch {
+        ctx.addIssue({ code: 'custom', message: `Workflow "${w.id}": input "${i.name}" has an invalid pattern` });
+      }
+    }
+  });
+
+export const WorkflowCatalogSchema = z.object({ workflows: z.array(WorkflowSchema).default([]) });
+
 export type AgentDefinition = z.infer<typeof AgentSchema>;
+export type WorkflowDefinition = z.infer<typeof WorkflowSchema>;
+export type WorkflowStepDefinition = z.infer<typeof WorkflowStepSchema>;
+export type WorkflowCatalog = z.infer<typeof WorkflowCatalogSchema>;
 export type AgentCatalog = z.infer<typeof AgentCatalogSchema>;
 
 function readJson(path: string): unknown {
@@ -63,12 +109,20 @@ function readJson(path: string): unknown {
 }
 
 /** Loads and validates catalogs; invalid configuration fails startup. */
-export function loadCatalogs(configDir: string): { models: ModelCatalog; agents: AgentCatalog } {
+export function loadCatalogs(configDir: string): { models: ModelCatalog; agents: AgentCatalog; workflows: WorkflowCatalog } {
   const models = ModelCatalogSchema.parse(readJson(resolve(configDir, 'models.json')));
   const agents = AgentCatalogSchema.parse(readJson(resolve(configDir, 'agents.json')));
   const tierIds = new Set(models.tiers.map((t) => t.id));
   for (const a of agents.agents) {
     for (const t of a.modelTiers) if (!tierIds.has(t)) throw new Error(`Agent ${a.id} references unknown model tier ${t}`);
   }
-  return { models, agents };
+  const workflowFile = resolve(configDir, 'workflows.json');
+  const workflows = WorkflowCatalogSchema.parse(existsSync(workflowFile) ? readJson(workflowFile) : {});
+  const agentIds = new Set(agents.agents.map((a) => a.id));
+  for (const w of workflows.workflows) {
+    for (const id of [...w.agents, ...w.steps.map((s) => s.agent)]) {
+      if (!agentIds.has(id)) throw new Error(`Workflow ${w.id} references unknown agent ${id}`);
+    }
+  }
+  return { models, agents, workflows };
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   SCENARIO_BILLING,
+  SCENARIO_COMPANY_CODE,
   SCENARIO_CREDIT,
   SCENARIO_CUSTOMERS,
   SCENARIO_DELIVERIES,
@@ -226,6 +227,9 @@ const GL: GLBalance[] = [
   },
 ];
 
+/** Assumed valuation price per unit of the scenario material, used to value mock goods issues. */
+const MOCK_VALUATION_PRICE = 1_000;
+
 /** Simulated SAP authorizations per user (the SAP system's view, not Prowess roles). */
 interface SapAuth {
   companyCodes: string[];
@@ -241,6 +245,15 @@ export class MockSapGateway implements SapGateway {
   readonly mock = true;
   private readonly invoices = structuredClone(INVOICES);
   private readonly notes = new Map<string, string[]>();
+  // Order-to-cash documents are mutable so the write tools can be exercised end to end.
+  private readonly salesOrders = structuredClone(SCENARIO_SALES_ORDERS);
+  private readonly deliveries = structuredClone(SCENARIO_DELIVERIES);
+  private readonly billing = structuredClone(SCENARIO_BILLING);
+  private readonly flows = structuredClone(SCENARIO_FLOWS);
+  private readonly journals = structuredClone(SCENARIO_JOURNALS);
+  private readonly lineItems = structuredClone(SCENARIO_LINE_ITEMS);
+  private readonly stock = structuredClone(SCENARIO_STOCK);
+  private readonly lastNumber = { delivery: 80000257, goodsIssue: 1000000009, billing: 90000181, accounting: 1000000019 };
 
   constructor(private readonly latencyMs = 150) {}
 
@@ -333,7 +346,7 @@ export class MockSapGateway implements SapGateway {
         .filter((i) => allowed.includes(i.companyCode))
         .map((i) => ({ objectType: 'SupplierInvoice', objectId: i.number, title: `Invoice ${i.number}`, subtitle: `${i.vendorName} · ${i.status}` })),
       ...PURCHASE_ORDERS.map((p) => ({ objectType: 'PurchaseOrder', objectId: p.number, title: `Purchase order ${p.number}`, subtitle: p.vendorName })),
-      ...SCENARIO_SALES_ORDERS.map((o) => ({ objectType: 'SalesOrder', objectId: o.number, title: `Sales order ${o.number}`, subtitle: o.soldToName })),
+      ...this.salesOrders.map((o) => ({ objectType: 'SalesOrder', objectId: o.number, title: `Sales order ${o.number}`, subtitle: o.soldToName })),
       ...SCENARIO_CUSTOMERS.map((c) => ({ objectType: 'Customer', objectId: c.id, title: c.name, subtitle: `${c.city}, ${c.country}` })),
       ...VENDORS.map((v) => ({ objectType: 'Supplier', objectId: v.id, title: v.name, subtitle: `${v.city}, ${v.country}` })),
       ...EQUIPMENT.map((e) => ({ objectType: 'Equipment', objectId: e.number, title: e.description, subtitle: e.functionalLocation })),
@@ -343,13 +356,13 @@ export class MockSapGateway implements SapGateway {
 
   async getSalesOrder(_ctx: SapCallContext, number: string): Promise<SalesOrder> {
     await this.latency();
-    return this.find(SCENARIO_SALES_ORDERS, (o) => o.number === number, 'Sales order', number);
+    return this.find(this.salesOrders, (o) => o.number === number, 'Sales order', number);
   }
 
   async listOpenSalesOrders(_ctx: SapCallContext, salesOrganization?: string): Promise<SalesOrder[]> {
     await this.latency();
     return structuredClone(
-      SCENARIO_SALES_ORDERS.filter(
+      this.salesOrders.filter(
         (o) =>
           (!salesOrganization || o.salesOrganization === salesOrganization) &&
           (o.deliveryStatus !== 'COMPLETE' || o.billingStatus !== 'COMPLETE' || o.creditStatus === 'BLOCKED'),
@@ -359,17 +372,17 @@ export class MockSapGateway implements SapGateway {
 
   async getSalesOrderFlow(ctx: SapCallContext, number: string): Promise<DocumentFlowStep[]> {
     const order = await this.getSalesOrder(ctx, number);
-    return structuredClone(SCENARIO_FLOWS[order.number] ?? []);
+    return structuredClone(this.flows[order.number] ?? []);
   }
 
   async getDelivery(_ctx: SapCallContext, number: string): Promise<OutboundDelivery> {
     await this.latency();
-    return this.find(SCENARIO_DELIVERIES, (d) => d.number === number, 'Outbound delivery', number);
+    return this.find(this.deliveries, (d) => d.number === number, 'Outbound delivery', number);
   }
 
   async getBillingDocument(ctx: SapCallContext, number: string): Promise<BillingDocument> {
     await this.latency();
-    const doc = this.find(SCENARIO_BILLING, (b) => b.number === number, 'Billing document', number);
+    const doc = this.find(this.billing, (b) => b.number === number, 'Billing document', number);
     this.requireCompanyCode(ctx, doc.companyCode, `billing document ${number}`);
     return doc;
   }
@@ -388,7 +401,7 @@ export class MockSapGateway implements SapGateway {
     await this.latency();
     this.requireCompanyCode(ctx, query.companyCode, `${query.accountType.toLowerCase()} line items`);
     return structuredClone(
-      SCENARIO_LINE_ITEMS.filter(
+      this.lineItems.filter(
         (i) =>
           i.accountType === query.accountType &&
           i.companyCode === query.companyCode &&
@@ -402,12 +415,12 @@ export class MockSapGateway implements SapGateway {
   async getAccountingDocument(ctx: SapCallContext, companyCode: string, fiscalYear: string, number: string): Promise<AccountingDocument> {
     await this.latency();
     this.requireCompanyCode(ctx, companyCode, `accounting document ${number}`);
-    return this.find(SCENARIO_JOURNALS, (j) => j.number === number && j.companyCode === companyCode && j.fiscalYear === fiscalYear, 'Accounting document', number);
+    return this.find(this.journals, (j) => j.number === number && j.companyCode === companyCode && j.fiscalYear === fiscalYear, 'Accounting document', number);
   }
 
   async getMaterialStock(_ctx: SapCallContext, material: string, plant?: string): Promise<MaterialStock[]> {
     await this.latency();
-    const stock = SCENARIO_STOCK.filter((s) => s.material === material && (!plant || s.plant === plant));
+    const stock = this.stock.filter((s) => s.material === material && (!plant || s.plant === plant));
     if (!stock.length) throw new SapError('NOT_FOUND', `No stock was found in SAP for material ${material}${plant ? ` in plant ${plant}` : ''}.`);
     return structuredClone(stock);
   }
@@ -421,6 +434,142 @@ export class MockSapGateway implements SapGateway {
     await this.latency();
     this.requireCompanyCode(ctx, companyCode, 'blocked invoices');
     return structuredClone(this.invoices.filter((i) => i.companyCode === companyCode && i.paymentBlock));
+  }
+
+  private nextNumber(kind: keyof MockSapGateway['lastNumber']): string {
+    return String(++this.lastNumber[kind]);
+  }
+
+  async createDelivery(_ctx: SapCallContext, salesOrder: string): Promise<OutboundDelivery> {
+    await this.latency();
+    const order = this.salesOrders.find((o) => o.number === salesOrder);
+    if (!order) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} was not found in SAP.`);
+    if (order.creditStatus === 'BLOCKED') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is blocked by the credit check and cannot be delivered.`);
+    if (order.deliveryStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is already completely delivered.`);
+    for (const i of order.items) {
+      const available = this.stock.filter((r) => r.material === i.material && (!i.plant || r.plant === i.plant)).reduce((sum, r) => sum + r.unrestricted, 0);
+      if (available < i.quantity) {
+        throw new SapError('BUSINESS_RULE', `Only ${available} ${i.unit} of material ${i.material} are available; ${i.quantity} ${i.unit} are required.`);
+      }
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const delivery: OutboundDelivery = {
+      number: this.nextNumber('delivery'),
+      shipTo: order.soldTo,
+      shipToName: order.soldToName,
+      salesOrder: order.number,
+      plannedGoodsIssueDate: order.requestedDeliveryDate ?? today,
+      goodsIssueStatus: 'NOT_STARTED',
+      pickingStatus: 'COMPLETE',
+      items: order.items.map((i) => ({ item: i.item, material: i.material, description: i.description, quantity: i.quantity, unit: i.unit, ...(i.plant && { plant: i.plant }) })),
+    };
+    this.deliveries.push(delivery);
+    order.deliveryStatus = 'COMPLETE';
+    (this.flows[order.number] ??= []).push({ category: 'DELIVERY', document: delivery.number, date: today, status: 'Goods issue outstanding' });
+    return structuredClone(delivery);
+  }
+
+  async postGoodsIssue(_ctx: SapCallContext, number: string): Promise<OutboundDelivery> {
+    await this.latency();
+    const delivery = this.deliveries.find((d) => d.number === number);
+    if (!delivery) throw new SapError('NOT_FOUND', `Outbound delivery ${number} was not found in SAP.`);
+    if (delivery.goodsIssueStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Goods issue has already been posted for delivery ${number}.`);
+    const today = new Date().toISOString().slice(0, 10);
+    let cost = 0;
+    for (const i of delivery.items) {
+      let open = i.quantity;
+      for (const row of this.stock.filter((r) => r.material === i.material && (!i.plant || r.plant === i.plant))) {
+        const take = Math.min(open, row.unrestricted);
+        row.unrestricted -= take;
+        open -= take;
+      }
+      if (open > 0) throw new SapError('BUSINESS_RULE', `Stock of material ${i.material} is not sufficient to post goods issue for delivery ${number}.`);
+      cost += i.quantity * MOCK_VALUATION_PRICE;
+    }
+    delivery.goodsIssueStatus = 'COMPLETE';
+    delivery.actualGoodsIssueDate = today;
+    const document = this.nextNumber('goodsIssue');
+    this.journals.push({
+      companyCode: SCENARIO_COMPANY_CODE,
+      fiscalYear: today.slice(0, 4),
+      number: document,
+      documentType: 'WL',
+      postingDate: today,
+      documentDate: today,
+      reference: delivery.number.padStart(10, '0'),
+      items: [
+        { item: '1', account: '200040', description: 'RAW MATERIAL', amount: SAR(-cost), debitCredit: 'C' },
+        { item: '2', account: '200041', description: 'COGS', amount: SAR(cost), debitCredit: 'D' },
+      ],
+    });
+    const flow = (this.flows[delivery.salesOrder ?? ''] ??= []);
+    const step = flow.find((f) => f.category === 'DELIVERY' && f.document === delivery.number);
+    if (step) step.status = 'Completed';
+    flow.push({ category: 'GOODS_ISSUE', document, date: today, status: 'Posted' });
+    return structuredClone(delivery);
+  }
+
+  async createBillingDocument(ctx: SapCallContext, number: string): Promise<BillingDocument> {
+    await this.latency();
+    const delivery = this.deliveries.find((d) => d.number === number);
+    if (!delivery) throw new SapError('NOT_FOUND', `Outbound delivery ${number} was not found in SAP.`);
+    if (delivery.goodsIssueStatus !== 'COMPLETE') throw new SapError('BUSINESS_RULE', `Goods issue has not been posted for delivery ${number}, so it cannot be billed.`);
+    const order = this.salesOrders.find((o) => o.number === delivery.salesOrder);
+    if (!order) throw new SapError('NOT_FOUND', `The sales order of delivery ${number} was not found in SAP.`);
+    if (order.billingStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Sales order ${order.number} is already completely billed.`);
+    this.requireCompanyCode(ctx, SCENARIO_COMPANY_CODE, `billing delivery ${number}`);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const fiscalYear = today.slice(0, 4);
+    const accountingDocument = this.nextNumber('accounting');
+    const doc: BillingDocument = {
+      number: this.nextNumber('billing'),
+      billingType: 'F2',
+      payer: order.soldTo,
+      payerName: order.soldToName,
+      billingDate: today,
+      netValue: order.netValue,
+      companyCode: SCENARIO_COMPANY_CODE,
+      fiscalYear,
+      accountingDocument,
+      postedToAccounting: true,
+      cancelled: false,
+      salesOrder: order.number,
+      items: order.items.map((i) => ({ item: i.item, material: i.material, description: i.description, quantity: i.quantity, unit: i.unit, netValue: i.netValue })),
+    };
+    this.billing.push(doc);
+    this.journals.push({
+      companyCode: SCENARIO_COMPANY_CODE,
+      fiscalYear,
+      number: accountingDocument,
+      documentType: 'RV',
+      postingDate: today,
+      documentDate: today,
+      reference: doc.number.padStart(10, '0'),
+      items: [
+        { item: '1', account: order.soldTo, description: order.soldToName, amount: order.netValue, debitCredit: 'D' },
+        { item: '2', account: '700000', description: 'Sales', amount: SAR(-order.netValue.amount), debitCredit: 'C' },
+      ],
+    });
+    this.lineItems.push({
+      companyCode: SCENARIO_COMPANY_CODE,
+      fiscalYear,
+      document: accountingDocument,
+      item: '1',
+      documentType: 'RV',
+      accountType: 'CUSTOMER',
+      account: order.soldTo,
+      accountName: order.soldToName,
+      postingDate: today,
+      dueDate: today,
+      amount: order.netValue,
+    });
+    order.billingStatus = 'COMPLETE';
+    (this.flows[order.number] ??= []).push(
+      { category: 'BILLING', document: doc.number, date: today, status: 'Posted to accounting' },
+      { category: 'ACCOUNTING', document: accountingDocument, date: today, status: 'Open receivable' },
+    );
+    return structuredClone(doc);
   }
 
   async releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice> {

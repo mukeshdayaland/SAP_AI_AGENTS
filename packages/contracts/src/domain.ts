@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { UIComponent } from './components.js';
+import type { UIComponent, WorkflowRunComponent } from './components.js';
 
 /* ------------------------------------------------------------------ */
 /* Identity & authorization                                            */
@@ -168,6 +168,29 @@ export interface ConversationDetail extends ConversationSummary {
 }
 
 /* ------------------------------------------------------------------ */
+/* Workflow runs                                                       */
+/* ------------------------------------------------------------------ */
+
+/** A configured multi-step process a user may start. */
+export interface WorkflowDescriptor {
+  id: string;
+  name: string;
+  description: string;
+  input: { name: string; label: string }[];
+  steps: { id: string; title: string; agent: string }[];
+}
+
+export type WorkflowRunSnapshot = z.infer<typeof WorkflowRunComponent>['data'];
+export type WorkflowRunStatus = WorkflowRunSnapshot['status'];
+export type WorkflowStepState = WorkflowRunSnapshot['steps'][number]['state'];
+
+export interface WorkflowRunDTO extends WorkflowRunSnapshot {
+  conversationId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/* ------------------------------------------------------------------ */
 /* Workspace configuration exposed to the UI                           */
 /* ------------------------------------------------------------------ */
 
@@ -266,6 +289,10 @@ export const FeedbackRequestSchema = z.object({
 
 export const RenameConversationSchema = z.object({
   title: z.string().trim().min(1).max(120),
+});
+
+export const StartRunSchema = z.object({
+  input: z.record(z.string().min(1).max(40), z.string().max(200)),
 });
 
 export const ConfirmActionSchema = z.object({

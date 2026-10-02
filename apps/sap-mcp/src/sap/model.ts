@@ -372,6 +372,12 @@ export interface SapGateway {
   getInfoRecords(ctx: SapCallContext, material: string, supplier?: string): Promise<InfoRecord[]>;
   listBlockedInvoices(ctx: SapCallContext, companyCode: string): Promise<Invoice[]>;
 
+  /** Creates an outbound delivery for all open items of a sales order (VL01N). */
+  createDelivery(ctx: SapCallContext, salesOrder: string): Promise<OutboundDelivery>;
+  postGoodsIssue(ctx: SapCallContext, delivery: string): Promise<OutboundDelivery>;
+  /** Bills a goods-issued delivery (VF01) and releases the billing document to accounting. */
+  createBillingDocument(ctx: SapCallContext, delivery: string): Promise<BillingDocument>;
+
   releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice>;
   addInvoiceNote(ctx: SapCallContext, number: string, fiscalYear: string, note: string): Promise<{ noteId: string }>;
 }

@@ -27,7 +27,7 @@ export function ConfirmationCard({
   onResolved,
 }: {
   confirmation: ConfirmationRequest;
-  onResolved: (c: ConfirmationRequest, message?: MessageDTO) => void;
+  onResolved: (c: ConfirmationRequest, messages?: MessageDTO[]) => void;
 }) {
   const [busy, setBusy] = useState<'confirm' | 'cancel' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,10 +43,10 @@ export function ConfirmationCard({
     try {
       if (kind === 'confirm') {
         const res = await api.confirm(confirmation.id, isProd ? 'PROD' : undefined);
-        onResolved(res.confirmation, res.message);
+        onResolved(res.confirmation, [res.message, ...(res.followUp ?? [])]);
       } else {
         const res = await api.cancel(confirmation.id);
-        onResolved(res.confirmation);
+        onResolved(res.confirmation, res.followUp);
       }
     } catch (err) {
       const e = (err as ApiError).error;

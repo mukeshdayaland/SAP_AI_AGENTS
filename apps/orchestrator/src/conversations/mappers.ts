@@ -4,7 +4,7 @@ import { hasRole } from '../auth/types.js';
 import type { ConversationRecord, MessageRecord, PendingActionRecord } from '../persistence/types.js';
 
 /** Opaque, unguessable identifiers (128 bits). */
-export const newId = (prefix: 'c' | 'm' | 'a' | 'f' | 't') => `${prefix}_${randomBytes(16).toString('base64url')}`;
+export const newId = (prefix: 'c' | 'm' | 'a' | 'f' | 't' | 'r') => `${prefix}_${randomBytes(16).toString('base64url')}`;
 
 export const canSeeTechnicalDetails = (user: UserProfile) => hasRole(user, 'AI_POWER_USER') || hasRole(user, 'AI_ADMIN');
 

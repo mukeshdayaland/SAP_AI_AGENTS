@@ -31,7 +31,8 @@ import {
 } from './model.js';
 
 /**
- * S/4HANA gateway over released OData V2 APIs, reached through the BTP
+ * S/4HANA gateway over released OData APIs (V2, and V4 where an API only
+ * exists as a RAP service), reached through the BTP
  * Destination service (and the Connectivity service + Cloud Connector for
  * on-premise systems). Uses the SAP Cloud SDK, which handles destination
  * lookup, OAuth/SAML token flows, the connectivity proxy and CSRF tokens.
@@ -72,6 +73,8 @@ const SERVICES = {
   credit: '/sap/opu/odata/sap/API_CRDTMBUSINESSPARTNER',
   stock: '/sap/opu/odata/sap/API_MATERIAL_STOCK_SRV',
   infoRecord: '/sap/opu/odata/sap/API_INFORECORD_PROCESS_SRV',
+  // OData V4 (RAP service binding): <binding>/srvd/sap/<service definition>/<version>
+  billingV4: '/sap/opu/odata4/sap/api_billingdocument/srvd/sap/api_billingdocument/0001',
 } as const;
 
 /** Line-item fields read from the operational accounting document item cube. */
@@ -130,6 +133,22 @@ function statusOf(err: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * The message SAP returned with an error, if any: `error.message.value` in
+ * OData V2, `error.message` in V4. It is SAP's own text for the calling user
+ * (for example "Delivery 80000258 has not been goods issued").
+ */
+function sapMessageOf(err: unknown): string | undefined {
+  let e: unknown = err;
+  for (let i = 0; i < 6 && e; i++) {
+    const message = (e as { response?: { data?: { error?: { message?: unknown } } } }).response?.data?.error?.message;
+    const text = typeof message === 'string' ? message : (message as { value?: unknown } | undefined)?.value;
+    if (typeof text === 'string' && text.trim()) return text.replace(/\s+/g, ' ').trim().slice(0, 300);
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 type ODataEntity = Record<string, unknown>;
 
 export class ODataSapGateway implements SapGateway {
@@ -148,12 +167,31 @@ export class ODataSapGateway implements SapGateway {
     return { destinationName: this.cfg.destinationName, ...(ctx.userJwt && { jwt: ctx.userJwt }) };
   }
 
+  /** OData V2 request. Returns the payload inside the `d` envelope. */
   private async request(
     ctx: SapCallContext,
     what: string,
     method: 'get' | 'post',
     url: string,
     params?: Record<string, string>,
+    write?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<unknown> {
+    const data = await this.send(ctx, what, method, url, { $format: 'json', ...params }, write);
+    return (data as { d?: unknown }).d ?? data;
+  }
+
+  /** OData V4 request. V4 has no `d` envelope and takes no `$format`; collections arrive as `{ value: [...] }`. */
+  private requestV4(ctx: SapCallContext, what: string, method: 'get' | 'post', url: string, options: { params?: Record<string, string>; body?: unknown } = {}): Promise<unknown> {
+    return this.send(ctx, what, method, url, options.params, { ...(options.body !== undefined && { body: options.body }), headers: { 'content-type': 'application/json' } });
+  }
+
+  private async send(
+    ctx: SapCallContext,
+    what: string,
+    method: 'get' | 'post',
+    url: string,
+    params?: Record<string, string>,
+    write?: { body?: unknown; headers?: Record<string, string> },
   ): Promise<unknown> {
     const started = Date.now();
     try {
@@ -162,19 +200,23 @@ export class ODataSapGateway implements SapGateway {
         {
           method,
           url,
-          params: { $format: 'json', ...params },
-          headers: { accept: 'application/json', 'x-correlation-id': ctx.correlationId },
+          ...(params && { params }),
+          ...(write?.body !== undefined && { data: write.body }),
+          headers: { accept: 'application/json', 'x-correlation-id': ctx.correlationId, ...write?.headers },
           timeout: 20_000,
         },
         { fetchCsrfToken: method !== 'get' },
       );
-      return (res.data as { d?: unknown }).d ?? res.data;
+      return res.data;
     } catch (err) {
       if (err instanceof SapError) throw err;
       const status = statusOf(err);
+      const sapMessage = sapMessageOf(err);
       this.cfg.logger.warn('sap.request_failed', { what, status, error: (err as Error).message });
       if (status === 404) throw new SapError('NOT_FOUND', `${what} was not found in SAP.`);
       if (status === 401 || status === 403) throw new SapError('NOT_AUTHORIZED', `SAP denied access to ${what}.`);
+      // A rejected posting is a business outcome the user must be able to act on, so SAP's reason is passed on.
+      if (status === 400 && method !== 'get' && sapMessage) throw new SapError('BUSINESS_RULE', `SAP rejected ${what}: ${sapMessage}`);
       if (status === 400) throw new SapError('INVALID_INPUT', `SAP rejected the request for ${what}.`);
       throw new SapError('UNAVAILABLE', `SAP is not reachable right now (${what}).`, true);
     } finally {
@@ -680,6 +722,32 @@ export class ODataSapGateway implements SapGateway {
         paymentBlock: { code: block, description: block === 'R' ? 'Invoice verification' : `Payment block ${block}` },
       };
     });
+  }
+
+  async createDelivery(ctx: SapCallContext, salesOrder: string): Promise<OutboundDelivery> {
+    const order = await this.getSalesOrder(ctx, salesOrder);
+    const created = (await this.request(ctx, `Outbound delivery for sales order ${salesOrder}`, 'post', `${SERVICES.delivery}/A_OutbDeliveryHeader`, undefined, {
+      body: { to_DeliveryDocumentItem: { results: order.items.map((i) => ({ ReferenceSDDocument: order.number, ReferenceSDDocumentItem: i.item })) } },
+    })) as ODataEntity;
+    return this.getDelivery(ctx, str(created.DeliveryDocument));
+  }
+
+  async postGoodsIssue(ctx: SapCallContext, delivery: string): Promise<OutboundDelivery> {
+    // The API requires an ETag; '*' posts against the current version of the delivery.
+    await this.request(ctx, `Goods issue for delivery ${delivery}`, 'post', `${SERVICES.delivery}/PostGoodsIssue`, { DeliveryDocument: lit(delivery) }, { headers: { 'if-match': '*' } });
+    return this.getDelivery(ctx, delivery);
+  }
+
+  async createBillingDocument(ctx: SapCallContext, delivery: string): Promise<BillingDocument> {
+    const what = `Billing document for delivery ${delivery}`;
+    // Static action of API_BILLINGDOCUMENT (OData V4). Posting to accounting stays enabled, so the
+    // invoice is released to FI in the same step, as in VF01.
+    const res = (await this.requestV4(ctx, what, 'post', `${SERVICES.billingV4}/BillingDocument/SAP__self.CreateFromSDDocument`, {
+      body: { _Reference: [{ SDDocument: delivery }], _Control: { AutomPostingToAcctgIsDisabled: false } },
+    })) as { value?: ODataEntity[] } & ODataEntity;
+    const created = str((res.value?.[0] ?? res).BillingDocument);
+    if (!created) throw new SapError('BUSINESS_RULE', `SAP did not create a billing document for delivery ${delivery}.`);
+    return this.getBillingDocument(ctx, created);
   }
 
   async releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice> {

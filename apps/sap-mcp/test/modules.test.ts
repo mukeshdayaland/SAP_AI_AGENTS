@@ -64,7 +64,7 @@ describe('tool domains follow SAP modules', () => {
     }
     expect([...byDomain.keys()].sort()).toEqual([...BUSINESS_DOMAINS, 'system'].sort());
     const writes = tools.filter((t) => t._meta?.[MCP_META.risk] !== 'READ').map((t) => t.name);
-    expect(writes.sort()).toEqual(['mm_addInvoiceNote', 'mm_releaseInvoicePaymentBlock']);
+    expect(writes.sort()).toEqual(['mm_addInvoiceNote', 'mm_releaseInvoicePaymentBlock', 'sd_createBillingDocument', 'sd_createDelivery', 'sd_postGoodsIssue']);
   });
 
   it('expands the former fico domain so existing deployments keep their tools', () => {
@@ -114,6 +114,45 @@ describe('order-to-cash in company code 1030', () => {
     const { sc } = await call('credit_getCreditExposure', { customer: '7000000011' });
     expect(sc.data.summary).toMatch(/above the limit/);
     expect(sc.data.findings![0]).toMatch(/exceeds the credit limit by SAR 136,000/);
+  });
+});
+
+describe('order-to-cash postings', () => {
+  const ctx = { principal: { sub: 'jordan.lee@prowess.example' }, correlationId: 't' } as never;
+
+  it('refuses every write that has not been confirmed', async () => {
+    for (const name of ['sd_createDelivery', 'sd_postGoodsIssue', 'sd_createBillingDocument']) {
+      const res = await call(name, { salesOrder: '649' });
+      expect(res.isError).toBe(true);
+      expect(res.raw).toContain('CONFIRMATION_REQUIRED');
+    }
+  });
+
+  it('previews the delivery without changing SAP', async () => {
+    const { sc } = await call('system_previewAction', { tool: 'sd_createDelivery', arguments: { salesOrder: '649' } });
+    expect(sc.data.preview).toMatchObject({ action: 'Create outbound delivery', businessObject: { type: 'Sales order', id: '649' } });
+    expect((await call('sd_getSalesOrder', { salesOrder: '649' })).sc.components[0]!.data.deliveryStatus).toBe('NOT_STARTED');
+  });
+
+  it('delivers, issues and bills an order, leaving a receivable and a balanced flow', async () => {
+    const sap = new MockSapGateway(0);
+    const delivery = await sap.createDelivery(ctx, '649');
+    await expect(sap.createBillingDocument(ctx, delivery.number)).rejects.toThrow(/Goods issue has not been posted/);
+    const issued = await sap.postGoodsIssue(ctx, delivery.number);
+    expect(issued.goodsIssueStatus).toBe('COMPLETE');
+    expect((await sap.getMaterialStock(ctx, '5496', '1030'))[0]!.unrestricted).toBe(18);
+    const billing = await sap.createBillingDocument(ctx, delivery.number);
+    expect(billing).toMatchObject({ netValue: { amount: 12500, currency: 'SAR' }, postedToAccounting: true, salesOrder: '649' });
+
+    expect((await sap.getSalesOrderFlow(ctx, '649')).map((s) => s.category)).toEqual(['DELIVERY', 'GOODS_ISSUE', 'BILLING', 'ACCOUNTING']);
+    const open = await sap.listOpenItems(ctx, { accountType: 'CUSTOMER', account: '7000000010', companyCode: '1030', status: 'OPEN' });
+    expect(open.map((i) => i.amount.amount).sort((a, b) => a - b)).toEqual([2500, 12500]);
+    await expect(sap.createDelivery(ctx, '649')).rejects.toThrow(/already completely delivered/);
+    await expect(sap.postGoodsIssue(ctx, delivery.number)).rejects.toThrow(/already been posted/);
+  });
+
+  it('will not deliver a credit-blocked order', async () => {
+    await expect(new MockSapGateway(0).createDelivery(ctx, '650')).rejects.toThrow(/blocked by the credit check/);
   });
 });
 

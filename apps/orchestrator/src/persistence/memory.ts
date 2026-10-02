@@ -7,6 +7,7 @@ import type {
   Store,
   UsageRecord,
   UsageTotals,
+  WorkflowRunRecord,
 } from './types.js';
 
 const owns = (o: Owner, r: Owner) => o.userId === r.userId && o.tenantId === r.tenantId;
@@ -18,6 +19,7 @@ export class MemoryStore implements Store {
   private readonly msgs = new Map<string, MessageRecord[]>();
   private readonly atts = new Map<string, AttachmentRecord>();
   private readonly acts = new Map<string, PendingActionRecord>();
+  private readonly runRows = new Map<string, WorkflowRunRecord>();
   private readonly usageRows: UsageRecord[] = [];
 
   conversations = {
@@ -107,6 +109,20 @@ export class MemoryStore implements Store {
       const a = this.acts.get(id);
       if (!a || !owns(o, a) || a.status !== from) return false;
       Object.assign(a, patch, { status: to });
+      return true;
+    },
+  };
+
+  runs = {
+    create: async (r: WorkflowRunRecord) => void this.runRows.set(r.id, clone(r)),
+    get: async (o: Owner, id: string) => {
+      const r = this.runRows.get(id);
+      return r && owns(o, r) ? clone(r) : null;
+    },
+    update: async (o: Owner, r: WorkflowRunRecord) => {
+      const current = this.runRows.get(r.id);
+      if (!current || !owns(o, current)) return false;
+      this.runRows.set(r.id, clone(r));
       return true;
     },
   };

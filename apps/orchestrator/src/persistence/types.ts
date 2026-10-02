@@ -7,6 +7,8 @@ import type {
   MessageRole,
   PublicError,
   ToolRisk,
+  WorkflowRunStatus,
+  WorkflowStepState,
 } from '@prowess/contracts';
 
 /**
@@ -86,6 +88,32 @@ export interface PendingActionRecord extends Owner {
   createdAt: string;
   expiresAt: string;
   resultMessageId?: string;
+  /** Set when the action is a step of a workflow run; the run resumes once the action is resolved. */
+  runId?: string;
+  stepId?: string;
+}
+
+export interface WorkflowStepRecord {
+  id: string;
+  state: WorkflowStepState;
+  /** One-line outcome shown on the run card. */
+  detail?: string;
+  /** Values the step's tool published for later steps (document numbers, statuses). */
+  outputs?: Record<string, string>;
+  actionId?: string;
+}
+
+export interface WorkflowRunRecord extends Owner {
+  id: string;
+  workflow: string;
+  title: string;
+  conversationId: string;
+  input: Record<string, string>;
+  status: WorkflowRunStatus;
+  reason?: string;
+  steps: WorkflowStepRecord[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UsageRecord {
@@ -136,6 +164,11 @@ export interface Store {
     get(owner: Owner, id: string): Promise<PendingActionRecord | null>;
     /** Atomic compare-and-set on status; returns false if the status had changed. */
     transition(owner: Owner, id: string, from: PendingActionRecord['status'], to: PendingActionRecord['status'], patch?: Partial<PendingActionRecord>): Promise<boolean>;
+  };
+  runs: {
+    create(r: WorkflowRunRecord): Promise<void>;
+    get(owner: Owner, id: string): Promise<WorkflowRunRecord | null>;
+    update(owner: Owner, r: WorkflowRunRecord): Promise<boolean>;
   };
   usage: {
     record(u: UsageRecord): Promise<void>;

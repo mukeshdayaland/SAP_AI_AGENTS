@@ -271,9 +271,10 @@ export function useChat(onChanged: () => void) {
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
-  const resolveConfirmation = useCallback((confirmation: ConfirmationRequest, message?: MessageDTO) => {
+  /** `messages` are what the confirmation produced: the result of the write and, for a workflow run, its next steps. */
+  const resolveConfirmation = useCallback((confirmation: ConfirmationRequest, messages: MessageDTO[] = []) => {
     dispatch({ type: 'confirmation', confirmation });
-    if (message) dispatch({ type: 'append', message: fromDTO(message) });
+    for (const message of messages) dispatch({ type: 'append', message: fromDTO(message) });
   }, []);
 
   const rate = useCallback(async (messageId: string, rating: Feedback) => {

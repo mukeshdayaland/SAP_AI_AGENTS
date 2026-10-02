@@ -5,7 +5,7 @@ SAP access lives **only** in `prowess-sap-mcp`, behind the `SapGateway` port:
 | Mode | Class | Use |
 | --- | --- | --- |
 | `SAP_MODE=mock` | `MockSapGateway` | Local/CI. Fictitious data, simulated SAP authorizations. Refused in PROD. |
-| `SAP_MODE=odata` | `ODataSapGateway` | S/4HANA released OData V2 APIs via BTP Destination + Connectivity |
+| `SAP_MODE=odata` | `ODataSapGateway` | S/4HANA released OData APIs (V2, and V4 for RAP services) via BTP Destination + Connectivity |
 
 ## Topology
 
@@ -49,7 +49,9 @@ S/4HANA Cloud: `Authentication=OAuth2SAMLBearerAssertion` with a communication a
 | goods receipts | `API_MATERIAL_DOCUMENT_SRV` |
 | sales orders, document flow | `API_SALES_ORDER_SRV` (`A_SalesOrder`, `to_SubsequentProcFlowDoc`) |
 | outbound deliveries | `API_OUTBOUND_DELIVERY_SRV;v=0002` |
-| billing documents | `API_BILLING_DOCUMENT_SRV` |
+| billing documents (read) | `API_BILLING_DOCUMENT_SRV` |
+| billing documents (create) | OData V4 `api_billingdocument`, static action `CreateFromSDDocument` (path `/sap/opu/odata4/sap/api_billingdocument/`) |
+| outbound delivery create, goods issue | `API_OUTBOUND_DELIVERY_SRV;v=0002` (`A_OutbDeliveryHeader`, function `PostGoodsIssue`) |
 | customers | `API_BUSINESS_PARTNER` (`A_Customer`) |
 | customer / supplier / G/L line items | `API_OPLACCTGDOCITEMCUBE_SRV` |
 | accounting documents | `API_JOURNALENTRYITEMBASIC_SRV` (leading ledger `0L`) |
@@ -57,6 +59,9 @@ S/4HANA Cloud: `Authentication=OAuth2SAMLBearerAssertion` with a communication a
 | material stock | `API_MATERIAL_STOCK_SRV` |
 | purchasing info records | `API_INFORECORD_PROCESS_SRV` |
 | equipment / notifications / orders | `API_EQUIPMENT`, `API_MAINTNOTIFICATION`, `API_MAINTENANCEORDER` |
+
+When SAP rejects a posting, its own message is passed on to the user (`SAP rejected …: <SAP message>`). Read errors
+stay generic.
 
 Credit exposure is not part of the released credit API: the gateway reports the sum of open receivables and flags
 it as such (`exposureBasis: OPEN_RECEIVABLES`).

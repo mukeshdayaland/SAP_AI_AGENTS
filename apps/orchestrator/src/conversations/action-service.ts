@@ -8,6 +8,7 @@ import type { OrchestratorConfig } from '../config/env.js';
 import { AppError } from '../errors/app-error.js';
 import type { McpGateway } from '../mcp/gateway.js';
 import type { MessageRecord, Owner, PendingActionRecord, Store } from '../persistence/types.js';
+import type { ActionOutcome, WorkflowService } from '../workflows/workflow-service.js';
 import { newId, toConfirmation, toMessageDTO } from './mappers.js';
 
 /**
@@ -23,10 +24,23 @@ export class ActionService {
       mcp: McpGateway;
       agents: AgentRegistry;
       audit: AuditTrail;
+      workflows: WorkflowService;
       logger: Logger;
       config: OrchestratorConfig;
     },
   ) {}
+
+  /** When the action is a step of a workflow run, lets the run continue (or end) and returns its follow-up message. */
+  private async continueRun(auth: AuthContext, action: PendingActionRecord, outcome: ActionOutcome): Promise<MessageDTO[]> {
+    try {
+      const followUp = await this.deps.workflows.onActionResolved(auth, action, outcome);
+      return followUp ? [toMessageDTO(followUp, auth.user)] : [];
+    } catch (err) {
+      // The SAP write itself is already final; a failure here must not mask its result.
+      this.deps.logger.error('workflow.resume_failed', { actionId: action.id, error: err as Error });
+      return [];
+    }
+  }
 
   private async load(auth: AuthContext, id: string): Promise<{ owner: Owner; action: PendingActionRecord }> {
     const owner = { userId: auth.user.id, tenantId: auth.user.tenantId };
@@ -35,6 +49,7 @@ export class ActionService {
     if (action.status === 'pending' && action.expiresAt < new Date().toISOString()) {
       await this.deps.store.actions.transition(owner, id, 'pending', 'expired');
       await this.syncCard(owner, { ...action, status: 'expired' });
+      await this.continueRun(auth, action, { status: 'expired' });
       throw new AppError('ACTION_EXPIRED', 'This confirmation has expired. Ask again to prepare a new one.', 'VALIDATION');
     }
     if (action.status !== 'pending') throw new AppError('ACTION_NOT_PENDING', `This action is already ${action.status}.`, 'VALIDATION');
@@ -51,7 +66,7 @@ export class ActionService {
     await this.deps.store.messages.update(action.conversationId, msg.id, { response: { ...msg.response, confirmations } });
   }
 
-  async cancel(auth: AuthContext, id: string): Promise<ConfirmationRequest> {
+  async cancel(auth: AuthContext, id: string): Promise<{ confirmation: ConfirmationRequest; followUp: MessageDTO[] }> {
     const { owner, action } = await this.load(auth, id);
     if (!(await this.deps.store.actions.transition(owner, id, 'pending', 'cancelled'))) {
       throw new AppError('ACTION_NOT_PENDING', 'This action was already processed.', 'VALIDATION');
@@ -59,10 +74,10 @@ export class ActionService {
     const updated = { ...action, status: 'cancelled' as const };
     await this.syncCard(owner, updated);
     this.deps.audit.record({ type: 'SAP_WRITE_CANCELLED', ...owner, agent: action.agent, tool: action.tool, targetSystem: action.targetSystem, operation: 'SAP_WRITE', status: 'success', details: { actionId: id } });
-    return toConfirmation(updated);
+    return { confirmation: toConfirmation(updated), followUp: await this.continueRun(auth, action, { status: 'cancelled' }) };
   }
 
-  async confirm(auth: AuthContext, id: string, acknowledgeEnvironment?: string): Promise<{ confirmation: ConfirmationRequest; message: MessageDTO }> {
+  async confirm(auth: AuthContext, id: string, acknowledgeEnvironment?: string): Promise<{ confirmation: ConfirmationRequest; message: MessageDTO; followUp: MessageDTO[] }> {
     const { store, mcp, agents, audit, config } = this.deps;
     const { owner, action } = await this.load(auth, id);
     const details = { actionId: id, objectType: action.preview.businessObject.type, objectId: action.preview.businessObject.id };
@@ -122,6 +137,11 @@ export class ActionService {
     };
     await store.messages.add(record);
     await store.conversations.update(owner, action.conversationId, { updatedAt: record.createdAt });
-    return { confirmation: toConfirmation(updated), message: toMessageDTO(record, auth.user) };
+    const followUp = await this.continueRun(
+      auth,
+      action,
+      out.ok ? { status: 'completed', ...(out.structured && { structured: out.structured }) } : { status: 'failed', ...(out.errorMessage && { errorMessage: out.errorMessage }) },
+    );
+    return { confirmation: toConfirmation(updated), message: toMessageDTO(record, auth.user), followUp };
   }
 }

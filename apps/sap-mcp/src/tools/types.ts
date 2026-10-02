@@ -15,6 +15,8 @@ export interface ToolResultPayload {
   source?: { system: string; objectType: string; objectId: string; retrievedAt: string; mock: boolean };
   /** Suggested follow-up prompts (never direct executions). */
   followUps?: { label: string; prompt: string }[];
+  /** Named values (document numbers, statuses) that later steps of a workflow run can refer to. */
+  outputs?: Record<string, string>;
 }
 
 /** Human-readable description of a pending write, shown on the confirmation card. */

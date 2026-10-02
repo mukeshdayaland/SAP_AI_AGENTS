@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { DocumentFlowStep, SalesOrder } from '../sap/model.js';
+import { SapError, type BillingDocument, type DocumentFlowStep, type OutboundDelivery, type SalesOrder } from '../sap/model.js';
 import { defineTool, fmt, now, type ToolContext } from './types.js';
 
 const salesOrder = z.string().regex(/^\d{1,10}$/).describe('Sales order number, e.g. 648');
@@ -31,6 +31,42 @@ function salesOrderComponent(o: SalesOrder) {
   };
 }
 
+function deliveryComponent(d: OutboundDelivery) {
+  return {
+    type: 'outbound_delivery' as const,
+    data: {
+      number: d.number,
+      shipTo: d.shipTo,
+      shipToName: d.shipToName,
+      ...(d.salesOrder && { salesOrder: d.salesOrder }),
+      ...(d.plannedGoodsIssueDate && { plannedGoodsIssueDate: d.plannedGoodsIssueDate }),
+      ...(d.actualGoodsIssueDate && { actualGoodsIssueDate: d.actualGoodsIssueDate }),
+      goodsIssueStatus: d.goodsIssueStatus,
+      items: d.items.slice(0, 50),
+    },
+  };
+}
+
+function billingComponent(b: BillingDocument) {
+  return {
+    type: 'billing_document' as const,
+    data: {
+      number: b.number,
+      billingType: b.billingType,
+      payer: b.payer,
+      payerName: b.payerName,
+      billingDate: b.billingDate,
+      netValue: b.netValue,
+      ...(b.taxAmount && { taxAmount: b.taxAmount }),
+      companyCode: b.companyCode,
+      ...(b.accountingDocument && { accountingDocument: b.accountingDocument }),
+      postedToAccounting: b.postedToAccounting,
+      cancelled: b.cancelled,
+      ...(b.salesOrder && { salesOrder: b.salesOrder }),
+    },
+  };
+}
+
 function salesOrderSummary(o: SalesOrder) {
   return (
     `Sales order **${o.number}** for **${o.soldToName}** is worth **${fmt(o.netValue)}**. ` +
@@ -40,6 +76,18 @@ function salesOrderSummary(o: SalesOrder) {
 }
 
 const orderSource = (ctx: ToolContext, number: string) => ({ system: ctx.gateway.systemId, objectType: 'SalesOrder', objectId: number, retrievedAt: now(), mock: ctx.gateway.mock });
+
+/** The delivery of a sales order that is ready for the next step, or a business-rule error that says why there is none. */
+async function findDelivery(ctx: ToolContext, salesOrder: string, ready: (d: OutboundDelivery) => boolean, none: string): Promise<OutboundDelivery> {
+  const flow = await ctx.gateway.getSalesOrderFlow(ctx.sap, salesOrder);
+  for (const step of flow.filter((s) => s.category === 'DELIVERY')) {
+    const delivery = await ctx.gateway.getDelivery(ctx.sap, step.document);
+    if (ready(delivery)) return delivery;
+  }
+  throw new SapError('BUSINESS_RULE', none);
+}
+
+const quantities = (items: { quantity: number; unit: string; description: string }[]) => items.map((i) => `${i.quantity} ${i.unit} ${i.description}`).join(', ');
 
 const FLOW_LABEL: Record<DocumentFlowStep['category'], string> = {
   DELIVERY: 'Outbound delivery',
@@ -118,6 +166,14 @@ export const sdTools = [
           },
         ],
         source: orderSource(ctx, o.number),
+        outputs: {
+          salesOrder: o.number,
+          soldTo: o.soldTo,
+          creditStatus: o.creditStatus,
+          hasDelivery: String(has('DELIVERY')),
+          goodsIssued: String(has('GOODS_ISSUE')),
+          billed: String(has('BILLING')),
+        },
       };
     },
   }),
@@ -192,21 +248,7 @@ export const sdTools = [
             `Outbound delivery **${d.number}** to **${d.shipToName}**: goods issue is **${humanize(d.goodsIssueStatus)}**` +
             (d.actualGoodsIssueDate ? ` (posted ${d.actualGoodsIssueDate}).` : d.plannedGoodsIssueDate ? ` (planned ${d.plannedGoodsIssueDate}).` : '.'),
         },
-        components: [
-          {
-            type: 'outbound_delivery',
-            data: {
-              number: d.number,
-              shipTo: d.shipTo,
-              shipToName: d.shipToName,
-              ...(d.salesOrder && { salesOrder: d.salesOrder }),
-              ...(d.plannedGoodsIssueDate && { plannedGoodsIssueDate: d.plannedGoodsIssueDate }),
-              ...(d.actualGoodsIssueDate && { actualGoodsIssueDate: d.actualGoodsIssueDate }),
-              goodsIssueStatus: d.goodsIssueStatus,
-              items: d.items.slice(0, 50),
-            },
-          },
-        ],
+        components: [deliveryComponent(d)],
         source: { system: ctx.gateway.systemId, objectType: 'OutboundDelivery', objectId: d.number, retrievedAt: now(), mock: ctx.gateway.mock },
         followUps: d.salesOrder ? [{ label: 'Sales order', prompt: `Show sales order ${d.salesOrder}.` }] : [],
       };
@@ -236,25 +278,7 @@ export const sdTools = [
                 : 'It is **not yet posted to accounting**.'),
           findings: !b.cancelled && !b.postedToAccounting ? ['The billing document has no accounting document: check account determination and the posting block (VFX3).'] : [],
         },
-        components: [
-          {
-            type: 'billing_document',
-            data: {
-              number: b.number,
-              billingType: b.billingType,
-              payer: b.payer,
-              payerName: b.payerName,
-              billingDate: b.billingDate,
-              netValue: b.netValue,
-              ...(b.taxAmount && { taxAmount: b.taxAmount }),
-              companyCode: b.companyCode,
-              ...(b.accountingDocument && { accountingDocument: b.accountingDocument }),
-              postedToAccounting: b.postedToAccounting,
-              cancelled: b.cancelled,
-              ...(b.salesOrder && { salesOrder: b.salesOrder }),
-            },
-          },
-        ],
+        components: [billingComponent(b)],
         source: { system: ctx.gateway.systemId, objectType: 'BillingDocument', objectId: b.number, retrievedAt: now(), mock: ctx.gateway.mock },
         followUps: [
           ...(b.accountingDocument && b.fiscalYear
@@ -262,6 +286,100 @@ export const sdTools = [
             : []),
           { label: 'Customer open items', prompt: `Show the open items of customer ${b.payer} in company code ${b.companyCode}.` },
         ],
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'sd_createDelivery',
+    domain: 'sd',
+    title: 'Create outbound delivery',
+    description: 'Create an outbound delivery for the open items of a sales order (transaction VL01N). Consequential: always requires explicit user confirmation.',
+    risk: 'HIGH_IMPACT',
+    operation: 'SAP_WRITE',
+    statusLabel: 'Creating outbound delivery',
+    input: { salesOrder },
+    async preview({ salesOrder }, ctx) {
+      const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder);
+      return {
+        action: 'Create outbound delivery',
+        businessObject: { type: 'Sales order', id: o.number },
+        proposedChange: `Create an outbound delivery to ${o.soldToName} for ${quantities(o.items)}.`,
+        impact: `Stock is committed to this delivery and warehouse processing can start. The order value is ${fmt(o.netValue)}.`,
+      };
+    },
+    async run({ salesOrder }, ctx) {
+      const d = await ctx.gateway.createDelivery(ctx.sap, salesOrder);
+      return {
+        data: { summary: `Outbound delivery **${d.number}** was created for sales order **${salesOrder}**. Goods issue is still outstanding.`, delivery: d.number },
+        components: [deliveryComponent(d)],
+        source: { system: ctx.gateway.systemId, objectType: 'OutboundDelivery', objectId: d.number, retrievedAt: now(), mock: ctx.gateway.mock },
+        outputs: { delivery: d.number },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'sd_postGoodsIssue',
+    domain: 'sd',
+    title: 'Post goods issue',
+    description: 'Post goods issue for the outbound delivery of a sales order. Reduces stock and posts cost of goods sold. Consequential: always requires explicit user confirmation.',
+    risk: 'HIGH_IMPACT',
+    operation: 'SAP_WRITE',
+    statusLabel: 'Posting goods issue',
+    input: { salesOrder },
+    async preview({ salesOrder }, ctx) {
+      const d = await findDelivery(ctx, salesOrder, (x) => x.goodsIssueStatus !== 'COMPLETE', `Sales order ${salesOrder} has no delivery that is waiting for goods issue.`);
+      return {
+        action: 'Post goods issue',
+        businessObject: { type: 'Outbound delivery', id: d.number },
+        proposedChange: `Post goods issue for ${quantities(d.items)} to ${d.shipToName}.`,
+        impact: 'Stock is reduced and cost of goods sold is posted to accounting. Undoing it requires a goods issue reversal.',
+      };
+    },
+    async run({ salesOrder }, ctx) {
+      const open = await findDelivery(ctx, salesOrder, (x) => x.goodsIssueStatus !== 'COMPLETE', `Sales order ${salesOrder} has no delivery that is waiting for goods issue.`);
+      const d = await ctx.gateway.postGoodsIssue(ctx.sap, open.number);
+      return {
+        data: { summary: `Goods issue was posted for delivery **${d.number}**${d.actualGoodsIssueDate ? ` on ${d.actualGoodsIssueDate}` : ''}. The delivery can now be billed.`, delivery: d.number },
+        components: [deliveryComponent(d)],
+        source: { system: ctx.gateway.systemId, objectType: 'OutboundDelivery', objectId: d.number, retrievedAt: now(), mock: ctx.gateway.mock },
+        outputs: { delivery: d.number },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'sd_createBillingDocument',
+    domain: 'sd',
+    title: 'Create billing document',
+    description: 'Bill the goods-issued delivery of a sales order (transaction VF01) and post the invoice to accounting. Consequential: always requires explicit user confirmation.',
+    risk: 'HIGH_IMPACT',
+    operation: 'SAP_WRITE',
+    statusLabel: 'Creating billing document',
+    input: { salesOrder },
+    async preview({ salesOrder }, ctx) {
+      const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder);
+      if (o.billingStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is already completely billed.`);
+      const d = await findDelivery(ctx, salesOrder, (x) => x.goodsIssueStatus === 'COMPLETE', `Sales order ${salesOrder} has no goods-issued delivery to bill.`);
+      return {
+        action: 'Create billing document',
+        businessObject: { type: 'Outbound delivery', id: d.number },
+        proposedChange: `Create a customer invoice for ${quantities(d.items)} delivered to ${o.soldToName}.`,
+        impact: `A receivable of about ${fmt(o.netValue)} plus tax is posted to the account of ${o.soldToName} and revenue is recognized.`,
+      };
+    },
+    async run({ salesOrder }, ctx) {
+      const d = await findDelivery(ctx, salesOrder, (x) => x.goodsIssueStatus === 'COMPLETE', `Sales order ${salesOrder} has no goods-issued delivery to bill.`);
+      const b = await ctx.gateway.createBillingDocument(ctx.sap, d.number);
+      return {
+        data: {
+          summary: `Billing document **${b.number}** for **${fmt(b.netValue)}** was created for **${b.payerName}**${b.accountingDocument ? ` and posted to accounting as document **${b.accountingDocument}**` : ''}.`,
+          billingDocument: b.number,
+        },
+        components: [billingComponent(b)],
+        source: { system: ctx.gateway.systemId, objectType: 'BillingDocument', objectId: b.number, retrievedAt: now(), mock: ctx.gateway.mock },
+        outputs: { billingDocument: b.number, ...(b.accountingDocument && { accountingDocument: b.accountingDocument }), companyCode: b.companyCode },
       };
     },
   }),

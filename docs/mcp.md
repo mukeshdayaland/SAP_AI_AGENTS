@@ -13,6 +13,9 @@ authorizes them, and the MCP server executes them against SAP.
 | SD | `sd_listOpenSalesOrders` | READ | Orders not completely delivered or billed, or blocked |
 | SD | `sd_getDelivery` | READ | Outbound delivery, picking and goods issue status (VL01N) |
 | SD | `sd_getBillingDocument` | READ | Billing document and its accounting document (VF01) |
+| SD | `sd_createDelivery` | HIGH_IMPACT | Confirmation required. Outbound delivery for a sales order (VL01N) |
+| SD | `sd_postGoodsIssue` | HIGH_IMPACT | Confirmation required. Reduces stock, posts cost of goods sold |
+| SD | `sd_createBillingDocument` | HIGH_IMPACT | Confirmation required. Bills the goods-issued delivery (VF01) and posts it to accounting |
 | Credit | `credit_getCreditExposure` | READ | Credit limit, exposure, utilization, risk class |
 | FI-AR | `ar_getCustomer` | READ | Customer master, blocks, open and overdue receivables |
 | FI-AR | `ar_listCustomerOpenItems` | READ | Customer line items, open / cleared / all (FBL5N) |
@@ -46,7 +49,8 @@ Every tool publishes metadata in `_meta`: `prowess/risk`, `prowess/domain`, `pro
   "data":       { "summary": "…", "findings": ["…"], "nextSteps": ["…"] }, // → model, fenced as untrusted
   "components": [{ "type": "invoice", "data": { … } }],                    // → UI, re-validated by the orchestrator
   "source":     { "system": "S4-PRD", "objectType": "SupplierInvoice", "objectId": "5100012345/2026", "retrievedAt": "…", "mock": false },
-  "followUps":  [{ "label": "Check related PO", "prompt": "…" }]          // → suggested prompts, never executions
+  "followUps":  [{ "label": "Check related PO", "prompt": "…" }],         // → suggested prompts, never executions
+  "outputs":    { "delivery": "80000258" }                                // → values later steps of a workflow run can use
 }
 ```
 

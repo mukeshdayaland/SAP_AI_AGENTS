@@ -23,6 +23,12 @@ const INTENTS: Intent[] = [
   { tool: 'getInvoice', pattern: /\b(51\d{8})\b/, args: (m) => ({ invoiceNumber: m[1] }) },
   { tool: 'getGoodsReceipt', when: /\bgoods receipt|GR\b/i, pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrder: m[1] }) },
   { tool: 'getPurchaseOrder', pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrderNumber: m[1] }) },
+  {
+    tool: 'start',
+    when: /\b(run|start|process|fulfil|fulfill|carry out)\b/i,
+    pattern: /\bsales order\D{0,12}(\d{1,10})\b/i,
+    args: (m, t) => ({ workflow: 'order-to-cash', input: { salesOrder: m[1], companyCode: companyCodeIn(t) } }),
+  },
   { tool: 'getSalesOrderFlow', when: /\b(flow|trace|track|where is|stuck)\b/i, pattern: /\bsales order\D{0,12}(\d{1,10})\b/i, args: (m) => ({ salesOrder: m[1] }) },
   { tool: 'getSalesOrder', pattern: /\bsales order\D{0,12}(\d{1,10})\b/i, args: (m) => ({ salesOrder: m[1] }) },
   { tool: 'listOpenSalesOrders', when: /\bopen (sales )?orders\b/i, pattern: /orders/i, args: () => ({}) },

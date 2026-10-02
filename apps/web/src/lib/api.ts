@@ -71,8 +71,8 @@ export const api = {
   feedback: (conversationId: string, messageId: string, rating: 'up' | 'down') =>
     request<void>('POST', `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/feedback`, { rating }),
   confirm: (id: string, acknowledgeEnvironment?: string) =>
-    request<{ confirmation: ConfirmationRequest; message: MessageDTO }>('POST', `/actions/${encodeURIComponent(id)}/confirm`, acknowledgeEnvironment ? { acknowledgeEnvironment } : {}),
-  cancel: (id: string) => request<{ confirmation: ConfirmationRequest }>('POST', `/actions/${encodeURIComponent(id)}/cancel`, {}),
+    request<{ confirmation: ConfirmationRequest; message: MessageDTO; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/confirm`, acknowledgeEnvironment ? { acknowledgeEnvironment } : {}),
+  cancel: (id: string) => request<{ confirmation: ConfirmationRequest; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/cancel`, {}),
   adminOverview: () => request<Record<string, unknown>>('GET', '/admin/overview'),
   audit: () => request<{ events: Record<string, unknown>[] }>('GET', '/admin/audit'),
 

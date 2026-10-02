@@ -8,6 +8,7 @@ import type {
   Store,
   UsageRecord,
   UsageTotals,
+  WorkflowRunRecord,
 } from './types.js';
 
 /**
@@ -86,6 +87,22 @@ CREATE TABLE IF NOT EXISTS usage_events (
 );
 CREATE INDEX IF NOT EXISTS usage_user_day_idx ON usage_events (user_id, day);
 CREATE INDEX IF NOT EXISTS usage_agent_day_idx ON usage_events (agent, day);
+`,
+  },
+  {
+    id: 2,
+    sql: `
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  workflow TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  data JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workflow_runs_owner_idx ON workflow_runs (tenant_id, user_id, updated_at DESC);
 `,
   },
 ];
@@ -283,6 +300,36 @@ export class PostgresStore implements Store {
         `UPDATE pending_actions SET status=$5, data = data || $6::jsonb WHERE id=$1 AND user_id=$2 AND tenant_id=$3 AND status=$4`,
         [id, o.userId, o.tenantId, from, to, JSON.stringify({ ...patch, status: to })],
       );
+      return (res.rowCount ?? 0) > 0;
+    },
+  };
+
+  runs = {
+    create: async (r: WorkflowRunRecord) => {
+      await this.q('INSERT INTO workflow_runs (id,user_id,tenant_id,workflow,status,created_at,updated_at,data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [
+        r.id,
+        r.userId,
+        r.tenantId,
+        r.workflow,
+        r.status,
+        r.createdAt,
+        r.updatedAt,
+        JSON.stringify(r),
+      ]);
+    },
+    get: async (o: Owner, id: string) => {
+      const { rows } = await this.q('SELECT data FROM workflow_runs WHERE id=$1 AND user_id=$2 AND tenant_id=$3', [id, o.userId, o.tenantId]);
+      return rows[0] ? (rows[0].data as WorkflowRunRecord) : null;
+    },
+    update: async (o: Owner, r: WorkflowRunRecord) => {
+      const res = await this.q('UPDATE workflow_runs SET status=$4, updated_at=$5, data=$6 WHERE id=$1 AND user_id=$2 AND tenant_id=$3', [
+        r.id,
+        o.userId,
+        o.tenantId,
+        r.status,
+        r.updatedAt,
+        JSON.stringify(r),
+      ]);
       return (res.rowCount ?? 0) > 0;
     },
   };
