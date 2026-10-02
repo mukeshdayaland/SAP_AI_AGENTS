@@ -49,8 +49,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
-      - name: Dependency vulnerabilities (fail on high/critical in runtime deps)
-        run: npm audit --omit=dev --audit-level=high
+      # The secret scan and CodeQL run first so they still report when the dependency audit fails.
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env:
@@ -60,6 +59,8 @@ jobs:
         with: { languages: javascript-typescript }
       - name: CodeQL analyze
         uses: github/codeql-action/analyze@v3
+      - name: Dependency vulnerabilities (fail on high/critical in runtime deps)
+        run: npm audit --omit=dev --audit-level=high
 
   build:
     name: Build & package
