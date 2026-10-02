@@ -32,6 +32,8 @@ const AgentSchema = z.object({
   requiredRoles: z.array(role).min(1),
   instructions: z.string().max(4_000),
   enabled: z.boolean().default(true),
+  /** Former ids of this agent. Stored conversations that reference one resolve to this agent. */
+  aliases: z.array(z.string().regex(/^[a-z][a-z0-9-]{1,31}$/)).default([]),
 });
 
 const StarterSchema = z.object({
@@ -47,6 +49,8 @@ export const AgentCatalogSchema = z
   .object({ defaultAgent: z.string(), agents: z.array(AgentSchema).min(1), starters: z.array(StarterSchema).default([]) })
   .superRefine((cat, ctx) => {
     const ids = new Set(cat.agents.map((a) => a.id));
+    const names = cat.agents.flatMap((a) => [a.id, ...a.aliases]);
+    for (const name of new Set(names.filter((n, i) => names.indexOf(n) !== i))) ctx.addIssue({ code: 'custom', message: `Agent id or alias "${name}" is used more than once` });
     if (!ids.has(cat.defaultAgent)) ctx.addIssue({ code: 'custom', message: `defaultAgent "${cat.defaultAgent}" is not defined` });
     for (const s of cat.starters) if (!ids.has(s.agent)) ctx.addIssue({ code: 'custom', message: `Starter "${s.id}" references unknown agent` });
   });

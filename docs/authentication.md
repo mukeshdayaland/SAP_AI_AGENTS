@@ -44,7 +44,7 @@ Defined in `infrastructure/btp/xs-security.json` and assigned through role colle
 | `Prowess_AI_Admin` | `AI_USER`, `AI_ADMIN` | + administration console |
 | `Prowess_AI_Auditor` | `AI_AUDITOR` | audit view only (no chat) |
 
-**These roles never grant SAP authorization.** An `AI_USER` who opens the FICO agent still sees only the invoices
+**These roles never grant SAP authorization.** An `AI_USER` who opens the FI-AP agent still sees only the invoices
 their SAP user may display, and can release a payment block only if SAP authorizes them (for example
 `M_RECH_WRK`, transaction MRBR). The mock backend simulates this: *Jordan Lee* is refused the release by SAP.
 

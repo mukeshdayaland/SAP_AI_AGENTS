@@ -35,7 +35,7 @@ flowchart TB
       STORE[(Store port)]
     end
     subgraph MCP[prowess-sap-mcp]
-      TOOLS[Tool registry<br/>FICO · MM · PM · Shared]
+      TOOLS[Tool registry<br/>SD · Credit · AR · AP · GL · MM · PM · Shared]
       GW[SapGateway port]
     end
   end
@@ -67,7 +67,7 @@ flowchart TB
 
 Controllers (`api/routes.ts`) only parse input and call services. They contain no business logic.
 
-## Request flow — FICO invoice analysis
+## Request flow — invoice analysis
 
 ```mermaid
 sequenceDiagram
@@ -82,8 +82,8 @@ sequenceDiagram
   W->>O: POST /api/v1/chat (user JWT)
   O->>O: authenticate · agent/tier authorization · quota · persist user turn
   O-->>U: SSE message.start, status
-  O->>L: stream(messages, tools allowed for FICO agent)
-  L-->>O: tool_call fico_getInvoice{invoiceNumber}
+  O->>L: stream(messages, tools allowed for the FI-AP agent)
+  L-->>O: tool_call mm_getInvoice{invoiceNumber}
   O-->>U: SSE tool.start
   O->>M: tools/call (signed principal, user token)
   M->>S: GET A_SupplierInvoice (as the user)
@@ -113,6 +113,8 @@ tier's `maxContextTokens`, and the current turn. Turns that overflow are folded 
 ## Extending
 
 - **New agent**: add it to `apps/orchestrator/config/agents.json` (tools by name or `domain_*` wildcard, tiers, roles).
+  Agents follow SAP modules (SD, Credit, FI-AR, FI-AP, FI-GL, MM, PM) plus a read-only Controls agent. When an agent is
+  renamed, list its old id under `aliases` so stored conversations keep working.
 - **New tool/domain**: add a module under `apps/sap-mcp/src/tools/`, register it in `registry.ts`, and extend `SapGateway`.
 - **New MCP server** (HCM, Ariba, SuccessFactors…): deploy it and add it to `MCP_SERVERS`. Tool names must be unique.
 - **New model provider**: implement `LLMProvider`, add it to `factory.ts` and reference it in `models.json`.

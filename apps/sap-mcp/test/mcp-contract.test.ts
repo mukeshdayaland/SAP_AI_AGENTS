@@ -15,13 +15,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createMcpHttpServer } from '../src/app.js';
 import type { McpConfig } from '../src/config.js';
 import { MockSapGateway } from '../src/sap/mock-gateway.js';
+import { BUSINESS_DOMAINS } from '../src/tools/types.js';
 
 const SECRET = 'test-secret-'.padEnd(48, 'x');
 const cfg: McpConfig = {
   port: 0,
   environment: 'DEV',
   assertionSecret: SECRET,
-  domains: new Set(['fico', 'mm', 'pm', 'shared']),
+  domains: new Set(BUSINESS_DOMAINS),
   sap: { mode: 'mock', destinationName: 'S4', systemId: 'S4-MOCK', allowTechnicalUser: false, mockLatencyMs: 0 },
   toolTimeoutMs: 5_000,
   logLevel: 'error',
@@ -38,7 +39,7 @@ afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
 function principal(sub = 'alex.morgan@prowess.example') {
   return signAssertion<PrincipalAssertion>(
-    { typ: 'principal', sub, name: 'Alex', tenant: 't1', roles: ['AI_USER'], env: 'DEV', agent: 'fico', cid: 'PRW-TEST', aud: MCP_AUDIENCE },
+    { typ: 'principal', sub, name: 'Alex', tenant: 't1', roles: ['AI_USER'], env: 'DEV', agent: 'fi-ap', cid: 'PRW-TEST', aud: MCP_AUDIENCE },
     SECRET,
     60,
   );
@@ -65,7 +66,7 @@ describe('SAP MCP contract', () => {
       expect(t.name).toMatch(/^[a-z]+_[A-Za-z]+$/);
       expect(t.inputSchema.type).toBe('object');
     }
-    const release = tools.find((t) => t.name === 'fico_releaseInvoicePaymentBlock')!;
+    const release = tools.find((t) => t.name === 'mm_releaseInvoicePaymentBlock')!;
     expect(release._meta?.[MCP_META.risk]).toBe('HIGH_IMPACT');
     expect(release.annotations?.destructiveHint).toBe(true);
     await client.close();
@@ -73,7 +74,7 @@ describe('SAP MCP contract', () => {
 
   it('returns valid UI components and mock-flagged sources', async () => {
     const client = await connect({ [HEADERS.principal]: principal() });
-    const res = await client.callTool({ name: 'fico_getInvoice', arguments: { invoiceNumber: '5100012345' } });
+    const res = await client.callTool({ name: 'mm_getInvoice', arguments: { invoiceNumber: '5100012345' } });
     expect(res.isError).toBeFalsy();
     const sc = res.structuredContent as { components: unknown[]; source: { mock: boolean }; data: { summary: string } };
     expect(sc.source.mock).toBe(true);
@@ -84,7 +85,7 @@ describe('SAP MCP contract', () => {
 
   it('lets SAP authorization deny access independently of Prowess roles', async () => {
     const client = await connect({ [HEADERS.principal]: principal() });
-    const res = await client.callTool({ name: 'fico_getInvoice', arguments: { invoiceNumber: '5100099999' } });
+    const res = await client.callTool({ name: 'mm_getInvoice', arguments: { invoiceNumber: '5100099999' } });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.structuredContent)).toContain('SAP_NOT_AUTHORIZED');
     await client.close();
@@ -93,33 +94,33 @@ describe('SAP MCP contract', () => {
   it('refuses writes without a matching, unused confirmation', async () => {
     const args = { invoiceNumber: '5100012345', fiscalYear: '2026' };
     const noConfirm = await connect({ [HEADERS.principal]: principal() });
-    const refused = await noConfirm.callTool({ name: 'fico_releaseInvoicePaymentBlock', arguments: args });
+    const refused = await noConfirm.callTool({ name: 'mm_releaseInvoicePaymentBlock', arguments: args });
     expect(refused.isError).toBe(true);
     expect(JSON.stringify(refused.structuredContent)).toContain('CONFIRMATION_REQUIRED');
     await noConfirm.close();
 
     const confirmation = (overrides: Partial<ConfirmationAssertion> = {}) =>
       signAssertion<ConfirmationAssertion>(
-        { typ: 'confirmation', act: 'act-1', sub: 'alex.morgan@prowess.example', tool: 'fico_releaseInvoicePaymentBlock', args: hashArguments(args), env: 'DEV', aud: MCP_AUDIENCE, ...overrides },
+        { typ: 'confirmation', act: 'act-1', sub: 'alex.morgan@prowess.example', tool: 'mm_releaseInvoicePaymentBlock', args: hashArguments(args), env: 'DEV', aud: MCP_AUDIENCE, ...overrides },
         SECRET,
         60,
       );
 
     const tampered = await connect({ [HEADERS.principal]: principal(), [HEADERS.confirmation]: confirmation({ args: hashArguments({ ...args, fiscalYear: '2025' }) }) });
-    expect((await tampered.callTool({ name: 'fico_releaseInvoicePaymentBlock', arguments: args })).isError).toBe(true);
+    expect((await tampered.callTool({ name: 'mm_releaseInvoicePaymentBlock', arguments: args })).isError).toBe(true);
     await tampered.close();
 
     const ok = await connect({ [HEADERS.principal]: principal(), [HEADERS.confirmation]: confirmation() });
-    const done = await ok.callTool({ name: 'fico_releaseInvoicePaymentBlock', arguments: args });
+    const done = await ok.callTool({ name: 'mm_releaseInvoicePaymentBlock', arguments: args });
     expect(done.isError).toBeFalsy();
-    const replay = await ok.callTool({ name: 'fico_releaseInvoicePaymentBlock', arguments: args });
+    const replay = await ok.callTool({ name: 'mm_releaseInvoicePaymentBlock', arguments: args });
     expect(JSON.stringify(replay.structuredContent)).toContain('already been used');
     await ok.close();
   });
 
   it('previews write actions without executing them', async () => {
     const client = await connect({ [HEADERS.principal]: principal() });
-    const res = await client.callTool({ name: 'system_previewAction', arguments: { tool: 'fico_addInvoiceNote', arguments: { invoiceNumber: '5100012346', note: 'Checked' } } });
+    const res = await client.callTool({ name: 'system_previewAction', arguments: { tool: 'mm_addInvoiceNote', arguments: { invoiceNumber: '5100012346', note: 'Checked' } } });
     const data = (res.structuredContent as { data: { preview: { action: string }; normalizedArguments: unknown } }).data;
     expect(data.preview.action).toBe('Add invoice note');
     expect(data.normalizedArguments).toEqual({ invoiceNumber: '5100012346', note: 'Checked' });

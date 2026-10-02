@@ -63,6 +63,63 @@ describe('SAP component registry', () => {
     expect(html).toContain('Quantity variance');
   });
 
+  it('renders order-to-cash cards from validated components', () => {
+    const order: UIComponent = {
+      type: 'sales_order',
+      data: {
+        number: '648',
+        orderType: 'OR',
+        soldTo: '7000000010',
+        soldToName: 'Local Customer-01',
+        netValue: { amount: 5000, currency: 'SAR' },
+        deliveryStatus: 'NOT_STARTED',
+        billingStatus: 'NOT_STARTED',
+        creditStatus: 'BLOCKED',
+        blocks: ['Credit block'],
+      },
+    };
+    const orderHtml = renderToStaticMarkup(<SapComponent component={order} />);
+    for (const text of ['Sales order', '648', 'Local Customer-01', 'Blocked', 'Credit block', 'Not started']) expect(orderHtml).toContain(text);
+
+    const items: UIComponent = {
+      type: 'open_items',
+      data: {
+        accountType: 'CUSTOMER',
+        account: '7000000010',
+        accountName: 'Local Customer-01',
+        companyCode: '1030',
+        total: { amount: 2500, currency: 'SAR' },
+        overdue: { amount: 2500, currency: 'SAR' },
+        items: [
+          { document: '2000016', documentType: 'DR', postingDate: '2026-09-22', dueDate: '2026-09-22', amount: { amount: 2500, currency: 'SAR' }, status: 'OVERDUE' },
+          { document: '1000000001', documentType: 'RV', postingDate: '2026-09-26', amount: { amount: 5000, currency: 'SAR' }, status: 'CLEARED', clearingDocument: '5000006' },
+        ],
+      },
+    };
+    const itemsHtml = renderToStaticMarkup(<SapComponent component={items} />);
+    for (const text of ['Customer line items', 'Overdue items', '2000016', 'Cleared', '5000006']) expect(itemsHtml).toContain(text);
+
+    const journal: UIComponent = {
+      type: 'accounting_document',
+      data: {
+        number: '1000000001',
+        companyCode: '1030',
+        fiscalYear: '2026',
+        documentType: 'RV',
+        postingDate: '2026-09-26',
+        reference: '0090000181',
+        items: [
+          { item: '1', account: '7000000010', description: 'Local Customer-01', amount: { amount: 5000, currency: 'SAR' }, debitCredit: 'D' },
+          { item: '2', account: '700000', description: 'Sales', amount: { amount: -5000, currency: 'SAR' }, debitCredit: 'C' },
+        ],
+      },
+    };
+    const journalHtml = renderToStaticMarkup(<SapComponent component={journal} />);
+    for (const text of ['Accounting document', '0090000181', 'Debit', 'Credit', '700000']) expect(journalHtml).toContain(text);
+    // Credit lines show the magnitude in the credit column, never a negative debit.
+    expect(journalHtml).not.toContain('-5,000');
+  });
+
   it('renders nothing for unknown component types', () => {
     const html = renderToStaticMarkup(<SapComponent component={{ type: 'html', data: '<b>x</b>' } as unknown as UIComponent} />);
     expect(html).toBe('');

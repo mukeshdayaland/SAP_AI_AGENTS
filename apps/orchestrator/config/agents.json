@@ -1,6 +1,6 @@
 {
-  "$comment": "Agent registry. allowedTools accepts exact names or prefix wildcards (fico_*). modelTiers lists tiers the agent may use; the first is its default.",
-  "defaultAgent": "fico",
+  "$comment": "Agent registry, one agent per SAP module. allowedTools accepts exact names or prefix wildcards (ap_*). modelTiers lists tiers the agent may use; the first is its default. aliases keep conversations started under a former agent id working.",
+  "defaultAgent": "fi-ap",
   "agents": [
     {
       "id": "general",
@@ -14,26 +14,120 @@
       "instructions": "You are a helpful enterprise assistant. Use search to locate SAP business objects when the user refers to one."
     },
     {
-      "id": "fico",
-      "name": "FICO Analyst",
-      "description": "Invoices, payment blocks, vendor exposure and G/L balances.",
-      "icon": "receipt",
-      "domain": "fico",
-      "allowedTools": ["fico_*", "mm_getPurchaseOrder", "mm_getGoodsReceipt", "shared_*"],
+      "id": "sd",
+      "name": "SD Agent",
+      "description": "Sales orders, outbound deliveries, goods issue and billing.",
+      "icon": "truck",
+      "domain": "sd",
+      "allowedTools": ["sd_*", "ar_getCustomer", "credit_getCreditExposure", "gl_getAccountingDocument", "mm_getMaterialStock", "shared_*"],
       "modelTiers": ["standard", "advanced", "private"],
       "requiredRoles": ["AI_USER"],
-      "instructions": "You are a senior SAP FI/CO analyst. Explain payment blocks, invoice-verification variances and vendor exposure precisely, referencing document numbers. Prefer fico_analyzeInvoice when asked why an invoice is blocked."
+      "instructions": "You are a senior SAP SD order-to-cash analyst. Trace sales orders through delivery, goods issue and billing, and say exactly which step is outstanding and why. Use sd_getSalesOrderFlow when asked where an order stands. Reference document numbers."
     },
     {
-      "id": "procurement",
-      "name": "Procurement Analyst",
-      "description": "Purchase orders, requisitions, goods receipts and suppliers.",
-      "icon": "package",
-      "domain": "mm",
-      "allowedTools": ["mm_*", "fico_getVendor", "shared_*"],
+      "id": "credit",
+      "name": "Credit Agent",
+      "description": "Credit limits, exposure and credit-blocked sales orders.",
+      "icon": "shield",
+      "domain": "credit",
+      "allowedTools": ["credit_*", "ar_getCustomer", "ar_listCustomerOpenItems", "sd_getSalesOrder", "sd_listOpenSalesOrders", "shared_*"],
       "modelTiers": ["standard", "advanced", "private"],
       "requiredRoles": ["AI_USER"],
-      "instructions": "You are a senior SAP MM procurement analyst. Focus on purchase order status, deliveries and supplier performance."
+      "instructions": "You are a senior SAP credit controller. For a credit-blocked order, compare the order value with the customer's credit limit, exposure and overdue items, and give a clear recommendation to release or hold. You recommend; a credit manager decides."
+    },
+    {
+      "id": "fi-ar",
+      "name": "FI-AR Agent",
+      "description": "Customer open items, overdue receivables, incoming payments and clearing.",
+      "icon": "coins",
+      "domain": "ar",
+      "allowedTools": ["ar_*", "credit_getCreditExposure", "sd_getBillingDocument", "sd_getSalesOrderFlow", "gl_getAccountingDocument", "shared_*"],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a senior SAP accounts receivable analyst. Explain customer open items, which invoices a payment cleared, and what is overdue. When asked whether a payment was applied, list the cleared items and name the clearing document."
+    },
+    {
+      "id": "mm",
+      "name": "MM Agent",
+      "description": "Requisitions, purchase orders, goods receipts, stock and invoice verification.",
+      "icon": "package",
+      "domain": "mm",
+      "aliases": ["procurement"],
+      "allowedTools": ["mm_*", "ap_getVendor", "gl_getAccountingDocument", "gl_listGRIROpenItems", "shared_*"],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a senior SAP MM analyst covering purchasing, inventory and logistics invoice verification. Focus on purchase order status, goods receipts, stock, sources of supply and the 3-way match. Prefer mm_analyzeInvoice when asked why an invoice is blocked."
+    },
+    {
+      "id": "fi-ap",
+      "name": "FI-AP Agent",
+      "description": "Vendor open items, payment status, payables due and blocked invoices.",
+      "icon": "receipt",
+      "domain": "ap",
+      "aliases": ["fico"],
+      "allowedTools": [
+        "ap_*",
+        "mm_getInvoice",
+        "mm_analyzeInvoice",
+        "mm_addInvoiceNote",
+        "mm_releaseInvoicePaymentBlock",
+        "mm_listBlockedInvoices",
+        "mm_getPurchaseOrder",
+        "mm_getGoodsReceipt",
+        "gl_getAccountingDocument",
+        "gl_getGLBalance",
+        "shared_*"
+      ],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a senior SAP accounts payable analyst. Explain payment blocks, invoice-verification variances, vendor exposure and what is due for payment precisely, referencing document numbers. Prefer mm_analyzeInvoice when asked why an invoice is blocked."
+    },
+    {
+      "id": "fi-gl",
+      "name": "FI-GL Agent",
+      "description": "Accounting documents, G/L balances and GR/IR reconciliation.",
+      "icon": "book",
+      "domain": "gl",
+      "allowedTools": ["gl_*", "sd_getBillingDocument", "mm_getInvoice", "mm_getGoodsReceipt", "mm_getPurchaseOrder", "shared_*"],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a senior SAP general ledger accountant. Explain the debit and credit lines of accounting documents created by goods movements, billing, invoices and payments, and reconcile the GR/IR clearing account per purchase order."
+    },
+    {
+      "id": "controls",
+      "name": "Controls Agent",
+      "description": "Read-only monitoring across order-to-cash and purchase-to-pay.",
+      "icon": "activity",
+      "domain": "controls",
+      "allowedTools": [
+        "sd_listOpenSalesOrders",
+        "sd_getSalesOrder",
+        "sd_getSalesOrderFlow",
+        "sd_getDelivery",
+        "sd_getBillingDocument",
+        "credit_getCreditExposure",
+        "ar_getCustomer",
+        "ar_listCustomerOpenItems",
+        "ar_listOverdueReceivables",
+        "ap_getVendor",
+        "ap_getPaymentStatus",
+        "ap_listVendorOpenItems",
+        "ap_listInvoicesDue",
+        "gl_getAccountingDocument",
+        "gl_getGLBalance",
+        "gl_listGRIROpenItems",
+        "mm_getPurchaseOrder",
+        "mm_getPurchaseRequisition",
+        "mm_getGoodsReceipt",
+        "mm_getInvoice",
+        "mm_analyzeInvoice",
+        "mm_listBlockedInvoices",
+        "mm_getMaterialStock",
+        "shared_*"
+      ],
+      "modelTiers": ["standard", "advanced", "private"],
+      "requiredRoles": ["AI_USER"],
+      "instructions": "You are a finance controls analyst monitoring order-to-cash and purchase-to-pay. You only read: find open sales orders, overdue receivables, payables due, blocked invoices and unbalanced GR/IR items, rank them by amount and age, and say who should act. Never propose to post or change anything yourself."
     },
     {
       "id": "maintenance",
@@ -48,9 +142,10 @@
     }
   ],
   "starters": [
-    { "id": "invoice", "label": "Analyze an invoice", "description": "Why is invoice 5100012345 blocked?", "prompt": "Why is invoice 5100012345 blocked?", "agent": "fico", "icon": "receipt" },
-    { "id": "po", "label": "Check a purchase order", "description": "Status and deliveries of PO 4500012345", "prompt": "Check purchase order 4500012345 and its goods receipts.", "agent": "procurement", "icon": "package" },
-    { "id": "vendor", "label": "Review vendor exposure", "description": "Open and overdue items for vendor 1000123", "prompt": "Review vendor 1000123 exposure and payment behaviour.", "agent": "fico", "icon": "building" },
+    { "id": "invoice", "label": "Analyze an invoice", "description": "Why is invoice 5100012345 blocked?", "prompt": "Why is invoice 5100012345 blocked?", "agent": "fi-ap", "icon": "receipt" },
+    { "id": "order", "label": "Trace a sales order", "description": "Order-to-cash flow of sales order 648", "prompt": "Show the document flow of sales order 648.", "agent": "sd", "icon": "truck" },
+    { "id": "receivables", "label": "Check customer open items", "description": "Open and cleared items of customer 7000000010", "prompt": "Show all line items of customer 7000000010 in company code 1030.", "agent": "fi-ar", "icon": "coins" },
+    { "id": "po", "label": "Check a purchase order", "description": "Status and receipts of PO 4200000402", "prompt": "Check purchase order 4200000402 and its goods receipts.", "agent": "mm", "icon": "package" },
     { "id": "maintenance", "label": "Analyze maintenance history", "description": "Failure pattern of pump P-101", "prompt": "Analyze maintenance history for equipment 20001234.", "agent": "maintenance", "icon": "wrench" }
   ]
 }

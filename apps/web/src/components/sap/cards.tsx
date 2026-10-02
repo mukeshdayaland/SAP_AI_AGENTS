@@ -1,7 +1,7 @@
 'use client';
 
 import type { UIComponent } from '@prowess/contracts';
-import { Building2, Cog, FileText, Landmark, Package, PackageCheck, ScrollText, Wrench } from 'lucide-react';
+import { BookOpen, Building2, Cog, FileText, Landmark, ListChecks, Package, PackageCheck, ReceiptText, ScrollText, ShoppingCart, Truck, UserRound, Wrench } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { formatDate, formatMoney, humanize } from '@/lib/format';
 import { Badge, cx, type Tone } from '../ui/primitives';
@@ -226,6 +226,273 @@ export function GoodsReceiptCard({ data }: { data: Of<'goods_receipt'> }) {
   );
 }
 
+type ProcessStatus = Of<'sales_order'>['deliveryStatus'];
+const processTone: Record<ProcessStatus, Tone> = { NOT_RELEVANT: 'neutral', NOT_STARTED: 'warning', PARTIAL: 'info', COMPLETE: 'success' };
+const processLabel: Record<ProcessStatus, string> = { NOT_RELEVANT: 'Not relevant', NOT_STARTED: 'Not started', PARTIAL: 'Partial', COMPLETE: 'Complete' };
+
+function ProcessBadge({ status }: { status: ProcessStatus }) {
+  return <Badge tone={processTone[status]}>{processLabel[status]}</Badge>;
+}
+
+export function SalesOrderCard({ data }: { data: Of<'sales_order'> }) {
+  const blocked = data.creditStatus === 'BLOCKED' || (data.blocks?.length ?? 0) > 0;
+  return (
+    <SapCard
+      kind={`Sales order · ${data.orderType}`}
+      id={data.number}
+      icon={<ShoppingCart size={18} />}
+      status={blocked ? { label: 'Blocked', tone: 'critical' } : data.billingStatus === 'COMPLETE' ? { label: 'Billed', tone: 'success' } : { label: 'In process', tone: 'info' }}
+      actions={[
+        { label: 'Document flow', prompt: `Show the document flow of sales order ${data.number}.` },
+        { label: 'Customer', prompt: `Show customer ${data.soldTo}.` },
+      ]}
+    >
+      <Fields>
+        <Field label="Sold-to party">
+          {data.soldToName} <span className="text-ink-3">· {data.soldTo}</span>
+        </Field>
+        <Field label="Net value" emphasize>
+          {formatMoney(data.netValue)}
+        </Field>
+        <Field label="Requested delivery">{formatDate(data.requestedDeliveryDate)}</Field>
+        {data.salesArea && (
+          <Field label="Sales area" mono>
+            {data.salesArea}
+          </Field>
+        )}
+        <Field label="Delivery">
+          <ProcessBadge status={data.deliveryStatus} />
+        </Field>
+        <Field label="Billing">
+          <ProcessBadge status={data.billingStatus} />
+        </Field>
+        {data.customerReference && <Field label="Customer reference">{data.customerReference}</Field>}
+      </Fields>
+      {data.blocks && data.blocks.length > 0 && (
+        <div className="mt-3 rounded-lg border border-error/25 bg-error-soft px-3 py-2.5">
+          <p className="text-xs font-semibold text-error">Blocks</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[13px] text-ink">
+            {data.blocks.map((b) => (
+              <li key={b}>{b}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.items && data.items.length > 0 && (
+        <details className="mt-3 group">
+          <summary className="cursor-pointer text-xs font-medium text-ink-2 hover:text-ink">Items ({data.items.length})</summary>
+          <Table
+            columns={[
+              { key: 'item', label: 'Item' },
+              { key: 'description', label: 'Description' },
+              { key: 'qty', label: 'Quantity', align: 'right' },
+              { key: 'value', label: 'Net value', align: 'right' },
+            ]}
+            rows={data.items.map((i) => ({ item: i.item, description: `${i.material} · ${i.description}`, qty: `${i.quantity} ${i.unit}`, value: formatMoney(i.netValue) }))}
+          />
+        </details>
+      )}
+    </SapCard>
+  );
+}
+
+export function OutboundDeliveryCard({ data }: { data: Of<'outbound_delivery'> }) {
+  return (
+    <SapCard
+      kind="Outbound delivery"
+      id={data.number}
+      icon={<Truck size={18} />}
+      status={{ label: data.goodsIssueStatus === 'COMPLETE' ? 'Goods issued' : `Goods issue: ${processLabel[data.goodsIssueStatus].toLowerCase()}`, tone: processTone[data.goodsIssueStatus] }}
+      actions={data.salesOrder ? [{ label: 'Sales order', prompt: `Show sales order ${data.salesOrder}.` }] : undefined}
+    >
+      <Fields>
+        <Field label="Ship-to party">
+          {data.shipToName} <span className="text-ink-3">· {data.shipTo}</span>
+        </Field>
+        {data.salesOrder && (
+          <Field label="Sales order" mono>
+            {data.salesOrder}
+          </Field>
+        )}
+        <Field label="Planned goods issue">{formatDate(data.plannedGoodsIssueDate)}</Field>
+        <Field label="Actual goods issue">{formatDate(data.actualGoodsIssueDate)}</Field>
+      </Fields>
+      {data.items && data.items.length > 0 && (
+        <Table
+          columns={[
+            { key: 'item', label: 'Item' },
+            { key: 'description', label: 'Description' },
+            { key: 'qty', label: 'Quantity', align: 'right' },
+            { key: 'plant', label: 'Plant' },
+          ]}
+          rows={data.items.map((i) => ({ item: i.item, description: `${i.material} · ${i.description}`, qty: `${i.quantity} ${i.unit}`, plant: [i.plant, i.storageLocation].filter(Boolean).join(' / ') || null }))}
+        />
+      )}
+    </SapCard>
+  );
+}
+
+export function BillingDocumentCard({ data }: { data: Of<'billing_document'> }) {
+  return (
+    <SapCard
+      kind={`Billing document · ${data.billingType}`}
+      id={data.number}
+      icon={<ReceiptText size={18} />}
+      status={data.cancelled ? { label: 'Cancelled', tone: 'neutral' } : data.postedToAccounting ? { label: 'Posted to accounting', tone: 'success' } : { label: 'Not posted', tone: 'warning' }}
+      actions={[{ label: 'Customer open items', prompt: `Show the open items of customer ${data.payer} in company code ${data.companyCode}.` }]}
+    >
+      <Fields>
+        <Field label="Payer">
+          {data.payerName} <span className="text-ink-3">· {data.payer}</span>
+        </Field>
+        <Field label="Net value" emphasize>
+          {formatMoney(data.netValue)}
+        </Field>
+        <Field label="Billing date">{formatDate(data.billingDate)}</Field>
+        {data.taxAmount && <Field label="Tax">{formatMoney(data.taxAmount)}</Field>}
+        <Field label="Company code" mono>
+          {data.companyCode}
+        </Field>
+        {data.accountingDocument && (
+          <Field label="Accounting document" mono>
+            {data.accountingDocument}
+          </Field>
+        )}
+        {data.salesOrder && (
+          <Field label="Sales order" mono>
+            {data.salesOrder}
+          </Field>
+        )}
+      </Fields>
+    </SapCard>
+  );
+}
+
+export function CustomerCard({ data }: { data: Of<'customer'> }) {
+  return (
+    <SapCard
+      kind="Customer"
+      id={data.id}
+      icon={<UserRound size={18} />}
+      status={data.blocked ? { label: 'Blocked', tone: 'critical' } : undefined}
+      actions={[{ label: 'Credit exposure', prompt: `Show the credit exposure of customer ${data.id}.` }]}
+    >
+      <Fields>
+        <Field label="Name">{data.name}</Field>
+        <Field label="Location">{[data.city, data.country].filter(Boolean).join(', ') || '—'}</Field>
+        {data.openItems && (
+          <Field label="Open items" emphasize>
+            {formatMoney(data.openItems)}
+          </Field>
+        )}
+        {data.overdueItems && (
+          <Field label="Overdue">
+            <span className={data.overdueItems.amount > 0 ? 'font-semibold text-error' : ''}>{formatMoney(data.overdueItems)}</span>
+          </Field>
+        )}
+        {data.creditLimit && <Field label="Credit limit">{formatMoney(data.creditLimit)}</Field>}
+        {data.creditExposure && <Field label="Credit exposure">{formatMoney(data.creditExposure)}</Field>}
+        {data.riskClass && <Field label="Risk class">{data.riskClass}</Field>}
+      </Fields>
+    </SapCard>
+  );
+}
+
+const itemTone: Record<Of<'open_items'>['items'][number]['status'], Tone> = { OPEN: 'info', OVERDUE: 'critical', CLEARED: 'success' };
+const accountLabel: Record<Of<'open_items'>['accountType'], string> = { CUSTOMER: 'Customer line items', SUPPLIER: 'Supplier line items', GL: 'G/L line items' };
+
+export function OpenItemsCard({ data }: { data: Of<'open_items'> }) {
+  return (
+    <SapCard
+      kind={accountLabel[data.accountType]}
+      id={data.account}
+      icon={<ListChecks size={18} />}
+      status={data.overdue && data.overdue.amount > 0 ? { label: 'Overdue items', tone: 'critical' } : undefined}
+    >
+      <Fields cols={3}>
+        <Field label="Account">{data.accountName ?? data.account}</Field>
+        <Field label="Company code" mono>
+          {data.companyCode}
+        </Field>
+        <Field label="Balance of listed items" emphasize>
+          {formatMoney(data.total)}
+        </Field>
+        {data.overdue && (
+          <Field label="Overdue">
+            <span className={data.overdue.amount > 0 ? 'font-semibold text-error' : ''}>{formatMoney(data.overdue)}</span>
+          </Field>
+        )}
+      </Fields>
+      <div className="mt-2 overflow-x-auto rounded-lg border border-area-sap/25">
+        <table className="w-full border-collapse text-[13px]">
+          <thead className="bg-area-sap-fill text-ink">
+            <tr>
+              {['Document', 'Type', 'Posted', 'Due'].map((h) => (
+                <th key={h} scope="col" className="px-3 py-2 text-left font-semibold">
+                  {h}
+                </th>
+              ))}
+              <th scope="col" className="px-3 py-2 text-right font-semibold">
+                Amount
+              </th>
+              <th scope="col" className="px-3 py-2 text-left font-semibold">
+                Status
+              </th>
+              <th scope="col" className="px-3 py-2 text-left font-semibold">
+                Cleared by
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.map((i) => (
+              <tr key={`${i.document}-${i.amount.amount}`} className="border-t border-line">
+                <td className="px-3 py-2 font-mono text-ink">{i.document}</td>
+                <td className="px-3 py-2 text-ink">{i.documentType}</td>
+                <td className="px-3 py-2 text-ink">{formatDate(i.postingDate)}</td>
+                <td className="px-3 py-2 text-ink">{formatDate(i.dueDate)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-ink">{formatMoney(i.amount)}</td>
+                <td className="px-3 py-2">
+                  <Badge tone={itemTone[i.status]}>{humanize(i.status)}</Badge>
+                </td>
+                <td className="px-3 py-2 font-mono text-ink">{i.clearingDocument ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SapCard>
+  );
+}
+
+export function AccountingDocumentCard({ data }: { data: Of<'accounting_document'> }) {
+  const side = (i: Of<'accounting_document'>['items'][number], dc: 'D' | 'C') => (i.debitCredit === dc ? formatMoney({ amount: Math.abs(i.amount.amount), currency: i.amount.currency }) : null);
+  return (
+    <SapCard kind={`Accounting document · ${data.documentType}`} id={data.number} icon={<BookOpen size={18} />}>
+      <Fields cols={3}>
+        <Field label="Company code / FY" mono>
+          {data.companyCode} / {data.fiscalYear}
+        </Field>
+        <Field label="Posting date">{formatDate(data.postingDate)}</Field>
+        {data.reference && (
+          <Field label="Reference" mono>
+            {data.reference}
+          </Field>
+        )}
+      </Fields>
+      <Table
+        columns={[
+          { key: 'item', label: 'Item' },
+          { key: 'account', label: 'Account' },
+          { key: 'description', label: 'Description' },
+          { key: 'debit', label: 'Debit', align: 'right' },
+          { key: 'credit', label: 'Credit', align: 'right' },
+        ]}
+        rows={data.items.map((i) => ({ item: i.item, account: i.account, description: i.description ?? null, debit: side(i, 'D'), credit: side(i, 'C') }))}
+      />
+    </SapCard>
+  );
+}
+
 function Table({ columns, rows }: Pick<Of<'business_object_table'>, 'columns' | 'rows'>) {
   return (
     <div className="mt-2 overflow-x-auto rounded-lg border border-area-sap/25">
@@ -310,6 +577,12 @@ const REGISTRY: { [K in UIComponent['type']]: ComponentType<{ data: Of<K> }> } =
   work_order: WorkOrderCard,
   equipment: EquipmentCard,
   goods_receipt: GoodsReceiptCard,
+  sales_order: SalesOrderCard,
+  outbound_delivery: OutboundDeliveryCard,
+  billing_document: BillingDocumentCard,
+  customer: CustomerCard,
+  open_items: OpenItemsCard,
+  accounting_document: AccountingDocumentCard,
   business_object_table: BusinessObjectTable,
   kpi_block: KPIBlock,
   timeline: Timeline,

@@ -1,11 +1,21 @@
 'use client';
 
 import type { StarterAction, WorkspaceConfig } from '@prowess/contracts';
-import { Building2, FileText, Package, Sparkles, Wrench, type LucideIcon } from 'lucide-react';
+import { Activity, BookOpen, Building2, Coins, FileText, Package, ShieldCheck, Sparkles, Truck, Wrench, type LucideIcon } from 'lucide-react';
 import { ProwessMark } from '../ui/primitives';
 import { SolutionPath } from './SolutionPath';
 
-const ICONS: Record<string, LucideIcon> = { receipt: FileText, package: Package, building: Building2, wrench: Wrench };
+const ICONS: Record<string, LucideIcon> = {
+  receipt: FileText,
+  package: Package,
+  building: Building2,
+  wrench: Wrench,
+  truck: Truck,
+  shield: ShieldCheck,
+  coins: Coins,
+  book: BookOpen,
+  activity: Activity,
+};
 
 function greeting(now = new Date()) {
   const h = now.getHours();

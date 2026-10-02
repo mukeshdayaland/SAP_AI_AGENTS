@@ -6,6 +6,7 @@ import { MockProvider, type LLMProvider, type ProviderId } from '@prowess/llm';
 import { createLogger } from '@prowess/observability';
 import { createMcpHttpServer } from '../../sap-mcp/src/app.js';
 import { MockSapGateway } from '../../sap-mcp/src/sap/mock-gateway.js';
+import { BUSINESS_DOMAINS } from '../../sap-mcp/src/tools/types.js';
 import { buildApp } from '../src/app.js';
 import { RingBufferAuditSink } from '../src/audit/audit.js';
 import { loadConfig } from '../src/config/env.js';
@@ -28,7 +29,7 @@ export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider
       port: 0,
       environment: 'DEV',
       assertionSecret: SECRET,
-      domains: new Set(['fico', 'mm', 'pm', 'shared']),
+      domains: new Set(BUSINESS_DOMAINS),
       sap: { mode: 'mock', destinationName: 'S4', systemId: 'S4-MOCK', allowTechnicalUser: false, mockLatencyMs: 0 },
       toolTimeoutMs: 5_000,
       logLevel: 'error',

@@ -44,7 +44,7 @@ To use a real model, copy `.env.example` to `.env` and configure one or more pro
 apps/
   web/            Next.js + Tailwind UI (static export, served by the approuter)
   orchestrator/   Fastify API: chat/SSE, agents, model routing, MCP client, persistence, audit
-  sap-mcp/        MCP server: FICO / MM / PM / Shared tools, mock + OData S/4HANA gateways
+  sap-mcp/        MCP server: SD / Credit / AR / AP / GL / MM / PM / Shared tools, mock + OData S/4HANA gateways
 packages/
   contracts/      Shared types & zod schemas (UI components, SSE events, errors)
   llm/            Provider abstraction, adapters, resilient HTTP, model router
@@ -90,6 +90,6 @@ presentation/     Earlier static customer presentation (unchanged)
 | --- | --- | --- |
 | 1 Foundation | UI, chat, SSE streaming, persistence, mock model, auth abstraction | Implemented |
 | 2 LLM | SAP AI Core, Azure AI Foundry, AWS Bedrock, Vertex AI adapters, router, usage | Implemented; adapters are tested against recorded wire formats, not yet against live tenants |
-| 3 MCP | MCP client/server, FICO/MM/PM/Shared tools, mock backend, tool visualization | Implemented |
+| 3 MCP | MCP client/server, SD/Credit/AR/AP/GL/MM/PM/Shared tools, mock backend, tool visualization | Implemented |
 | 4 SAP | Destination/Connectivity, OData gateway, principal propagation | Implemented; field mappings must be validated against your S/4HANA release |
 | 5 Hardening | Audit, observability, rate limits, retention, admin, CI/CD | Implemented baseline |

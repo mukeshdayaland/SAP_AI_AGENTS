@@ -21,13 +21,44 @@ const INTENTS: Intent[] = [
   { tool: 'addInvoiceNote', when: /\b(add|attach|post) (a )?(note|comment)\b/i, pattern: /\b(51\d{8})\b/, args: (m, t) => ({ invoiceNumber: m[1], note: (/["“](.+?)["”]/.exec(t)?.[1] ?? 'Reviewed via Prowess AI').slice(0, 200) }) },
   { tool: 'getPaymentStatus', when: /\bpayment status|paid\b/i, pattern: /\b(51\d{8})\b/, args: (m) => ({ invoiceNumber: m[1] }) },
   { tool: 'getInvoice', pattern: /\b(51\d{8})\b/, args: (m) => ({ invoiceNumber: m[1] }) },
-  { tool: 'getGoodsReceipt', when: /\bgoods receipt|GR\b/i, pattern: /\b(45\d{8})\b/, args: (m) => ({ purchaseOrder: m[1] }) },
-  { tool: 'getPurchaseOrder', pattern: /\b(45\d{8})\b/, args: (m) => ({ purchaseOrderNumber: m[1] }) },
+  { tool: 'getGoodsReceipt', when: /\bgoods receipt|GR\b/i, pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrder: m[1] }) },
+  { tool: 'getPurchaseOrder', pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrderNumber: m[1] }) },
+  { tool: 'getSalesOrderFlow', when: /\b(flow|trace|track|where is|stuck)\b/i, pattern: /\bsales order\D{0,12}(\d{1,10})\b/i, args: (m) => ({ salesOrder: m[1] }) },
+  { tool: 'getSalesOrder', pattern: /\bsales order\D{0,12}(\d{1,10})\b/i, args: (m) => ({ salesOrder: m[1] }) },
+  { tool: 'listOpenSalesOrders', when: /\bopen (sales )?orders\b/i, pattern: /orders/i, args: () => ({}) },
+  { tool: 'getDelivery', pattern: /\bdelivery\D{0,12}(8\d{7,9})\b/i, args: (m) => ({ delivery: m[1] }) },
+  { tool: 'getBillingDocument', pattern: /\b(?:billing document|billing|customer invoice)\D{0,12}(9\d{7,9})\b/i, args: (m) => ({ billingDocument: m[1] }) },
+  { tool: 'getCreditExposure', when: /\bcredit\b/i, pattern: /\bcustomer\D{0,12}(\d{4,10})\b/i, args: (m) => ({ customer: m[1] }) },
+  {
+    tool: 'listCustomerOpenItems',
+    when: /\b(open|line|cleared) items\b|\breceivables?\b/i,
+    pattern: /\bcustomer\D{0,12}(\d{4,10})\b/i,
+    args: (m, t) => ({ customer: m[1], companyCode: companyCodeIn(t), status: itemStatusIn(t) }),
+  },
+  {
+    tool: 'listVendorOpenItems',
+    when: /\b(open|line|cleared) items\b|\bpayables?\b/i,
+    pattern: /\b(?:vendor|supplier)\D{0,12}(\d{4,10})\b/i,
+    args: (m, t) => ({ supplier: m[1], companyCode: companyCodeIn(t), status: itemStatusIn(t) }),
+  },
+  { tool: 'listOverdueReceivables', when: /\boverdue\b/i, pattern: /\breceivables?|customers?\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'listInvoicesDue', when: /\bdue\b/i, pattern: /\b(payables?|payment run|for payment)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'listBlockedInvoices', when: /\bblocked invoices\b/i, pattern: /invoices/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'listGRIROpenItems', when: /\bGR\/?IR\b/i, pattern: /\b(\d{6,10})\b/, args: (m, t) => ({ glAccount: m[1], companyCode: companyCodeIn(t) }) },
+  {
+    tool: 'getAccountingDocument',
+    when: /\b(accounting|FI) document|journal entry\b/i,
+    pattern: /\bdocument\D{0,12}(\d{5,10})\b/i,
+    args: (m, t) => ({ documentNumber: m[1], companyCode: companyCodeIn(t), fiscalYear: /\b(20\d{2})\b/.exec(t.replace(m[1]!, ''))?.[1] ?? String(new Date().getFullYear()) }),
+  },
+  { tool: 'getInfoRecords', when: /\b(info records?|sources? of supply|which suppliers?)\b/i, pattern: /\bmaterial\D{0,12}([A-Z0-9-]{1,18})\b/i, args: (m) => ({ material: m[1] }) },
+  { tool: 'getMaterialStock', when: /\bstock\b/i, pattern: /\bmaterial\D{0,12}([A-Z0-9-]{1,18})\b/i, args: (m) => ({ material: m[1] }) },
+  { tool: 'getCustomer', pattern: /\bcustomer\D{0,12}(\d{4,10})\b/i, args: (m, t) => ({ customer: m[1], companyCode: companyCodeIn(t) }) },
   { tool: 'getPurchaseRequisition', pattern: /\b(10\d{8})\b/, when: /\brequisition|PR\b/i, args: (m) => ({ requisitionNumber: m[1] }) },
   { tool: 'getMaintenanceHistory', when: /\bmaintenance|history\b/i, pattern: /\b(EQ-?\d{4,8}|2\d{7})\b/i, args: (m) => ({ equipment: m[1]!.toUpperCase() }) },
   { tool: 'getEquipment', pattern: /\b(EQ-?\d{4,8}|2\d{7})\b/i, when: /\bequipment|asset\b/i, args: (m) => ({ equipment: m[1]!.toUpperCase() }) },
   { tool: 'getWorkOrder', pattern: /\b(4\d{6})\b/, when: /\bwork order|order\b/i, args: (m) => ({ workOrder: m[1] }) },
-  { tool: 'getVendor', when: /\b(vendor|supplier)\b/i, pattern: /\b(1\d{6}|V\d{4,8})\b/i, args: (m) => ({ vendorId: m[1]!.toUpperCase() }) },
+  { tool: 'getVendor', when: /\b(vendor|supplier)\b/i, pattern: /\b(1\d{6}|7\d{9}|V\d{4,8})\b/i, args: (m) => ({ vendorId: m[1]!.toUpperCase() }) },
   {
     tool: 'getGLBalance',
     when: /\b(G\/?L|general ledger|balance)\b/i,
@@ -40,6 +71,10 @@ const INTENTS: Intent[] = [
   },
   { tool: 'searchBusinessObject', when: /\b(find|search|look up)\b/i, pattern: /(?:for|find|search)\s+(.{3,60})$/i, args: (m) => ({ query: m[1]!.trim() }) },
 ];
+
+/** Company code named in the prompt, else the demo company code of the mock scenarios. */
+const companyCodeIn = (text: string) => /company code (\w{4})/i.exec(text)?.[1] ?? '1030';
+const itemStatusIn = (text: string) => (/\ball\b/i.test(text) ? 'ALL' : /\bcleared\b/i.test(text) ? 'CLEARED' : 'OPEN');
 
 function findTool(tools: ToolSpec[] | undefined, suffix: string): ToolSpec | undefined {
   return tools?.find((t) => t.name === suffix || t.name.endsWith(`_${suffix}`));
@@ -93,7 +128,7 @@ export class MockProvider implements LLMProvider {
     }
 
     const toolHint = req.tools?.length
-      ? `I can look up SAP business objects for you — for example an invoice number (51…), a purchase order (45…), a vendor ID, or equipment. `
+      ? `I can look up SAP business objects for you — for example an invoice number (51…), a purchase order (45…), a sales order, a customer or vendor ID, or equipment. `
       : '';
     return {
       text:

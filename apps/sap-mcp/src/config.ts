@@ -1,5 +1,5 @@
 import type { DeploymentEnvironment } from '@prowess/contracts';
-import type { Domain } from './tools/types.js';
+import { BUSINESS_DOMAINS, type Domain } from './tools/types.js';
 
 export interface McpConfig {
   port: number;
@@ -29,6 +29,14 @@ function userProvided(vcap: string | undefined): Record<string, string> {
   }
 }
 
+/** The former `fico` domain was split by SAP module; deployments that still name it keep all of its tools. */
+const LEGACY_DOMAINS: Record<string, Domain[]> = { fico: ['ar', 'ap', 'gl', 'credit'] };
+
+function parseDomains(raw: string | undefined): Set<Domain> {
+  const names = (raw ?? BUSINESS_DOMAINS.join(',')).split(',').map((s) => s.trim()).filter(Boolean);
+  return new Set(names.flatMap((name) => LEGACY_DOMAINS[name] ?? [name as Domain]));
+}
+
 export function loadConfig(rawEnv: Record<string, string | undefined> = process.env): McpConfig {
   const env = Object.fromEntries(Object.entries(rawEnv).filter(([, v]) => v !== undefined && v !== ''));
   const ups = userProvided(env.VCAP_SERVICES);
@@ -45,7 +53,7 @@ export function loadConfig(rawEnv: Record<string, string | undefined> = process.
     port: Number(env.PORT ?? 4100),
     environment,
     assertionSecret,
-    domains: new Set(((env.MCP_DOMAINS ?? 'fico,mm,pm,shared').split(',').map((s) => s.trim()) as Domain[]).filter(Boolean)),
+    domains: parseDomains(env.MCP_DOMAINS),
     sap: {
       mode,
       destinationName: env.SAP_DESTINATION ?? 'S4HANA',

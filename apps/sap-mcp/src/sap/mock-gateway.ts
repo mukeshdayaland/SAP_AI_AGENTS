@@ -1,14 +1,41 @@
 import { randomUUID } from 'node:crypto';
 import {
+  SCENARIO_BILLING,
+  SCENARIO_CREDIT,
+  SCENARIO_CUSTOMERS,
+  SCENARIO_DELIVERIES,
+  SCENARIO_FLOWS,
+  SCENARIO_GOODS_RECEIPTS,
+  SCENARIO_INFO_RECORDS,
+  SCENARIO_INVOICES,
+  SCENARIO_JOURNALS,
+  SCENARIO_LINE_ITEMS,
+  SCENARIO_PURCHASE_ORDERS,
+  SCENARIO_SALES_ORDERS,
+  SCENARIO_STOCK,
+  SCENARIO_VENDORS,
+} from './mock-scenarios.js';
+import {
   SapError,
+  type AccountingDocument,
+  type BillingDocument,
+  type CreditProfile,
+  type Customer,
+  type DocumentFlowStep,
   type Equipment,
   type GLBalance,
   type GoodsReceipt,
+  type InfoRecord,
   type Invoice,
   type MaintenanceEvent,
   type MaintenanceNotification,
+  type MaterialStock,
+  type OpenItem,
+  type OpenItemQuery,
+  type OutboundDelivery,
   type PurchaseOrder,
   type PurchaseRequisition,
+  type SalesOrder,
   type SapCallContext,
   type SapGateway,
   type SearchHit,
@@ -53,6 +80,7 @@ const VENDORS: Vendor[] = [
     overdueItems: SAR(0),
     riskRating: 'LOW',
   },
+  ...SCENARIO_VENDORS,
 ];
 
 const PURCHASE_ORDERS: PurchaseOrder[] = [
@@ -81,11 +109,13 @@ const PURCHASE_ORDERS: PurchaseOrder[] = [
     companyCode: '1000',
     items: [{ item: '00010', material: 'SP-10090', description: 'Pump mechanical seal kit', quantity: 50, unit: 'EA', netPrice: SAR(4_250), netValue: SAR(212_500) }],
   },
+  ...SCENARIO_PURCHASE_ORDERS,
 ];
 
 const GOODS_RECEIPTS: GoodsReceipt[] = [
   { materialDocument: '5000045678', year: '2026', purchaseOrder: '4500012345', item: '00010', postingDate: '2026-09-02', quantity: 120, unit: 'TO', value: SAR(246_000) },
   { materialDocument: '5000045901', year: '2026', purchaseOrder: '4500012345', item: '00010', postingDate: '2026-09-15', quantity: 60, unit: 'TO', value: SAR(123_000) },
+  ...SCENARIO_GOODS_RECEIPTS,
 ];
 
 const INVOICES: Invoice[] = [
@@ -143,6 +173,7 @@ const INVOICES: Invoice[] = [
     status: 'OPEN',
     paymentBlock: null,
   },
+  ...SCENARIO_INVOICES,
 ];
 
 const REQUISITIONS: PurchaseRequisition[] = [
@@ -200,9 +231,9 @@ interface SapAuth {
   companyCodes: string[];
   mayReleaseInvoices: boolean;
 }
-const DEFAULT_AUTH: SapAuth = { companyCodes: ['1000', '2000'], mayReleaseInvoices: false };
+const DEFAULT_AUTH: SapAuth = { companyCodes: ['1000', '1030', '2000'], mayReleaseInvoices: false };
 const SAP_AUTH: Record<string, SapAuth> = {
-  'alex.morgan@prowess.example': { companyCodes: ['1000', '2000'], mayReleaseInvoices: true },
+  'alex.morgan@prowess.example': { companyCodes: ['1000', '1030', '2000'], mayReleaseInvoices: true },
 };
 
 export class MockSapGateway implements SapGateway {
@@ -302,10 +333,94 @@ export class MockSapGateway implements SapGateway {
         .filter((i) => allowed.includes(i.companyCode))
         .map((i) => ({ objectType: 'SupplierInvoice', objectId: i.number, title: `Invoice ${i.number}`, subtitle: `${i.vendorName} · ${i.status}` })),
       ...PURCHASE_ORDERS.map((p) => ({ objectType: 'PurchaseOrder', objectId: p.number, title: `Purchase order ${p.number}`, subtitle: p.vendorName })),
+      ...SCENARIO_SALES_ORDERS.map((o) => ({ objectType: 'SalesOrder', objectId: o.number, title: `Sales order ${o.number}`, subtitle: o.soldToName })),
+      ...SCENARIO_CUSTOMERS.map((c) => ({ objectType: 'Customer', objectId: c.id, title: c.name, subtitle: `${c.city}, ${c.country}` })),
       ...VENDORS.map((v) => ({ objectType: 'Supplier', objectId: v.id, title: v.name, subtitle: `${v.city}, ${v.country}` })),
       ...EQUIPMENT.map((e) => ({ objectType: 'Equipment', objectId: e.number, title: e.description, subtitle: e.functionalLocation })),
     ];
     return hits.filter((h) => `${h.title} ${h.subtitle ?? ''} ${h.objectId}`.toLowerCase().includes(q)).slice(0, 20);
+  }
+
+  async getSalesOrder(_ctx: SapCallContext, number: string): Promise<SalesOrder> {
+    await this.latency();
+    return this.find(SCENARIO_SALES_ORDERS, (o) => o.number === number, 'Sales order', number);
+  }
+
+  async listOpenSalesOrders(_ctx: SapCallContext, salesOrganization?: string): Promise<SalesOrder[]> {
+    await this.latency();
+    return structuredClone(
+      SCENARIO_SALES_ORDERS.filter(
+        (o) =>
+          (!salesOrganization || o.salesOrganization === salesOrganization) &&
+          (o.deliveryStatus !== 'COMPLETE' || o.billingStatus !== 'COMPLETE' || o.creditStatus === 'BLOCKED'),
+      ),
+    );
+  }
+
+  async getSalesOrderFlow(ctx: SapCallContext, number: string): Promise<DocumentFlowStep[]> {
+    const order = await this.getSalesOrder(ctx, number);
+    return structuredClone(SCENARIO_FLOWS[order.number] ?? []);
+  }
+
+  async getDelivery(_ctx: SapCallContext, number: string): Promise<OutboundDelivery> {
+    await this.latency();
+    return this.find(SCENARIO_DELIVERIES, (d) => d.number === number, 'Outbound delivery', number);
+  }
+
+  async getBillingDocument(ctx: SapCallContext, number: string): Promise<BillingDocument> {
+    await this.latency();
+    const doc = this.find(SCENARIO_BILLING, (b) => b.number === number, 'Billing document', number);
+    this.requireCompanyCode(ctx, doc.companyCode, `billing document ${number}`);
+    return doc;
+  }
+
+  async getCustomer(_ctx: SapCallContext, id: string): Promise<Customer> {
+    await this.latency();
+    return this.find(SCENARIO_CUSTOMERS, (c) => c.id === id, 'Customer', id);
+  }
+
+  async getCreditProfile(_ctx: SapCallContext, customer: string): Promise<CreditProfile> {
+    await this.latency();
+    return this.find(SCENARIO_CREDIT, (c) => c.customer === customer, 'Credit account of customer', customer);
+  }
+
+  async listOpenItems(ctx: SapCallContext, query: OpenItemQuery): Promise<OpenItem[]> {
+    await this.latency();
+    this.requireCompanyCode(ctx, query.companyCode, `${query.accountType.toLowerCase()} line items`);
+    return structuredClone(
+      SCENARIO_LINE_ITEMS.filter(
+        (i) =>
+          i.accountType === query.accountType &&
+          i.companyCode === query.companyCode &&
+          (!query.account || i.account === query.account) &&
+          (query.status === 'ALL' || (query.status === 'CLEARED') === !!i.clearingDocument) &&
+          (!query.dueBy || (i.dueDate ?? i.postingDate) <= query.dueBy),
+      ),
+    );
+  }
+
+  async getAccountingDocument(ctx: SapCallContext, companyCode: string, fiscalYear: string, number: string): Promise<AccountingDocument> {
+    await this.latency();
+    this.requireCompanyCode(ctx, companyCode, `accounting document ${number}`);
+    return this.find(SCENARIO_JOURNALS, (j) => j.number === number && j.companyCode === companyCode && j.fiscalYear === fiscalYear, 'Accounting document', number);
+  }
+
+  async getMaterialStock(_ctx: SapCallContext, material: string, plant?: string): Promise<MaterialStock[]> {
+    await this.latency();
+    const stock = SCENARIO_STOCK.filter((s) => s.material === material && (!plant || s.plant === plant));
+    if (!stock.length) throw new SapError('NOT_FOUND', `No stock was found in SAP for material ${material}${plant ? ` in plant ${plant}` : ''}.`);
+    return structuredClone(stock);
+  }
+
+  async getInfoRecords(_ctx: SapCallContext, material: string, supplier?: string): Promise<InfoRecord[]> {
+    await this.latency();
+    return structuredClone(SCENARIO_INFO_RECORDS.filter((r) => r.material === material && (!supplier || r.supplier === supplier)));
+  }
+
+  async listBlockedInvoices(ctx: SapCallContext, companyCode: string): Promise<Invoice[]> {
+    await this.latency();
+    this.requireCompanyCode(ctx, companyCode, 'blocked invoices');
+    return structuredClone(this.invoices.filter((i) => i.companyCode === companyCode && i.paymentBlock));
   }
 
   async releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice> {

@@ -142,6 +142,150 @@ export const GoodsReceiptComponent = z.object({
   }),
 });
 
+const processStatus = z.enum(['NOT_RELEVANT', 'NOT_STARTED', 'PARTIAL', 'COMPLETE']);
+
+export const SalesOrderComponent = z.object({
+  type: z.literal('sales_order'),
+  data: z.object({
+    number: text(20),
+    orderType: text(10),
+    salesArea: text(40).optional(),
+    soldTo: text(20),
+    soldToName: text(),
+    customerReference: text(40).optional(),
+    netValue: money,
+    requestedDeliveryDate: text(20).optional(),
+    deliveryStatus: processStatus,
+    billingStatus: processStatus,
+    creditStatus: z.enum(['NOT_CHECKED', 'APPROVED', 'BLOCKED']),
+    blocks: z.array(text(120)).max(5).optional(),
+    items: z
+      .array(
+        z.object({
+          item: text(10),
+          material: text(40),
+          description: text(),
+          quantity: z.number(),
+          unit: text(6),
+          netValue: money,
+        }),
+      )
+      .max(50)
+      .optional(),
+  }),
+});
+
+export const OutboundDeliveryComponent = z.object({
+  type: z.literal('outbound_delivery'),
+  data: z.object({
+    number: text(20),
+    shipTo: text(20),
+    shipToName: text(),
+    salesOrder: text(20).optional(),
+    plannedGoodsIssueDate: text(20).optional(),
+    actualGoodsIssueDate: text(20).optional(),
+    goodsIssueStatus: processStatus,
+    items: z
+      .array(
+        z.object({
+          item: text(10),
+          material: text(40),
+          description: text(),
+          quantity: z.number(),
+          unit: text(6),
+          plant: text(10).optional(),
+          storageLocation: text(10).optional(),
+        }),
+      )
+      .max(50)
+      .optional(),
+  }),
+});
+
+export const BillingDocumentComponent = z.object({
+  type: z.literal('billing_document'),
+  data: z.object({
+    number: text(20),
+    billingType: text(10),
+    payer: text(20),
+    payerName: text(),
+    billingDate: text(20),
+    netValue: money,
+    taxAmount: money.optional(),
+    companyCode: text(10),
+    accountingDocument: text(20).optional(),
+    postedToAccounting: z.boolean(),
+    cancelled: z.boolean(),
+    salesOrder: text(20).optional(),
+  }),
+});
+
+export const CustomerComponent = z.object({
+  type: z.literal('customer'),
+  data: z.object({
+    id: text(20),
+    name: text(),
+    country: text(3).optional(),
+    city: text().optional(),
+    blocked: z.boolean(),
+    openItems: money.optional(),
+    overdueItems: money.optional(),
+    creditLimit: money.optional(),
+    creditExposure: money.optional(),
+    riskClass: text(20).optional(),
+  }),
+});
+
+/** Customer, supplier or G/L line items (FBL5N / FBL1N / FBL3N). Amounts are signed. */
+export const OpenItemsComponent = z.object({
+  type: z.literal('open_items'),
+  data: z.object({
+    accountType: z.enum(['CUSTOMER', 'SUPPLIER', 'GL']),
+    account: text(20),
+    accountName: text().optional(),
+    companyCode: text(10),
+    total: money,
+    overdue: money.optional(),
+    items: z
+      .array(
+        z.object({
+          document: text(20),
+          documentType: text(4),
+          postingDate: text(20),
+          dueDate: text(20).optional(),
+          amount: money,
+          status: z.enum(['OPEN', 'OVERDUE', 'CLEARED']),
+          clearingDocument: text(20).optional(),
+          text: text(120).optional(),
+        }),
+      )
+      .max(200),
+  }),
+});
+
+export const AccountingDocumentComponent = z.object({
+  type: z.literal('accounting_document'),
+  data: z.object({
+    number: text(20),
+    companyCode: text(10),
+    fiscalYear: text(4),
+    documentType: text(4),
+    postingDate: text(20),
+    reference: text(40).optional(),
+    items: z
+      .array(
+        z.object({
+          item: text(10),
+          account: text(20),
+          description: text().optional(),
+          amount: money,
+          debitCredit: z.enum(['D', 'C']),
+        }),
+      )
+      .max(100),
+  }),
+});
+
 export const BusinessObjectTableComponent = z.object({
   type: z.literal('business_object_table'),
   data: z.object({
@@ -193,6 +337,12 @@ export const UIComponentSchema = z.discriminatedUnion('type', [
   WorkOrderComponent,
   EquipmentComponent,
   GoodsReceiptComponent,
+  SalesOrderComponent,
+  OutboundDeliveryComponent,
+  BillingDocumentComponent,
+  CustomerComponent,
+  OpenItemsComponent,
+  AccountingDocumentComponent,
   BusinessObjectTableComponent,
   KPIBlockComponent,
   TimelineComponent,

@@ -2,14 +2,26 @@ import { executeHttpRequest } from '@sap-cloud-sdk/http-client';
 import { M, type Logger } from '@prowess/observability';
 import {
   SapError,
+  type AccountingDocument,
+  type BillingDocument,
+  type CreditProfile,
+  type Customer,
+  type DocumentFlowStep,
   type Equipment,
   type GLBalance,
   type GoodsReceipt,
+  type InfoRecord,
   type Invoice,
   type MaintenanceEvent,
   type MaintenanceNotification,
+  type MaterialStock,
+  type OpenItem,
+  type OpenItemQuery,
+  type OutboundDelivery,
+  type ProcessStatus,
   type PurchaseOrder,
   type PurchaseRequisition,
+  type SalesOrder,
   type SapCallContext,
   type SapGateway,
   type SearchHit,
@@ -52,7 +64,48 @@ const SERVICES = {
   equipment: '/sap/opu/odata/sap/API_EQUIPMENT',
   notification: '/sap/opu/odata/sap/API_MAINTNOTIFICATION',
   order: '/sap/opu/odata/sap/API_MAINTENANCEORDER',
+  salesOrder: '/sap/opu/odata/sap/API_SALES_ORDER_SRV',
+  delivery: '/sap/opu/odata/sap/API_OUTBOUND_DELIVERY_SRV;v=0002',
+  billing: '/sap/opu/odata/sap/API_BILLING_DOCUMENT_SRV',
+  lineItems: '/sap/opu/odata/sap/API_OPLACCTGDOCITEMCUBE_SRV',
+  journal: '/sap/opu/odata/sap/API_JOURNALENTRYITEMBASIC_SRV',
+  credit: '/sap/opu/odata/sap/API_CRDTMBUSINESSPARTNER',
+  stock: '/sap/opu/odata/sap/API_MATERIAL_STOCK_SRV',
+  infoRecord: '/sap/opu/odata/sap/API_INFORECORD_PROCESS_SRV',
 } as const;
+
+/** Line-item fields read from the operational accounting document item cube. */
+const LINE_ITEM_FIELDS = [
+  'CompanyCode',
+  'FiscalYear',
+  'AccountingDocument',
+  'AccountingDocumentItem',
+  'AccountingDocumentType',
+  'Customer',
+  'Supplier',
+  'GLAccount',
+  'PostingDate',
+  'NetDueDate',
+  'AmountInCompanyCodeCurrency',
+  'CompanyCodeCurrency',
+  'ClearingAccountingDocument',
+  'ClearingDate',
+  'AssignmentReference',
+  'DocumentItemText',
+  'PaymentBlockingReason',
+].join(',');
+
+/** SAP's financial account type: D = customer, K = supplier, S = G/L account. */
+const ACCOUNT_TYPE = { CUSTOMER: { code: 'D', field: 'Customer' }, SUPPLIER: { code: 'K', field: 'Supplier' }, GL: { code: 'S', field: 'GLAccount' } } as const;
+
+/** SD status: '' not relevant, A not yet processed, B partially processed, C completely processed. */
+const processStatus = (v: unknown): ProcessStatus => (v === 'C' ? 'COMPLETE' : v === 'B' ? 'PARTIAL' : v === 'A' ? 'NOT_STARTED' : 'NOT_RELEVANT');
+
+/** Follow-on document categories in the SD document flow. */
+const FLOW_CATEGORY: Record<string, DocumentFlowStep['category']> = { J: 'DELIVERY', T: 'DELIVERY', R: 'GOODS_ISSUE', M: 'BILLING', N: 'BILLING', O: 'BILLING', P: 'BILLING' };
+
+const results = (v: unknown) => ((v as { results?: ODataEntity[] } | undefined)?.results ?? []) as ODataEntity[];
+const str = (v: unknown) => String(v ?? '').trim();
 
 /** OData V2 key literal with quotes escaped — prevents key/path injection. */
 const lit = (v: string) => `'${v.replaceAll("'", "''")}'`;
@@ -326,6 +379,307 @@ export class ODataSapGateway implements SapGateway {
 
   async search(): Promise<SearchHit[]> {
     return this.notSupported('Free-text search (connect SAP Enterprise Search or a search CDS view)');
+  }
+
+  private mapSalesOrder(e: ODataEntity, soldToName: string): SalesOrder {
+    const currency = str(e.TransactionCurrency);
+    const credit = str(e.TotalCreditCheckStatus);
+    return {
+      number: str(e.SalesOrder),
+      orderType: str(e.SalesOrderType),
+      salesOrganization: str(e.SalesOrganization),
+      distributionChannel: str(e.DistributionChannel),
+      division: str(e.OrganizationDivision),
+      soldTo: str(e.SoldToParty),
+      soldToName,
+      ...(str(e.PurchaseOrderByCustomer) && { customerReference: str(e.PurchaseOrderByCustomer) }),
+      netValue: { amount: num(e.TotalNetAmount), currency },
+      ...(odataDate(e.CreationDate) && { createdOn: odataDate(e.CreationDate) }),
+      ...(odataDate(e.RequestedDeliveryDate) && { requestedDeliveryDate: odataDate(e.RequestedDeliveryDate) }),
+      ...(str(e.CustomerPaymentTerms) && { paymentTerms: str(e.CustomerPaymentTerms) }),
+      ...(str(e.IncotermsClassification) && { incoterms: str(e.IncotermsClassification) }),
+      deliveryStatus: processStatus(e.OverallDeliveryStatus),
+      billingStatus: processStatus(e.OverallOrdReltdBillgStatus),
+      // A = approved, D = released by a credit representative; B / C = not or only partially approved.
+      creditStatus: credit === 'B' || credit === 'C' ? 'BLOCKED' : credit === 'A' || credit === 'D' ? 'APPROVED' : 'NOT_CHECKED',
+      ...(str(e.DeliveryBlockReason) && { deliveryBlock: str(e.DeliveryBlockReason) }),
+      ...(str(e.HeaderBillingBlockReason) && { billingBlock: str(e.HeaderBillingBlockReason) }),
+      items: results(e.to_Item).map((i) => ({
+        item: str(i.SalesOrderItem),
+        material: str(i.Material),
+        description: str(i.SalesOrderItemText),
+        quantity: num(i.RequestedQuantity),
+        unit: str(i.RequestedQuantityUnit),
+        netValue: { amount: num(i.NetAmount), currency: str(i.TransactionCurrency) || currency },
+        ...(str(i.ProductionPlant) && { plant: str(i.ProductionPlant) }),
+      })),
+    };
+  }
+
+  private customerName(ctx: SapCallContext, id: string): Promise<string> {
+    return id ? this.getCustomer(ctx, id).then((c) => c.name, () => id) : Promise.resolve('');
+  }
+
+  async getSalesOrder(ctx: SapCallContext, number: string): Promise<SalesOrder> {
+    const e = (await this.request(ctx, `Sales order ${number}`, 'get', `${SERVICES.salesOrder}/A_SalesOrder(${lit(number)})`, { $expand: 'to_Item' })) as ODataEntity;
+    return this.mapSalesOrder(e, await this.customerName(ctx, str(e.SoldToParty)));
+  }
+
+  async listOpenSalesOrders(ctx: SapCallContext, salesOrganization?: string): Promise<SalesOrder[]> {
+    const res = await this.request(ctx, 'Open sales orders', 'get', `${SERVICES.salesOrder}/A_SalesOrder`, {
+      $filter: `OverallSDProcessStatus ne 'C'${salesOrganization ? ` and SalesOrganization eq ${lit(salesOrganization)}` : ''}`,
+      $orderby: 'CreationDate desc',
+      $top: '50',
+    });
+    // Customer names are not resolved here: one lookup per order would multiply the SAP calls.
+    return results(res).map((e) => this.mapSalesOrder(e, str(e.SoldToParty)));
+  }
+
+  async getSalesOrderFlow(ctx: SapCallContext, number: string): Promise<DocumentFlowStep[]> {
+    const res = await this.request(ctx, `Document flow of sales order ${number}`, 'get', `${SERVICES.salesOrder}/A_SalesOrder(${lit(number)})/to_SubsequentProcFlowDoc`);
+    return results(res).map((e) => ({
+      category: FLOW_CATEGORY[str(e.SubsequentDocumentCategory)] ?? 'OTHER',
+      document: str(e.SubsequentDocument),
+      ...(str(e.SDProcessStatus) && { status: processStatus(e.SDProcessStatus).replaceAll('_', ' ').toLowerCase() }),
+    }));
+  }
+
+  async getDelivery(ctx: SapCallContext, number: string): Promise<OutboundDelivery> {
+    const e = (await this.request(ctx, `Outbound delivery ${number}`, 'get', `${SERVICES.delivery}/A_OutbDeliveryHeader(${lit(number)})`, {
+      $expand: 'to_DeliveryDocumentItem',
+    })) as ODataEntity;
+    const items = results(e.to_DeliveryDocumentItem);
+    const shipTo = str(e.ShipToParty);
+    return {
+      number: str(e.DeliveryDocument),
+      shipTo,
+      shipToName: await this.customerName(ctx, shipTo),
+      ...(str(items[0]?.ReferenceSDDocument) && { salesOrder: str(items[0]?.ReferenceSDDocument) }),
+      ...(str(e.ShippingPoint) && { shippingPoint: str(e.ShippingPoint) }),
+      ...(odataDate(e.PlannedGoodsIssueDate) && { plannedGoodsIssueDate: odataDate(e.PlannedGoodsIssueDate) }),
+      ...(odataDate(e.ActualGoodsMovementDate) && { actualGoodsIssueDate: odataDate(e.ActualGoodsMovementDate) }),
+      goodsIssueStatus: processStatus(e.OverallGoodsMovementStatus),
+      pickingStatus: processStatus(e.OverallPickingStatus),
+      items: items.map((i) => ({
+        item: str(i.DeliveryDocumentItem),
+        material: str(i.Material),
+        description: str(i.DeliveryDocumentItemText),
+        quantity: num(i.ActualDeliveryQuantity),
+        unit: str(i.DeliveryQuantityUnit),
+        ...(str(i.Plant) && { plant: str(i.Plant) }),
+        ...(str(i.StorageLocation) && { storageLocation: str(i.StorageLocation) }),
+      })),
+    };
+  }
+
+  async getBillingDocument(ctx: SapCallContext, number: string): Promise<BillingDocument> {
+    const e = (await this.request(ctx, `Billing document ${number}`, 'get', `${SERVICES.billing}/A_BillingDocument(${lit(number)})`, { $expand: 'to_Item' })) as ODataEntity;
+    const currency = str(e.TransactionCurrency);
+    const items = results(e.to_Item);
+    const payer = str(e.PayerParty) || str(e.SoldToParty);
+    return {
+      number: str(e.BillingDocument),
+      billingType: str(e.BillingDocumentType),
+      payer,
+      payerName: await this.customerName(ctx, payer),
+      billingDate: odataDate(e.BillingDocumentDate) ?? '',
+      netValue: { amount: num(e.TotalNetAmount), currency },
+      taxAmount: { amount: num(e.TotalTaxAmount), currency },
+      companyCode: str(e.CompanyCode),
+      ...(str(e.FiscalYear) && { fiscalYear: str(e.FiscalYear) }),
+      ...(str(e.AccountingDocument) && { accountingDocument: str(e.AccountingDocument) }),
+      postedToAccounting: e.AccountingPostingStatus === 'C',
+      cancelled: e.BillingDocumentIsCancelled === true,
+      ...(str(items[0]?.SalesDocument) && { salesOrder: str(items[0]?.SalesDocument) }),
+      items: items.map((i) => ({
+        item: str(i.BillingDocumentItem),
+        material: str(i.Material),
+        description: str(i.BillingDocumentItemText),
+        quantity: num(i.BillingQuantity),
+        unit: str(i.BillingQuantityUnit),
+        netValue: { amount: num(i.NetAmount), currency: str(i.TransactionCurrency) || currency },
+      })),
+    };
+  }
+
+  async getCustomer(ctx: SapCallContext, id: string): Promise<Customer> {
+    const e = (await this.request(ctx, `Customer ${id}`, 'get', `${SERVICES.bp}/A_Customer(${lit(id)})`)) as ODataEntity;
+    return {
+      id: str(e.Customer),
+      name: str(e.CustomerName) || str(e.Customer),
+      orderBlocked: !!str(e.OrderIsBlockedForCustomer),
+      deliveryBlocked: !!str(e.DeliveryIsBlocked),
+      billingBlocked: !!str(e.BillingIsBlockedForCustomer),
+      postingBlocked: e.PostingIsBlocked === true,
+    };
+  }
+
+  async getCreditProfile(ctx: SapCallContext, customer: string): Promise<CreditProfile> {
+    const what = `Credit account of customer ${customer}`;
+    const [accounts, partner, name, open] = await Promise.all([
+      this.request(ctx, what, 'get', `${SERVICES.credit}/CreditManagementAccount`, { $filter: `BusinessPartner eq ${lit(customer)}`, $top: '1' }),
+      this.request(ctx, what, 'get', `${SERVICES.credit}/CreditMgmtBusinessPartner(${lit(customer)})`).catch(() => ({})),
+      this.customerName(ctx, customer),
+      this.lineItems(ctx, `Open receivables of customer ${customer}`, `FinancialAccountType eq 'D' and Customer eq ${lit(customer)} and ClearingAccountingDocument eq ''`),
+    ]);
+    const account = results(accounts)[0];
+    if (!account) throw new SapError('NOT_FOUND', `${what} was not found in SAP.`);
+    const currency = str(account.CreditSegmentCurrency) || str(open[0]?.CompanyCodeCurrency);
+    return {
+      customer,
+      customerName: name,
+      creditSegment: str(account.CreditSegment),
+      limit: { amount: num(account.CreditLimitAmount), currency },
+      // The released credit API does not return the exposure; open receivables are the closest readable figure.
+      exposure: { amount: open.reduce((sum, i) => sum + num(i.AmountInCompanyCodeCurrency), 0), currency },
+      exposureBasis: 'OPEN_RECEIVABLES',
+      ...(str((partner as ODataEntity).CreditRiskClass) && { riskClass: str((partner as ODataEntity).CreditRiskClass) }),
+      blocked: account.CreditAccountIsBlocked === true,
+    };
+  }
+
+  private async lineItems(ctx: SapCallContext, what: string, filter: string): Promise<ODataEntity[]> {
+    return results(await this.request(ctx, what, 'get', `${SERVICES.lineItems}/A_OperationalAcctgDocItemCube`, { $select: LINE_ITEM_FIELDS, $filter: filter, $top: '200' }));
+  }
+
+  async listOpenItems(ctx: SapCallContext, query: OpenItemQuery): Promise<OpenItem[]> {
+    const type = ACCOUNT_TYPE[query.accountType];
+    if (query.accountType === 'GL' && !query.account) throw new SapError('INVALID_INPUT', 'A G/L account is required to list G/L line items.');
+    if (query.dueBy && !/^\d{4}-\d{2}-\d{2}$/.test(query.dueBy)) throw new SapError('INVALID_INPUT', 'The due date must have the format YYYY-MM-DD.');
+    const filter = [
+      `CompanyCode eq ${lit(query.companyCode)}`,
+      `FinancialAccountType eq '${type.code}'`,
+      ...(query.account ? [`${type.field} eq ${lit(query.account)}`] : []),
+      ...(query.status === 'OPEN' ? [`ClearingAccountingDocument eq ''`] : query.status === 'CLEARED' ? [`ClearingAccountingDocument ne ''`] : []),
+      ...(query.dueBy ? [`NetDueDate le datetime'${query.dueBy}T00:00:00'`] : []),
+    ].join(' and ');
+    const rows = await this.lineItems(ctx, `${query.accountType.toLowerCase()} line items in company code ${query.companyCode}`, filter);
+    return rows.map((e) => ({
+      companyCode: str(e.CompanyCode),
+      fiscalYear: str(e.FiscalYear),
+      document: str(e.AccountingDocument),
+      item: str(e.AccountingDocumentItem),
+      documentType: str(e.AccountingDocumentType),
+      accountType: query.accountType,
+      account: str(e[type.field]),
+      postingDate: odataDate(e.PostingDate) ?? '',
+      ...(odataDate(e.NetDueDate) && { dueDate: odataDate(e.NetDueDate) }),
+      amount: { amount: num(e.AmountInCompanyCodeCurrency), currency: str(e.CompanyCodeCurrency) },
+      ...(str(e.ClearingAccountingDocument) && { clearingDocument: str(e.ClearingAccountingDocument) }),
+      ...(odataDate(e.ClearingDate) && { clearingDate: odataDate(e.ClearingDate) }),
+      ...(str(e.AssignmentReference) && { assignment: str(e.AssignmentReference) }),
+      ...(str(e.DocumentItemText) && { text: str(e.DocumentItemText) }),
+      ...(str(e.PaymentBlockingReason) && { paymentBlock: str(e.PaymentBlockingReason) }),
+    }));
+  }
+
+  async getAccountingDocument(ctx: SapCallContext, companyCode: string, fiscalYear: string, number: string): Promise<AccountingDocument> {
+    const what = `Accounting document ${number}`;
+    // 0L is the standard leading ledger; without it every parallel ledger would repeat the items.
+    const rows = results(
+      await this.request(ctx, what, 'get', `${SERVICES.journal}/A_JournalEntryItemBasic`, {
+        $filter: `CompanyCode eq ${lit(companyCode)} and FiscalYear eq ${lit(fiscalYear)} and AccountingDocument eq ${lit(number)} and Ledger eq '0L'`,
+        $top: '200',
+      }),
+    );
+    const head = rows[0];
+    if (!head) throw new SapError('NOT_FOUND', `${what} was not found in SAP.`);
+    return {
+      companyCode,
+      fiscalYear,
+      number,
+      documentType: str(head.AccountingDocumentType),
+      postingDate: odataDate(head.PostingDate) ?? '',
+      ...(odataDate(head.DocumentDate) && { documentDate: odataDate(head.DocumentDate) }),
+      ...(str(head.DocumentReferenceID) && { reference: str(head.DocumentReferenceID) }),
+      items: rows.map((e) => ({
+        item: str(e.LedgerGLLineItem),
+        account: str(e.Customer) || str(e.Supplier) || str(e.GLAccount),
+        ...(str(e.DocumentItemText) && { description: str(e.DocumentItemText) }),
+        amount: { amount: num(e.AmountInCompanyCodeCurrency), currency: str(e.CompanyCodeCurrency) },
+        debitCredit: e.DebitCreditCode === 'H' ? ('C' as const) : ('D' as const),
+        ...(str(e.ProfitCenter) && { profitCenter: str(e.ProfitCenter) }),
+        ...(str(e.CostCenter) && { costCenter: str(e.CostCenter) }),
+      })),
+    };
+  }
+
+  async getMaterialStock(ctx: SapCallContext, material: string, plant?: string): Promise<MaterialStock[]> {
+    const rows = results(
+      await this.request(ctx, `Stock of material ${material}`, 'get', `${SERVICES.stock}/A_MatlStkInAcctMod`, {
+        $filter: `Material eq ${lit(material)}${plant ? ` and Plant eq ${lit(plant)}` : ''}`,
+        $top: '500',
+      }),
+    );
+    if (!rows.length) throw new SapError('NOT_FOUND', `No stock was found in SAP for material ${material}${plant ? ` in plant ${plant}` : ''}.`);
+    const byLocation = new Map<string, MaterialStock>();
+    for (const e of rows) {
+      const key = `${str(e.Plant)}/${str(e.StorageLocation)}`;
+      const stock = byLocation.get(key) ?? {
+        material,
+        plant: str(e.Plant),
+        ...(str(e.StorageLocation) && { storageLocation: str(e.StorageLocation) }),
+        unrestricted: 0,
+        qualityInspection: 0,
+        blocked: 0,
+        unit: str(e.MaterialBaseUnit),
+      };
+      const quantity = num(e.MatlWrhsStkQtyInMatlBaseUnit);
+      // Inventory stock types: 01 unrestricted-use, 02 quality inspection, 07 blocked.
+      if (e.InventoryStockType === '01') stock.unrestricted += quantity;
+      else if (e.InventoryStockType === '02') stock.qualityInspection += quantity;
+      else if (e.InventoryStockType === '07') stock.blocked += quantity;
+      byLocation.set(key, stock);
+    }
+    return [...byLocation.values()];
+  }
+
+  async getInfoRecords(ctx: SapCallContext, material: string, supplier?: string): Promise<InfoRecord[]> {
+    const rows = results(
+      await this.request(ctx, `Purchasing info records of material ${material}`, 'get', `${SERVICES.infoRecord}/A_PurchasingInfoRecord`, {
+        $filter: `Material eq ${lit(material)}${supplier ? ` and Supplier eq ${lit(supplier)}` : ''}`,
+        $expand: 'to_PurgInfoRecdOrgPlantData',
+        $top: '20',
+      }),
+    );
+    return rows.flatMap((e) =>
+      results(e.to_PurgInfoRecdOrgPlantData).map((o) => ({
+        infoRecord: str(e.PurchasingInfoRecord),
+        supplier: str(e.Supplier),
+        material: str(e.Material),
+        ...(str(o.PurchasingOrganization) && { purchasingOrganization: str(o.PurchasingOrganization) }),
+        ...(str(o.Plant) && { plant: str(o.Plant) }),
+        netPrice: { amount: num(o.NetPriceAmount), currency: str(o.Currency) },
+        ...(o.MaterialPlannedDeliveryDurn != null && { plannedDeliveryDays: num(o.MaterialPlannedDeliveryDurn) }),
+        ...(str(o.LastReferencingPurchaseOrder) && { lastPurchaseOrder: str(o.LastReferencingPurchaseOrder) }),
+      })),
+    );
+  }
+
+  async listBlockedInvoices(ctx: SapCallContext, companyCode: string): Promise<Invoice[]> {
+    const rows = results(
+      await this.request(ctx, `Blocked invoices in company code ${companyCode}`, 'get', `${SERVICES.invoice}/A_SupplierInvoice`, {
+        $filter: `CompanyCode eq ${lit(companyCode)} and PaymentBlockingReason ne ''`,
+        $orderby: 'PostingDate desc',
+        $top: '50',
+      }),
+    );
+    // Supplier names are not resolved here: one lookup per invoice would multiply the SAP calls.
+    return rows.map((e) => {
+      const block = str(e.PaymentBlockingReason);
+      return {
+        number: str(e.SupplierInvoice),
+        fiscalYear: str(e.FiscalYear),
+        companyCode: str(e.CompanyCode),
+        vendorId: str(e.InvoicingParty),
+        vendorName: str(e.InvoicingParty),
+        gross: { amount: num(e.InvoiceGrossAmount), currency: str(e.DocumentCurrency) },
+        ...(odataDate(e.PostingDate) && { postingDate: odataDate(e.PostingDate) }),
+        ...(odataDate(e.DueCalculationBaseDate) && { dueDate: odataDate(e.DueCalculationBaseDate) }),
+        status: 'PAYMENT_BLOCKED' as const,
+        paymentBlock: { code: block, description: block === 'R' ? 'Invoice verification' : `Payment block ${block}` },
+      };
+    });
   }
 
   async releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice> {

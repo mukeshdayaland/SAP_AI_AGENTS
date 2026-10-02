@@ -2,8 +2,8 @@ import { z } from 'zod';
 import type { Invoice } from '../sap/model.js';
 import { defineTool, fmt, now, type ToolContext, type ToolResultPayload } from './types.js';
 
-const invoiceNumber = z.string().regex(/^\d{10}$/, 'SAP invoice numbers have 10 digits').describe('Supplier invoice document number, e.g. 5100012345');
-const fiscalYear = z.string().regex(/^\d{4}$/).describe('Fiscal year, e.g. 2026');
+export const invoiceNumber = z.string().regex(/^\d{10}$/, 'SAP invoice numbers have 10 digits').describe('Supplier invoice document number, e.g. 5100012345');
+export const fiscalYear = z.string().regex(/^\d{4}$/).describe('Fiscal year, e.g. 2026');
 
 function invoiceComponent(inv: Invoice, blockReasons?: string[]) {
   return {
@@ -25,7 +25,7 @@ function invoiceComponent(inv: Invoice, blockReasons?: string[]) {
   };
 }
 
-function invoiceSource(ctx: ToolContext, inv: Invoice) {
+export function invoiceSource(ctx: ToolContext, inv: Invoice) {
   return { system: ctx.gateway.systemId, objectType: 'SupplierInvoice', objectId: `${inv.number}/${inv.fiscalYear}`, retrievedAt: now(), mock: ctx.gateway.mock };
 }
 
@@ -64,10 +64,11 @@ function invoiceFacts(inv: Invoice): ToolResultPayload['data'] {
   };
 }
 
-export const ficoTools = [
+/** MM logistics invoice verification (MIRO / MRBR): supplier invoices, 3-way match and payment blocks. */
+export const mmInvoiceTools = [
   defineTool({
-    name: 'fico_getInvoice',
-    domain: 'fico',
+    name: 'mm_getInvoice',
+    domain: 'mm',
     title: 'Get supplier invoice',
     description: 'Retrieve a supplier invoice header, payment block and invoice-verification results from SAP S/4HANA.',
     risk: 'READ',
@@ -82,8 +83,8 @@ export const ficoTools = [
   }),
 
   defineTool({
-    name: 'fico_analyzeInvoice',
-    domain: 'fico',
+    name: 'mm_analyzeInvoice',
+    domain: 'mm',
     title: 'Analyze invoice block',
     description:
       'Analyze why a supplier invoice is blocked by comparing it with its purchase order and goods receipts. Use for "why is invoice X blocked" questions.',
@@ -119,108 +120,8 @@ export const ficoTools = [
   }),
 
   defineTool({
-    name: 'fico_getPaymentStatus',
-    domain: 'fico',
-    title: 'Get payment status',
-    description: 'Get whether a supplier invoice is paid, open or blocked, including the clearing document when paid.',
-    risk: 'READ',
-    operation: 'SAP_READ',
-    statusLabel: 'Checking payment status',
-    input: { invoiceNumber, fiscalYear: fiscalYear.optional() },
-    async run({ invoiceNumber, fiscalYear }, ctx) {
-      const inv = await ctx.gateway.getInvoice(ctx.sap, invoiceNumber, fiscalYear);
-      const summary =
-        inv.status === 'PAID'
-          ? `Invoice **${inv.number}** was paid on **${inv.paidOn}** (payment document ${inv.paymentDocument}).`
-          : inv.paymentBlock
-            ? `Invoice **${inv.number}** is **not paid**: it is blocked with key ${inv.paymentBlock.code} (${inv.paymentBlock.description}).`
-            : `Invoice **${inv.number}** is **open**, due **${inv.dueDate ?? 'n/a'}**. It will be picked up by the next payment run after the due date.`;
-      return {
-        data: { invoiceNumber: inv.number, status: inv.status, paidOn: inv.paidOn, paymentDocument: inv.paymentDocument, dueDate: inv.dueDate, summary },
-        components: [
-          {
-            type: 'kpi_block',
-            data: {
-              title: `Payment status · ${inv.number}`,
-              items: [
-                { label: 'Status', value: inv.status.replaceAll('_', ' '), tone: inv.status === 'PAID' ? 'positive' : inv.paymentBlock ? 'critical' : 'neutral' },
-                { label: 'Amount', value: fmt(inv.gross) },
-                { label: inv.status === 'PAID' ? 'Paid on' : 'Due', value: (inv.paidOn ?? inv.dueDate ?? 'n/a').slice(0, 20) },
-              ],
-            },
-          },
-        ],
-        source: invoiceSource(ctx, inv),
-      };
-    },
-  }),
-
-  defineTool({
-    name: 'fico_getVendor',
-    domain: 'fico',
-    title: 'Get vendor financials',
-    description: 'Retrieve a supplier master record with open and overdue items (vendor exposure) from SAP.',
-    risk: 'READ',
-    operation: 'SAP_READ',
-    statusLabel: 'Retrieving vendor exposure',
-    input: { vendorId: z.string().regex(/^[A-Z0-9]{1,10}$/i).describe('SAP supplier / business partner number') },
-    async run({ vendorId }, ctx) {
-      const v = await ctx.gateway.getVendor(ctx.sap, vendorId);
-      const summary =
-        `**${v.name}** (${v.id}, ${v.city ? `${v.city}, ` : ''}${v.country})` +
-        (v.openItems ? ` has open items of **${fmt(v.openItems)}**` : '') +
-        (v.overdueItems ? `, of which **${fmt(v.overdueItems)}** are overdue` : '') +
-        (v.riskRating ? `. Risk rating: **${v.riskRating}**.` : '.');
-      return {
-        data: { vendor: v, summary },
-        components: [
-          {
-            type: 'vendor',
-            data: {
-              id: v.id,
-              name: v.name,
-              country: v.country,
-              ...(v.city && { city: v.city }),
-              ...(v.paymentTerms && { paymentTerms: v.paymentTerms }),
-              blocked: v.paymentBlocked || v.postingBlocked,
-              ...(v.openItems && { openItems: v.openItems }),
-              ...(v.overdueItems && { overdueItems: v.overdueItems }),
-              ...(v.riskRating && { riskRating: v.riskRating }),
-            },
-          },
-        ],
-        source: { system: ctx.gateway.systemId, objectType: 'Supplier', objectId: v.id, retrievedAt: now(), mock: ctx.gateway.mock },
-      };
-    },
-  }),
-
-  defineTool({
-    name: 'fico_getGLBalance',
-    domain: 'fico',
-    title: 'Get G/L account balance',
-    description: 'Retrieve debit, credit and balance for a G/L account in a company code and fiscal year.',
-    risk: 'READ',
-    operation: 'SAP_READ',
-    statusLabel: 'Retrieving G/L balance',
-    input: {
-      glAccount: z.string().regex(/^\d{6,10}$/),
-      companyCode: z.string().regex(/^[A-Z0-9]{4}$/),
-      fiscalYear,
-      period: z.string().regex(/^\d{3}$/).optional(),
-    },
-    async run({ glAccount, companyCode, fiscalYear, period }, ctx) {
-      const b = await ctx.gateway.getGLBalance(ctx.sap, glAccount, companyCode, fiscalYear, period);
-      return {
-        data: { balance: b, summary: `G/L account **${b.account}** (${b.description}) in company code ${b.companyCode}, FY ${b.fiscalYear} period ${b.period}: balance **${fmt(b.balance)}**.` },
-        components: [{ type: 'gl_balance', data: b }],
-        source: { system: ctx.gateway.systemId, objectType: 'GLAccount', objectId: `${b.companyCode}/${b.account}`, retrievedAt: now(), mock: ctx.gateway.mock },
-      };
-    },
-  }),
-
-  defineTool({
-    name: 'fico_addInvoiceNote',
-    domain: 'fico',
+    name: 'mm_addInvoiceNote',
+    domain: 'mm',
     title: 'Add note to invoice',
     description: 'Attach a short internal note to a supplier invoice. Does not change amounts or status.',
     risk: 'LOW_RISK_WRITE',
@@ -243,8 +144,8 @@ export const ficoTools = [
   }),
 
   defineTool({
-    name: 'fico_releaseInvoicePaymentBlock',
-    domain: 'fico',
+    name: 'mm_releaseInvoicePaymentBlock',
+    domain: 'mm',
     title: 'Release invoice payment block',
     description:
       'Release the payment block of a blocked supplier invoice so it can be paid. Consequential: always requires explicit user confirmation and SAP release authorization.',

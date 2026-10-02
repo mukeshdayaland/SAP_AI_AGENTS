@@ -1,16 +1,31 @@
 import { z } from 'zod';
-import { ficoTools } from './fico.js';
+import { apTools } from './ap.js';
+import { arTools } from './ar.js';
+import { creditTools } from './credit.js';
+import { glTools } from './gl.js';
+import { mmInvoiceTools } from './mm-invoice.js';
 import { mmTools } from './mm.js';
 import { pmTools } from './pm.js';
+import { sdTools } from './sd.js';
 import { sharedTools } from './shared.js';
 import { defineTool, type Domain, type ToolDefinition } from './types.js';
 
 /**
- * All tool modules. Each domain is self-contained so it can later be
- * extracted into its own MCP service (`prowess-mcp-fico`, …) by deploying this
- * app with `MCP_DOMAINS=fico` — no code changes needed.
+ * All tool modules, one domain per SAP module. Each domain is self-contained
+ * so it can later be extracted into its own MCP service (`prowess-mcp-ap`, …)
+ * by deploying this app with `MCP_DOMAINS=ap` — no code changes needed.
  */
-const ALL: ToolDefinition[] = [...ficoTools, ...mmTools, ...pmTools, ...sharedTools] as unknown as ToolDefinition[];
+const ALL: ToolDefinition[] = [
+  ...sdTools,
+  ...creditTools,
+  ...arTools,
+  ...apTools,
+  ...glTools,
+  ...mmTools,
+  ...mmInvoiceTools,
+  ...pmTools,
+  ...sharedTools,
+] as unknown as ToolDefinition[];
 
 export const PREVIEW_TOOL = 'system_previewAction';
 

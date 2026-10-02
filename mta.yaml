@@ -96,7 +96,7 @@ modules:
       SAP_DESTINATION: S4HANA
       SAP_SYSTEM_ID: S4-${env}
       SAP_ALLOW_TECHNICAL_USER: false
-      MCP_DOMAINS: fico,mm,pm,shared
+      MCP_DOMAINS: sd,credit,ar,ap,gl,mm,pm,shared
       NODE_ENV: production
     requires:
       - name: prowess-xsuaa # user token exchange for destination lookups

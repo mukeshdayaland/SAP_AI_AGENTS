@@ -2,7 +2,9 @@ import type { ToolRisk, UIComponent } from '@prowess/contracts';
 import type { z } from 'zod';
 import type { Amount, SapCallContext, SapGateway } from '../sap/model.js';
 
-export type Domain = 'fico' | 'mm' | 'pm' | 'shared' | 'system';
+/** Tool domains follow SAP modules, so each module can be deployed as its own MCP service. */
+export const BUSINESS_DOMAINS = ['sd', 'credit', 'ar', 'ap', 'gl', 'mm', 'pm', 'shared'] as const;
+export type Domain = (typeof BUSINESS_DOMAINS)[number] | 'system';
 
 /** What a tool returns. The orchestrator separates model-facing data from UI-facing parts. */
 export interface ToolResultPayload {

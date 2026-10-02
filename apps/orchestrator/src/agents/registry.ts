@@ -29,7 +29,8 @@ export class AgentRegistry {
   }
 
   resolve(user: UserProfile, id?: string): AgentDefinition {
-    const agent = this.all().find((a) => a.id === (id ?? this.catalog.defaultAgent));
+    const wanted = id ?? this.catalog.defaultAgent;
+    const agent = this.all().find((a) => a.id === wanted) ?? this.all().find((a) => a.aliases.includes(wanted));
     if (!agent) throw AppError.validation('Unknown agent.');
     if (!hasAnyRole(user, agent.requiredRoles)) throw AppError.forbidden(`You do not have access to the ${agent.name}.`);
     return agent;

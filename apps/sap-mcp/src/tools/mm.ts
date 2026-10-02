@@ -1,8 +1,13 @@
 import { z } from 'zod';
+import { companyCode } from './line-items.js';
 import { defineTool, fmt, now } from './types.js';
 
 const poNumber = z.string().regex(/^\d{10}$/).describe('Purchase order number, e.g. 4500012345');
 
+const material = z.string().regex(/^[A-Z0-9-]{1,40}$/i).describe('Material number, e.g. 5496');
+const plant = z.string().regex(/^[A-Z0-9]{4}$/).describe('Plant, e.g. 1030');
+
+/** MM purchasing and inventory: requisitions, purchase orders (ME21N), goods receipts (MIGO), stock and sources of supply. */
 export const mmTools = [
   defineTool({
     name: 'mm_getPurchaseOrder',
@@ -122,6 +127,151 @@ export const mmTools = [
         },
         components: [{ type: 'vendor', data: { id: v.id, name: v.name, country: v.country, ...(v.city && { city: v.city }), blocked: v.postingBlocked || v.paymentBlocked } }],
         source: { system: ctx.gateway.systemId, objectType: 'Supplier', objectId: v.id, retrievedAt: now(), mock: ctx.gateway.mock },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'mm_getMaterialStock',
+    domain: 'mm',
+    title: 'Get material stock',
+    description: 'Retrieve the stock of a material by plant and storage location: unrestricted-use, quality-inspection and blocked quantities.',
+    risk: 'READ',
+    operation: 'SAP_READ',
+    statusLabel: 'Checking material stock',
+    input: { material, plant: plant.optional() },
+    async run({ material, plant }, ctx) {
+      const stock = await ctx.gateway.getMaterialStock(ctx.sap, material, plant);
+      const unit = stock[0]!.unit;
+      const unrestricted = stock.reduce((s, r) => s + r.unrestricted, 0);
+      const name = stock[0]!.description;
+      return {
+        data: {
+          stock,
+          summary: `Material **${material}**${name ? ` (${name})` : ''} has **${unrestricted} ${unit}** in unrestricted-use stock${plant ? ` in plant ${plant}` : ` across ${new Set(stock.map((r) => r.plant)).size} plant(s)`}.`,
+        },
+        components: [
+          {
+            type: 'business_object_table',
+            data: {
+              title: `Stock · material ${material}`,
+              columns: [
+                { key: 'plant', label: 'Plant' },
+                { key: 'location', label: 'Storage location' },
+                { key: 'unrestricted', label: 'Unrestricted', align: 'right' },
+                { key: 'quality', label: 'Quality inspection', align: 'right' },
+                { key: 'blocked', label: 'Blocked', align: 'right' },
+              ],
+              rows: stock.slice(0, 200).map((r) => ({
+                plant: r.plant,
+                location: r.storageLocation ?? null,
+                unrestricted: `${r.unrestricted} ${r.unit}`,
+                quality: `${r.qualityInspection} ${r.unit}`,
+                blocked: `${r.blocked} ${r.unit}`,
+              })),
+            },
+          },
+        ],
+        source: { system: ctx.gateway.systemId, objectType: 'MaterialStock', objectId: plant ? `${material}/${plant}` : material, retrievedAt: now(), mock: ctx.gateway.mock },
+        followUps: [{ label: 'Sources of supply', prompt: `Which suppliers have info records for material ${material}?` }],
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'mm_getInfoRecords',
+    domain: 'mm',
+    title: 'Get purchasing info records',
+    description: 'List the purchasing info records of a material: which suppliers it was bought from, at what price and delivery time, and the last purchase order. Use to choose a supplier.',
+    risk: 'READ',
+    operation: 'SAP_READ',
+    statusLabel: 'Retrieving sources of supply',
+    input: { material, supplier: z.string().regex(/^[A-Z0-9]{1,10}$/i).optional() },
+    async run({ material, supplier }, ctx) {
+      const records = await ctx.gateway.getInfoRecords(ctx.sap, material, supplier);
+      const cheapest = [...records].sort((a, b) => a.netPrice.amount - b.netPrice.amount)[0];
+      return {
+        data: {
+          infoRecords: records.map((r) => ({ ...r, netPrice: fmt(r.netPrice) })),
+          summary: cheapest
+            ? `${records.length} purchasing info record(s) exist for material **${material}**. Lowest price: **${fmt(cheapest.netPrice)}** from **${cheapest.supplierName ?? cheapest.supplier}**${cheapest.lastPurchaseOrder ? ` (last purchase order ${cheapest.lastPurchaseOrder})` : ''}.`
+            : `No purchasing info records exist for material **${material}**${supplier ? ` and supplier ${supplier}` : ''}.`,
+        },
+        components: records.length
+          ? [
+              {
+                type: 'business_object_table',
+                data: {
+                  title: `Sources of supply · material ${material}`,
+                  columns: [
+                    { key: 'supplier', label: 'Supplier' },
+                    { key: 'record', label: 'Info record' },
+                    { key: 'price', label: 'Net price', align: 'right' },
+                    { key: 'days', label: 'Delivery days', align: 'right' },
+                    { key: 'lastOrder', label: 'Last PO' },
+                  ],
+                  rows: records.slice(0, 200).map((r) => ({
+                    supplier: r.supplierName ? `${r.supplierName} (${r.supplier})` : r.supplier,
+                    record: r.infoRecord,
+                    price: fmt(r.netPrice),
+                    days: r.plannedDeliveryDays ?? null,
+                    lastOrder: r.lastPurchaseOrder ?? null,
+                  })),
+                },
+              },
+            ]
+          : [],
+        source: { system: ctx.gateway.systemId, objectType: 'PurchasingInfoRecord', objectId: material, retrievedAt: now(), mock: ctx.gateway.mock },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'mm_listBlockedInvoices',
+    domain: 'mm',
+    title: 'List blocked invoices',
+    description: 'List supplier invoices in a company code that are blocked for payment (transaction MRBR worklist).',
+    risk: 'READ',
+    operation: 'SAP_READ',
+    statusLabel: 'Finding blocked invoices',
+    input: { companyCode },
+    async run({ companyCode }, ctx) {
+      const invoices = await ctx.gateway.listBlockedInvoices(ctx.sap, companyCode);
+      const currency = invoices[0]?.gross.currency;
+      const total = invoices.reduce((s, i) => s + i.gross.amount, 0);
+      return {
+        data: {
+          invoices: invoices.map((i) => ({ number: i.number, vendor: i.vendorName, gross: fmt(i.gross), block: i.paymentBlock?.code, dueDate: i.dueDate })),
+          summary: currency
+            ? `${invoices.length} supplier invoice(s) totalling **${fmt({ amount: total, currency })}** are blocked for payment in company code ${companyCode}.`
+            : `No supplier invoices are blocked for payment in company code ${companyCode}.`,
+        },
+        components: invoices.length
+          ? [
+              {
+                type: 'business_object_table',
+                data: {
+                  title: `Blocked invoices · company code ${companyCode}`,
+                  columns: [
+                    { key: 'invoice', label: 'Invoice' },
+                    { key: 'vendor', label: 'Supplier' },
+                    { key: 'block', label: 'Block' },
+                    { key: 'due', label: 'Due' },
+                    { key: 'amount', label: 'Gross amount', align: 'right' },
+                  ],
+                  rows: invoices.slice(0, 200).map((i) => ({
+                    invoice: i.number,
+                    vendor: i.vendorName,
+                    block: i.paymentBlock ? `${i.paymentBlock.code} · ${i.paymentBlock.description}` : null,
+                    due: i.dueDate ?? null,
+                    amount: fmt(i.gross),
+                  })),
+                },
+              },
+            ]
+          : [],
+        source: { system: ctx.gateway.systemId, objectType: 'BlockedInvoices', objectId: companyCode, retrievedAt: now(), mock: ctx.gateway.mock },
+        followUps: invoices.slice(0, 2).map((i) => ({ label: `Analyze ${i.number}`, prompt: `Why is invoice ${i.number} blocked?` })),
       };
     },
   }),

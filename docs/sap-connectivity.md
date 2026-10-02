@@ -47,7 +47,19 @@ S/4HANA Cloud: `Authentication=OAuth2SAMLBearerAssertion` with a communication a
 | purchase orders | `API_PURCHASEORDER_PROCESS_SRV` |
 | requisitions | `API_PURCHASEREQ_PROCESS_SRV` |
 | goods receipts | `API_MATERIAL_DOCUMENT_SRV` |
+| sales orders, document flow | `API_SALES_ORDER_SRV` (`A_SalesOrder`, `to_SubsequentProcFlowDoc`) |
+| outbound deliveries | `API_OUTBOUND_DELIVERY_SRV;v=0002` |
+| billing documents | `API_BILLING_DOCUMENT_SRV` |
+| customers | `API_BUSINESS_PARTNER` (`A_Customer`) |
+| customer / supplier / G/L line items | `API_OPLACCTGDOCITEMCUBE_SRV` |
+| accounting documents | `API_JOURNALENTRYITEMBASIC_SRV` (leading ledger `0L`) |
+| credit limit and risk class | `API_CRDTMBUSINESSPARTNER` |
+| material stock | `API_MATERIAL_STOCK_SRV` |
+| purchasing info records | `API_INFORECORD_PROCESS_SRV` |
 | equipment / notifications / orders | `API_EQUIPMENT`, `API_MAINTNOTIFICATION`, `API_MAINTENANCEORDER` |
+
+Credit exposure is not part of the released credit API: the gateway reports the sum of open receivables and flags
+it as such (`exposureBasis: OPEN_RECEIVABLES`).
 
 Not wired to standard APIs yet (these return a clear *not available* error): G/L balances (use a trial-balance CDS
 view), free-text search (Enterprise Search), and invoice notes. Extend `ODataSapGateway` to add them.

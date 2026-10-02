@@ -91,6 +91,179 @@ export interface GLBalance {
   balance: Amount;
 }
 
+/** SAP processing status (SD status values '', A, B, C). */
+export type ProcessStatus = 'NOT_RELEVANT' | 'NOT_STARTED' | 'PARTIAL' | 'COMPLETE';
+
+export interface SalesOrderItem {
+  item: string;
+  material: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  netValue: Amount;
+  plant?: string;
+}
+
+export interface SalesOrder {
+  number: string;
+  orderType: string;
+  salesOrganization: string;
+  distributionChannel: string;
+  division: string;
+  soldTo: string;
+  soldToName: string;
+  customerReference?: string;
+  netValue: Amount;
+  createdOn?: string;
+  requestedDeliveryDate?: string;
+  paymentTerms?: string;
+  incoterms?: string;
+  deliveryStatus: ProcessStatus;
+  billingStatus: ProcessStatus;
+  creditStatus: 'NOT_CHECKED' | 'APPROVED' | 'BLOCKED';
+  deliveryBlock?: string;
+  billingBlock?: string;
+  items: SalesOrderItem[];
+}
+
+/** One document in the order-to-cash chain that follows a sales order. */
+export interface DocumentFlowStep {
+  category: 'DELIVERY' | 'GOODS_ISSUE' | 'BILLING' | 'ACCOUNTING' | 'OTHER';
+  document: string;
+  date?: string;
+  status?: string;
+}
+
+export interface OutboundDelivery {
+  number: string;
+  shipTo: string;
+  shipToName: string;
+  salesOrder?: string;
+  shippingPoint?: string;
+  plannedGoodsIssueDate?: string;
+  actualGoodsIssueDate?: string;
+  goodsIssueStatus: ProcessStatus;
+  pickingStatus: ProcessStatus;
+  items: { item: string; material: string; description: string; quantity: number; unit: string; plant?: string; storageLocation?: string }[];
+}
+
+export interface BillingDocument {
+  number: string;
+  billingType: string;
+  payer: string;
+  payerName: string;
+  billingDate: string;
+  netValue: Amount;
+  taxAmount?: Amount;
+  companyCode: string;
+  fiscalYear?: string;
+  accountingDocument?: string;
+  postedToAccounting: boolean;
+  cancelled: boolean;
+  salesOrder?: string;
+  items: { item: string; material: string; description: string; quantity: number; unit: string; netValue: Amount }[];
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  country?: string;
+  city?: string;
+  orderBlocked: boolean;
+  deliveryBlocked: boolean;
+  billingBlocked: boolean;
+  postingBlocked: boolean;
+}
+
+export interface CreditProfile {
+  customer: string;
+  customerName: string;
+  creditSegment: string;
+  limit: Amount;
+  exposure: Amount;
+  /** Where `exposure` comes from: SAP Credit Management, or the sum of open receivables as an approximation. */
+  exposureBasis: 'CREDIT_MANAGEMENT' | 'OPEN_RECEIVABLES';
+  riskClass?: string;
+  blocked: boolean;
+}
+
+export type OpenItemAccountType = 'CUSTOMER' | 'SUPPLIER' | 'GL';
+
+export interface OpenItemQuery {
+  accountType: OpenItemAccountType;
+  companyCode: string;
+  /** Customer, supplier or G/L account. Omit to list across all accounts of the type. */
+  account?: string;
+  status: 'OPEN' | 'CLEARED' | 'ALL';
+  /** Only items due on or before this date (YYYY-MM-DD). */
+  dueBy?: string;
+}
+
+/** A line item of a customer, supplier or open-item-managed G/L account (FBL5N / FBL1N / FBL3N). */
+export interface OpenItem {
+  companyCode: string;
+  fiscalYear: string;
+  document: string;
+  item: string;
+  documentType: string;
+  accountType: OpenItemAccountType;
+  account: string;
+  accountName?: string;
+  postingDate: string;
+  dueDate?: string;
+  /** Signed: receivables and debits positive, payables and credits negative. */
+  amount: Amount;
+  clearingDocument?: string;
+  clearingDate?: string;
+  assignment?: string;
+  text?: string;
+  paymentBlock?: string;
+}
+
+export interface AccountingDocument {
+  companyCode: string;
+  fiscalYear: string;
+  number: string;
+  documentType: string;
+  postingDate: string;
+  documentDate?: string;
+  reference?: string;
+  items: {
+    item: string;
+    /** Customer, supplier or G/L account number as shown in the entry view. */
+    account: string;
+    description?: string;
+    /** Signed: debit positive, credit negative. */
+    amount: Amount;
+    debitCredit: 'D' | 'C';
+    profitCenter?: string;
+    costCenter?: string;
+  }[];
+}
+
+export interface MaterialStock {
+  material: string;
+  description?: string;
+  plant: string;
+  storageLocation?: string;
+  unrestricted: number;
+  qualityInspection: number;
+  blocked: number;
+  unit: string;
+}
+
+export interface InfoRecord {
+  infoRecord: string;
+  supplier: string;
+  supplierName?: string;
+  material: string;
+  purchasingOrganization?: string;
+  plant?: string;
+  netPrice: Amount;
+  plannedDeliveryDays?: number;
+  lastPurchaseOrder?: string;
+}
+
 export interface Equipment {
   number: string;
   description: string;
@@ -184,6 +357,20 @@ export interface SapGateway {
   getWorkOrder(ctx: SapCallContext, number: string): Promise<WorkOrder>;
   getMaintenanceHistory(ctx: SapCallContext, equipment: string): Promise<MaintenanceEvent[]>;
   search(ctx: SapCallContext, query: string): Promise<SearchHit[]>;
+
+  getSalesOrder(ctx: SapCallContext, number: string): Promise<SalesOrder>;
+  /** Sales orders that are not yet completely delivered or billed, or are blocked. */
+  listOpenSalesOrders(ctx: SapCallContext, salesOrganization?: string): Promise<SalesOrder[]>;
+  getSalesOrderFlow(ctx: SapCallContext, number: string): Promise<DocumentFlowStep[]>;
+  getDelivery(ctx: SapCallContext, number: string): Promise<OutboundDelivery>;
+  getBillingDocument(ctx: SapCallContext, number: string): Promise<BillingDocument>;
+  getCustomer(ctx: SapCallContext, id: string): Promise<Customer>;
+  getCreditProfile(ctx: SapCallContext, customer: string): Promise<CreditProfile>;
+  listOpenItems(ctx: SapCallContext, query: OpenItemQuery): Promise<OpenItem[]>;
+  getAccountingDocument(ctx: SapCallContext, companyCode: string, fiscalYear: string, number: string): Promise<AccountingDocument>;
+  getMaterialStock(ctx: SapCallContext, material: string, plant?: string): Promise<MaterialStock[]>;
+  getInfoRecords(ctx: SapCallContext, material: string, supplier?: string): Promise<InfoRecord[]>;
+  listBlockedInvoices(ctx: SapCallContext, companyCode: string): Promise<Invoice[]>;
 
   releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice>;
   addInvoiceNote(ctx: SapCallContext, number: string, fiscalYear: string, note: string): Promise<{ noteId: string }>;

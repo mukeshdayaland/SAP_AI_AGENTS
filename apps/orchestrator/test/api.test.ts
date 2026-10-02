@@ -45,12 +45,12 @@ describe('workspace configuration', () => {
   });
 });
 
-describe('FICO invoice analysis vertical slice', () => {
+describe('Invoice analysis vertical slice', () => {
   it('streams tool execution, a validated invoice card, sources and the answer', async () => {
-    const { status, events } = await stack.chat(USERS.jordan, { message: 'Why is invoice 5100012345 blocked?', agent: 'fico' });
+    const { status, events } = await stack.chat(USERS.jordan, { message: 'Why is invoice 5100012345 blocked?', agent: 'fi-ap' });
     expect(status).toBe(200);
     expect(events[0]!.type).toBe('message.start');
-    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('fico_getInvoice');
+    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('mm_getInvoice');
     const card = ofType(events, 'component').find((c) => c.component.type === 'invoice');
     expect(card?.component.data).toMatchObject({ number: '5100012345', status: 'PAYMENT_BLOCKED', paymentBlock: { code: 'R' } });
     expect(ofType(events, 'source')[0]!.source).toMatchObject({ system: 'S4-MOCK', mock: true, objectType: 'SupplierInvoice' });
@@ -62,7 +62,7 @@ describe('FICO invoice analysis vertical slice', () => {
     expect(done.actions.map((a) => a.label)).toContain('Check related PO');
     // Standard users never see the provider/model.
     expect(done.execution.provider).toBeUndefined();
-    expect(done.execution.tools[0]).toMatchObject({ tool: 'fico_getInvoice', status: 'success', system: 'S4-MOCK' });
+    expect(done.execution.tools[0]).toMatchObject({ tool: 'mm_getInvoice', status: 'success', system: 'S4-MOCK' });
 
     const audit = stack.auditBuffer.events.map((e) => e.type);
     expect(audit).toEqual(expect.arrayContaining(['CONVERSATION_CREATED', 'AGENT_INVOKED', 'MCP_TOOL_INVOKED', 'SAP_READ', 'MODEL_PROVIDER_USED']));
@@ -70,7 +70,7 @@ describe('FICO invoice analysis vertical slice', () => {
   });
 
   it('surfaces SAP authorization denials without overriding them', async () => {
-    const { events } = await stack.chat(USERS.alex, { message: 'Show invoice 5100099999', agent: 'fico' });
+    const { events } = await stack.chat(USERS.alex, { message: 'Show invoice 5100099999', agent: 'fi-ap' });
     const err = ofType(events, 'tool.error')[0]!;
     expect(err.message).toMatch(/not authorized for company code 3000/);
     expect(ofType(events, 'component')).toHaveLength(0);
@@ -79,7 +79,7 @@ describe('FICO invoice analysis vertical slice', () => {
 
 describe('conversation privacy', () => {
   it('never returns or deletes another user’s conversation', async () => {
-    const { events } = await stack.chat(USERS.alex, { message: 'Check purchase order 4500012345', agent: 'procurement' });
+    const { events } = await stack.chat(USERS.alex, { message: 'Check purchase order 4500012345', agent: 'mm' });
     const id = ofType(events, 'message.start')[0]!.conversationId;
 
     expect((await stack.request('GET', `/api/v1/conversations/${id}`, USERS.alex)).status).toBe(200);
@@ -109,14 +109,14 @@ describe('conversation privacy', () => {
 
 describe('human confirmation for SAP writes', () => {
   it('never executes a write from the chat turn, and executes exactly once after confirmation', async () => {
-    const { events } = await stack.chat(USERS.alex, { message: 'Release the payment block on invoice 5100012345.', agent: 'fico' });
+    const { events } = await stack.chat(USERS.alex, { message: 'Release the payment block on invoice 5100012345.', agent: 'fi-ap' });
     const confirmation = ofType(events, 'confirmation.required')[0]!.confirmation;
     expect(confirmation).toMatchObject({ action: 'Release invoice payment block', risk: 'HIGH_IMPACT', environment: 'DEV', status: 'pending' });
     expect(confirmation.impact).toMatch(/payment run/);
     expect(ofType(events, 'message.complete')[0]!.execution.tools[0]!.status).toBe('pending_confirmation');
 
     // Still blocked: the model alone cannot execute the change.
-    const check = await stack.chat(USERS.alex, { message: 'What is the payment status of invoice 5100012345?', agent: 'fico' });
+    const check = await stack.chat(USERS.alex, { message: 'What is the payment status of invoice 5100012345?', agent: 'fi-ap' });
     expect(ofType(check.events, 'message.delta').map((d) => d.text).join('')).toMatch(/not paid/);
 
     // Another user cannot confirm it.
@@ -136,7 +136,7 @@ describe('human confirmation for SAP writes', () => {
   });
 
   it('records SAP’s refusal when the user lacks SAP release authorization', async () => {
-    const { events } = await stack.chat(USERS.jordan, { message: 'Add a note "Price checked with buyer" to invoice 5100012346', agent: 'fico' });
+    const { events } = await stack.chat(USERS.jordan, { message: 'Add a note "Price checked with buyer" to invoice 5100012346', agent: 'fi-ap' });
     const confirmation = ofType(events, 'confirmation.required')[0]!.confirmation;
     expect(confirmation.risk).toBe('LOW_RISK_WRITE');
     const cancelled = await stack.request('POST', `/api/v1/actions/${confirmation.id}/cancel`, USERS.jordan, {});
@@ -146,9 +146,9 @@ describe('human confirmation for SAP writes', () => {
 
 describe('role-based access', () => {
   it('denies agents and tiers the user is not entitled to', async () => {
-    const auditor = await stack.chat(USERS.casey, { message: 'hello', agent: 'fico' });
+    const auditor = await stack.chat(USERS.casey, { message: 'hello', agent: 'fi-ap' });
     expect(auditor.status).toBe(403);
-    const tier = await stack.chat(USERS.jordan, { message: 'hello', agent: 'fico', modelTier: 'advanced' });
+    const tier = await stack.chat(USERS.jordan, { message: 'hello', agent: 'fi-ap', modelTier: 'advanced' });
     expect(tier.status).toBe(403);
   });
 
@@ -185,5 +185,47 @@ describe('file uploads', () => {
     expect(res.status).toBe(400);
     const res2 = await upload('evil.exe', 'MZ...');
     expect(res2.status).toBe(400);
+  });
+});
+
+describe('agents by SAP module', () => {
+  it('offers one agent per module', async () => {
+    const workspace = await stack.request('GET', '/api/v1/workspace', USERS.jordan);
+    const ids = (workspace.json.agents as { id: string }[]).map((a) => a.id);
+    expect(ids).toEqual(['general', 'sd', 'credit', 'fi-ar', 'mm', 'fi-ap', 'fi-gl', 'controls', 'maintenance']);
+  });
+
+  it('keeps conversations of a former agent id working', async () => {
+    const { status, events } = await stack.chat(USERS.jordan, { message: 'Why is invoice 5100012345 blocked?', agent: 'fico' });
+    expect(status).toBe(200);
+    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('mm_getInvoice');
+    expect((await stack.chat(USERS.jordan, { message: 'Check purchase order 4500012345', agent: 'procurement' })).status).toBe(200);
+  });
+
+  it('traces order-to-cash with the SD agent', async () => {
+    const { events } = await stack.chat(USERS.jordan, { message: 'Show the document flow of sales order 648.', agent: 'sd' });
+    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('sd_getSalesOrderFlow');
+    expect(ofType(events, 'component').map((c) => c.component.type)).toEqual(['sales_order', 'timeline']);
+    expect(ofType(events, 'source')[0]!.source).toMatchObject({ objectType: 'SalesOrder', objectId: '648', mock: true });
+  });
+
+  it('shows cleared and open customer items with the FI-AR agent', async () => {
+    const { events } = await stack.chat(USERS.jordan, { message: 'Show all line items of customer 7000000010 in company code 1030.', agent: 'fi-ar' });
+    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('ar_listCustomerOpenItems');
+    const card = ofType(events, 'component').find((c) => c.component.type === 'open_items');
+    expect(card?.component.data).toMatchObject({ accountType: 'CUSTOMER', account: '7000000010', total: { amount: 2500, currency: 'SAR' } });
+  });
+
+  it('scopes tools to the module: the SD agent cannot read supplier invoices', async () => {
+    const { events } = await stack.chat(USERS.jordan, { message: 'Why is invoice 5100012345 blocked?', agent: 'sd' });
+    expect(ofType(events, 'tool.start')).toHaveLength(0);
+  });
+
+  it('keeps the controls agent read-only', async () => {
+    const { events } = await stack.chat(USERS.alex, { message: 'Release the payment block on invoice 5100012345.', agent: 'controls' });
+    expect(ofType(events, 'confirmation.required')).toHaveLength(0);
+    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('mm_getInvoice');
+    const overdue = await stack.chat(USERS.jordan, { message: 'Which receivables are overdue in company code 1030?', agent: 'controls' });
+    expect(ofType(overdue.events, 'tool.start')[0]!.tool.tool).toBe('ar_listOverdueReceivables');
   });
 });
