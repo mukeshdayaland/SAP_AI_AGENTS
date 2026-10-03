@@ -3,7 +3,7 @@ import type { PurchaseOrder } from '../sap/model.js';
 import { companyCode } from './line-items.js';
 import { defineTool, fmt, now, type ToolContext } from './types.js';
 
-const poNumber = z.string().regex(/^\d{10}$/).describe('Purchase order number, e.g. 4500012345');
+export const poNumber = z.string().regex(/^\d{10}$/).describe('Purchase order number, e.g. 4500012345');
 
 const quantity = z.coerce.number().positive().max(1_000_000).describe('Quantity in the order unit');
 const supplier = z.string().regex(/^[A-Z0-9]{1,10}$/i).describe('SAP supplier / business partner number, e.g. 7002200010');

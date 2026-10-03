@@ -56,7 +56,7 @@ export function Sidebar(p: Props) {
           {!collapsed && (
             <div className="flex items-center gap-2.5">
               <ProwessMark size={26} />
-              <span className="text-[15px] font-semibold tracking-tight text-ink">Prowess AI</span>
+              <span className="text-[14px] font-semibold tracking-tight text-ink">Prowess AI</span>
             </div>
           )}
           <span className="hidden md:inline-flex">
@@ -85,7 +85,7 @@ export function Sidebar(p: Props) {
           {!collapsed &&
             groups.map((g) => (
               <section key={g.label} className="mt-3 first:mt-1" aria-label={g.label}>
-                <h3 className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-3">{g.label}</h3>
+                <h3 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-3">{g.label}</h3>
                 <ul>
                   {g.items.map((c) => (
                     <li key={c.id} className="group relative">
@@ -154,7 +154,7 @@ export function Sidebar(p: Props) {
                 </ul>
               </section>
             ))}
-          {!collapsed && !groups.length && <p className="px-2 pt-2 text-[13px] text-ink-3">Your conversations will appear here.</p>}
+          {!collapsed && !groups.length && <p className="px-2 pt-2 text-[12px] text-ink-3">Your conversations will appear here.</p>}
         </div>
 
         <div className="border-t border-line p-2">

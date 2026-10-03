@@ -16,7 +16,33 @@ authorizes them, and the MCP server executes them against SAP.
 | SD | `sd_createDelivery` | HIGH_IMPACT | Confirmation required. Outbound delivery for a sales order (VL01N) |
 | SD | `sd_postGoodsIssue` | HIGH_IMPACT | Confirmation required. Reduces stock, posts cost of goods sold |
 | SD | `sd_createBillingDocument` | HIGH_IMPACT | Confirmation required. Bills the goods-issued delivery (VF01) and posts it to accounting |
+| SD | `sd_simulateSalesOrder` | READ | Price, availability and credit check for an order that is not saved |
+| SD | `sd_createSalesOrder` | HIGH_IMPACT | Confirmation required. Standard order for one material (VA01) |
+| SD | `sd_releaseCreditBlock` | HIGH_IMPACT | Confirmation required. Demo gateway only; not available through the released S/4HANA APIs |
+| SD | `sd_reverseGoodsIssue` | HIGH_IMPACT | Confirmation required. Reverses the goods issue of a delivery (VL09) |
+| SD | `sd_cancelBillingDocument` | HIGH_IMPACT | Confirmation required. Demo gateway only; cancel in SAP with VF11 |
+| SD | `sd_createCreditMemoRequest` | BUSINESS_WRITE | Confirmation required. Request for the full value of a billing document |
 | Credit | `credit_getCreditExposure` | READ | Credit limit, exposure, utilization, risk class |
+| FI-AR | `ar_getAging` | READ | Open receivables per customer by days overdue |
+| FI-AR | `ar_proposeClearing` | READ | Customers whose open items offset each other; nothing is cleared |
+| FI-AP | `ap_getAging` | READ | Open payables by days overdue at a key date, with totals per supplier |
+| FI-AP | `ap_listInvoiceApprovals` | READ | Supplier invoices with status, block and approver |
+| FI-AP | `ap_getPaymentRunProposal` | READ | Payment run (F110) proposal: items to be paid and exceptions. The run is never released here |
+| FI-AP | `ap_proposeClearing` | READ | Suppliers whose open items offset each other; nothing is cleared |
+| FI-GL | `gl_searchGLAccounts` | READ | G/L account numbers by a part of the account name |
+| FI-GL | `gl_getAccountActivity` | READ | Debit and credit postings per G/L account for a period range |
+| FI-GL | `gl_listGRIRCases` | READ | Purchase order items with an open GR/IR balance, with root cause |
+| FI-GL | `gl_getBankReconciliation` | READ | Open bank statement items per house bank account |
+| FI-GL | `gl_getDepreciationOverview` | READ | Posted and not yet posted depreciation per fixed asset |
+| FI-GL | `gl_clearOpenItems` | HIGH_IMPACT | Confirmation required. Clears the open items of one customer or supplier that offset to zero (F-32 / F-44) |
+| FI-GL | `gl_postJournalEntry` | HIGH_IMPACT | Confirmation required. Balanced manual G/L entry (FB50) |
+| Credit | `credit_listCreditBlockedOrders` | READ | Sales orders blocked by the credit check |
+| FI-AR | `ar_requestIncomingPayment` | BUSINESS_WRITE | Confirmation required. Creates a payment request (F-28); nothing is posted yet |
+| FI-AP | `ap_requestOutgoingPayment` | BUSINESS_WRITE | Confirmation required. Creates a payment request (F-53); nothing is posted yet |
+| FI-GL | `gl_listPaymentRequests` | READ | Approval queue: waiting, approved, posted, rejected |
+| FI-GL | `gl_approvePaymentRequest` | HIGH_IMPACT | Confirmation required. SAP refuses approval by the creator of the request |
+| FI-GL | `gl_rejectPaymentRequest` | BUSINESS_WRITE | Confirmation required |
+| FI-GL | `gl_postPaymentRequest` | HIGH_IMPACT | Confirmation required. Posts an approved request as a payment on account (DZ / KZ) |
 | FI-AR | `ar_getCustomer` | READ | Customer master, blocks, open and overdue receivables |
 | FI-AR | `ar_listCustomerOpenItems` | READ | Customer line items, open / cleared / all (FBL5N) |
 | FI-AR | `ar_listOverdueReceivables` | READ | Overdue customer items across a company code |
@@ -38,6 +64,8 @@ authorizes them, and the MCP server executes them against SAP.
 | MM | `mm_createPurchaseOrder` | HIGH_IMPACT | Confirmation required. Standard order; price from the info record unless given (ME21N) |
 | MM | `mm_postGoodsReceipt` | HIGH_IMPACT | Confirmation required. Receives the open quantity of a purchase order (MIGO, movement 101) |
 | MM | `mm_createSupplierInvoice` | HIGH_IMPACT | Confirmation required. Invoice for the received quantity (MIRO); SAP blocks it for payment on a variance |
+| MM | `mm_reverseGoodsReceipt` | HIGH_IMPACT | Confirmation required. Reverses the latest goods receipt of a purchase order |
+| MM | `mm_reverseSupplierInvoice` | HIGH_IMPACT | Confirmation required. Reverses a posted supplier invoice (MR8M) |
 | MM | `mm_addInvoiceNote` | LOW_RISK_WRITE | Confirmation required |
 | MM | `mm_releaseInvoicePaymentBlock` | HIGH_IMPACT | Confirmation required; SAP release authorization |
 | PM | `pm_getEquipment`, `pm_getNotification`, `pm_getWorkOrder`, `pm_getMaintenanceHistory` | READ | |

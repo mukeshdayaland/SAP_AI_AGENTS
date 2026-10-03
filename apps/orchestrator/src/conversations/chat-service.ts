@@ -25,6 +25,7 @@ import type { ToolPolicy } from '../security/tool-policy.js';
 import { today, type QuotaService } from '../usage/limits.js';
 import { WORKFLOW_TOOL, type WorkflowService } from '../workflows/workflow-service.js';
 import { newId, titleFrom, toConfirmation } from './mappers.js';
+import { failureForModel, failureNotice, noticeKind } from './notice.js';
 import { preparePendingAction } from './pending-action.js';
 
 export interface ChatDeps {
@@ -306,6 +307,18 @@ export class ChatService {
     }
   }
 
+  /** Shows a failed SAP call to the user as a notice card. The same failure is shown once per answer. */
+  private notify(turn: PreparedTurn, state: TurnState, emit: Emit, code: string | undefined, message: string | undefined): void {
+    const component = failureNotice({ code, message, correlationId: turn.correlationId, retryPrompt: turn.userTurn });
+    // A workflow run card that already states the same reason is not repeated as a notice.
+    const shown = state.components.some(
+      (c) => (c.type === 'notice' && c.data.kind === component.data.kind && c.data.message === component.data.message) || (c.type === 'workflow_run' && c.data.reason === component.data.message),
+    );
+    if (shown) return;
+    state.components.push(component);
+    emit({ type: 'component', component });
+  }
+
   private async runToolCall(
     turn: PreparedTurn,
     call: ToolCall,
@@ -346,10 +359,11 @@ export class ChatService {
         signal,
       });
       if (!prepared.ok) {
-        const m: ToolExecutionMetadata = { ...meta, durationMs: prepared.durationMs, status: 'error', correlationId: turn.correlationId, mock: false };
+        const m: ToolExecutionMetadata = { ...meta, durationMs: prepared.durationMs, status: noticeKind(prepared.code) === 'NOT_AUTHORIZED' ? 'denied' : 'error', correlationId: turn.correlationId, mock: false };
         state.tools.push(m);
         emit({ type: 'tool.error', tool: m, message: prepared.message });
-        return { content: JSON.stringify({ error: prepared.message }), isError: true };
+        this.notify(turn, state, emit, prepared.code, prepared.message);
+        return { content: failureForModel(prepared.message), isError: true };
       }
       const confirmation = toConfirmation(prepared.action);
       state.confirmations.push(confirmation);
@@ -375,7 +389,7 @@ export class ChatService {
       followUps?: { label: string; prompt: string }[];
     };
     const mock = structured.source?.mock ?? false;
-    const m: ToolExecutionMetadata = { ...meta, durationMs: out.durationMs, status: out.ok ? 'success' : 'error', correlationId: turn.correlationId, mock };
+    const m: ToolExecutionMetadata = { ...meta, durationMs: out.durationMs, status: out.ok ? 'success' : noticeKind(out.errorCode) === 'NOT_AUTHORIZED' ? 'denied' : 'error', correlationId: turn.correlationId, mock };
     state.tools.push(m);
     M.toolCalls().inc({ tool: tool.name, outcome: out.ok ? 'success' : (out.errorCode ?? 'error'), side: 'client' });
 
@@ -394,7 +408,8 @@ export class ChatService {
 
     if (!out.ok) {
       emit({ type: 'tool.error', tool: m, message: out.errorMessage ?? 'The tool failed.' });
-      return { content: JSON.stringify({ error: out.errorMessage, code: out.errorCode }), isError: true };
+      this.notify(turn, state, emit, out.errorCode, out.errorMessage);
+      return { content: failureForModel(out.errorMessage), isError: true };
     }
 
     for (const candidate of structured.components ?? []) {

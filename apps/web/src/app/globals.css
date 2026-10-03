@@ -175,6 +175,11 @@ body {
   height: 100%;
 }
 
+/* Base size one step below the browser default: every rem-based size scales with it. */
+html {
+  font-size: 15px;
+}
+
 body {
   background: var(--background);
   color: var(--text-primary);

@@ -72,6 +72,239 @@ describe('OData V4: billing document', () => {
   });
 });
 
+describe('OData V4: payment request service', () => {
+  const ID = '0a1b2c3d-1111-4222-8333-444455556666';
+  const BASE = '/sap/opu/odata4/sap/zapi_fi_agentpayment_o4/srvd/sap/zapi_fi_agentpayment/0001';
+  const entity = (status: string, extra: Record<string, unknown> = {}) => ({ PaymentUUID: ID, PaymentDirection: 'I', CompanyCode: '1030', Customer: '7000000010', Supplier: '', BankGLAccount: '220001', Amount: 2500, Currency: 'SAR', Status: status, FiscalYear: '0000', CreatedBy: 'JORDAN', CreatedAt: '2026-10-02T10:00:00Z', ...extra });
+  const customer = { d: { Customer: '7000000010', CustomerName: 'Local Customer-01' } };
+
+  it('creates a request for an incoming payment', async () => {
+    sdk.reply = (r) => (r.url.includes('/odata4/') ? entity('N') : customer);
+    const request = await gateway.createPaymentRequest(ctx, { direction: 'INCOMING', companyCode: '1030', partner: '7000000010', amount: 2500, currency: 'SAR', bankAccount: '220001', reference: 'BANK-0001', text: 'A header text that is longer than SAP allows' });
+
+    expect(sdk.sent[0]!.request).toMatchObject({ method: 'post', url: `${BASE}/Payment` });
+    expect(sdk.sent[0]!.request.data).toEqual({ PaymentDirection: 'I', CompanyCode: '1030', Customer: '7000000010', BankGLAccount: '220001', Amount: 2500, Currency: 'SAR', DocumentReferenceID: 'BANK-0001', HeaderText: 'A header text that is lon' });
+    expect(request).toMatchObject({ id: ID, direction: 'INCOMING', status: 'NEW', partnerName: 'Local Customer-01', amount: { amount: 2500, currency: 'SAR' }, createdBy: 'JORDAN', createdOn: '2026-10-02' });
+    expect(request.fiscalYear).toBeUndefined();
+  });
+
+  it('calls the bound actions with an ETag and reads the request again for the document number', async () => {
+    sdk.reply = (r) => (r.method === 'post' ? {} : r.url.includes('/odata4/') ? entity('P', { AccountingDocument: '1400000012', FiscalYear: '2026', ApprovedBy: 'ALEX' }) : customer);
+    const posted = await gateway.postPaymentRequest(ctx, ID.toUpperCase());
+
+    expect(sdk.sent[0]!.request).toMatchObject({ method: 'post', url: `${BASE}/Payment(${ID})/SAP__self.post`, data: {} });
+    expect(sdk.sent[0]!.request.headers).toMatchObject({ 'if-match': '*', 'content-type': 'application/json' });
+    expect(sdk.sent[1]!.request).toMatchObject({ method: 'get', url: `${BASE}/Payment(${ID})` });
+    expect(posted).toMatchObject({ status: 'POSTED', accountingDocument: '1400000012', fiscalYear: '2026', approvedBy: 'ALEX' });
+
+    sdk.sent.length = 0;
+    await gateway.approvePaymentRequest(ctx, ID);
+    await gateway.rejectPaymentRequest(ctx, ID);
+    expect(sdk.sent.filter((s) => s.request.method === 'post').map((s) => s.request.url.split('/').at(-1))).toEqual(['SAP__self.approve', 'SAP__self.reject']);
+  });
+
+  it('filters the approval queue and refuses anything but a UUID as key', async () => {
+    sdk.reply = (r) => (r.url.includes('/odata4/') ? { value: [entity('N')] } : customer);
+    expect(await gateway.listPaymentRequests(ctx, { companyCode: '1030', status: 'NEW' })).toHaveLength(1);
+    expect(sdk.sent[0]!.request.params).toEqual({ $filter: "CompanyCode eq '1030' and Status eq 'N'", $orderby: 'CreatedAt desc', $top: '50' });
+
+    sdk.sent.length = 0;
+    await expect(gateway.getPaymentRequest(ctx, "1)/Payment('x")).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    expect(sdk.sent).toHaveLength(0);
+  });
+
+  it("passes on SAP's reason when the creator tries to approve", async () => {
+    sdk.reply = () => {
+      throw rejected(400, { error: { code: 'ZFI/001', message: 'The creator of a payment request cannot approve it' } });
+    };
+    await expect(gateway.approvePaymentRequest(ctx, ID)).rejects.toMatchObject({ code: 'BUSINESS_RULE', message: `SAP rejected Approval of payment request ${ID}: The creator of a payment request cannot approve it` });
+  });
+});
+
+describe('OData V2: sales order entry, reversals and G/L totals', () => {
+  const posted = () => sdk.sent.find((s) => s.request.method === 'post')!;
+  const order = { soldTo: '7000000010', material: '5496', quantity: 10, salesOrganization: '1030', distributionChannel: '10', division: '00' };
+
+  it('creates a sales order', async () => {
+    sdk.reply = (r) => {
+      if (r.method === 'post') return { d: { SalesOrder: '651' } };
+      if (r.url.includes('A_SalesOrder')) return { d: { SalesOrder: '651', SoldToParty: '7000000010', to_Item: { results: [] } } };
+      return { d: { Customer: '7000000010', CustomerName: 'Local Customer-01' } };
+    };
+    const created = await gateway.createSalesOrder(ctx, { ...order, customerReference: 'PO-77', requestedDeliveryDate: '2026-10-15' });
+
+    expect(posted().request.url).toBe('/sap/opu/odata/sap/API_SALES_ORDER_SRV/A_SalesOrder');
+    expect(posted().request.data).toEqual({
+      SalesOrderType: 'OR',
+      SalesOrganization: '1030',
+      DistributionChannel: '10',
+      OrganizationDivision: '00',
+      SoldToParty: '7000000010',
+      PurchaseOrderByCustomer: 'PO-77',
+      RequestedDeliveryDate: `/Date(${Date.UTC(2026, 9, 15)})/`,
+      to_Item: { results: [{ Material: '5496', RequestedQuantity: '10' }] },
+    });
+    expect(created.number).toBe('651');
+  });
+
+  it('simulates a sales order and reads price, confirmation and credit status', async () => {
+    sdk.reply = (r) =>
+      r.method === 'post'
+        ? { d: { to_Pricing: { TotalNetAmount: '5000.00', TransactionCurrency: 'SAR' }, to_Credit: { TotalCreditCheckStatus: 'B' }, to_Item: { results: [{ Material: '5496', RequestedQuantity: '10', RequestedQuantityUnit: 'PC', NetAmount: '5000.00', ConfdDelivQtyInOrderQtyUnit: '4' }] } } }
+        : { d: { Customer: '7000000010', CustomerName: 'Local Customer-01' } };
+    const sim = await gateway.simulateSalesOrder(ctx, order);
+
+    expect(posted().request.url).toBe('/sap/opu/odata/sap/API_SALES_ORDER_SIMULATION_SRV/A_SalesOrderSimulation');
+    expect(sim).toMatchObject({ soldToName: 'Local Customer-01', netValue: { amount: 5000, currency: 'SAR' }, creditStatus: 'BLOCKED', items: [{ quantity: 10, unit: 'PC', confirmedQuantity: 4 }] });
+  });
+
+  it('reverses a goods receipt, a supplier invoice and a goods issue through the function imports', async () => {
+    const day = expect.stringMatching(/^datetime'\d{4}-\d{2}-\d{2}T00:00:00'$/);
+
+    sdk.reply = () => ({ d: { MaterialDocument: '5000000013', MaterialDocumentYear: '2026' } });
+    expect(await gateway.reverseGoodsReceipt(ctx, '5000000012', '2026')).toEqual({ document: '5000000013', year: '2026', reversedDocument: '5000000012' });
+    expect(sdk.sent[0]!.request).toMatchObject({ method: 'post', url: '/sap/opu/odata/sap/API_MATERIAL_DOCUMENT_SRV/Cancel' });
+    expect(sdk.sent[0]!.request.params).toEqual({ MaterialDocumentYear: "'2026'", MaterialDocument: "'5000000012'", PostingDate: day });
+
+    sdk.sent.length = 0;
+    sdk.reply = () => ({ d: { Cancel: { ReverseDocument: '5105600009', FiscalYear: '2026' } } });
+    expect(await gateway.reverseSupplierInvoice(ctx, '5105600003', '2026', '01')).toEqual({ document: '5105600009', year: '2026', reversedDocument: '5105600003' });
+    expect(sdk.sent[0]!.request.url).toBe('/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Cancel');
+    expect(sdk.sent[0]!.request.params).toEqual({ FiscalYear: "'2026'", SupplierInvoice: "'5105600003'", ReversalReason: "'01'", PostingDate: day });
+
+    sdk.sent.length = 0;
+    sdk.reply = (r) => (r.url.includes('A_OutbDeliveryHeader') ? { d: { DeliveryDocument: '80000258', OverallGoodsMovementStatus: 'A', to_DeliveryDocumentItem: { results: [] } } } : {});
+    expect((await gateway.reverseGoodsIssue(ctx, '80000258')).goodsIssueStatus).toBe('NOT_STARTED');
+    expect(sdk.sent[0]!.request.url).toBe('/sap/opu/odata/sap/API_OUTBOUND_DELIVERY_SRV;v=0002/ReverseGoodsIssue');
+    expect(sdk.sent[0]!.request.headers).toMatchObject({ 'if-match': '*' });
+  });
+
+  it('says clearly what the released APIs cannot do', async () => {
+    await expect(gateway.cancelBillingDocument()).rejects.toMatchObject({ code: 'NOT_SUPPORTED' });
+    await expect(gateway.releaseCreditBlock()).rejects.toMatchObject({ code: 'NOT_SUPPORTED' });
+    expect(sdk.sent).toHaveLength(0);
+  });
+
+});
+
+describe('OData V2: finance analysis services', () => {
+  const posts = () => sdk.sent.filter((s) => s.request.method === 'post').map((s) => s.request);
+
+  it('reads the G/L balance with the carry-forward from the balance service', async () => {
+    const row = (period: string, debit: string, credit: string, accumulated: string) => ({ GLAccount: '500030', GLAccountName: 'GR/IR Clearing', LedgerFiscalPeriod: period, DebitAmountInCompanyCodeCrcy: debit, CreditAmountInCoCodeCrcy: credit, AccmltdBalAmtInCoCodeCrcy: accumulated, CompanyCodeCurrency: 'SAR' });
+    sdk.reply = () => ({ d: { results: [row('000', '0', '0', '-400.00'), row('009', '3000.00', '-2250.00', '350.00'), row('010', '100.00', '0', '450.00'), row('999', '3100.00', '-2250.00', '450.00')] } });
+    const balance = await gateway.getGLBalance(ctx, '500030', '1030', '2026', '9');
+
+    expect(sdk.sent[0]!.request.url).toBe('/sap/opu/odata/sap/FAC_GL_ACCOUNT_BALANCE_SRV/GL_ACCOUNT_BALANCESet');
+    expect(sdk.sent[0]!.request.params).toMatchObject({ $filter: "Ledger eq '0L' and CompanyCode eq '1030' and LedgerFiscalYear eq '2026' and GLAccount eq '500030'" });
+    // Period 9: its postings, and the accumulated balance including the carry-forward of -400.
+    expect(balance).toMatchObject({ description: 'GR/IR Clearing', period: '009', debit: { amount: 3000 }, credit: { amount: 2250 }, balance: { amount: 350, currency: 'SAR' } });
+    expect((await gateway.getGLBalance(ctx, '500030', '1030', '2026')).balance.amount).toBe(450);
+
+    sdk.reply = () => ({ d: { results: [] } });
+    await expect(gateway.getGLBalance(ctx, '999999', '1030', '2026')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('applies the period range of the G/L activity itself and searches account names in upper case', async () => {
+    const row = (account: string, period: string, debit: string, credit: string) => ({ GLAccount: account, GLAccountName: account, LedgerFiscalPeriod: period, DebitAmountInCompanyCodeCrcy: debit, CreditAmountInCoCodeCrcy: credit, CompanyCodeCurrency: 'SAR' });
+    sdk.reply = () => ({ d: { results: [row('700000', '000', '0', '-9'), row('700000', '008', '0', '-100'), row('700000', '009', '0', '-5000'), row('200041', '009', '10000', '0'), row('700000', '999', '0', '-5109')] } });
+    expect(await gateway.getAccountActivity(ctx, '1030', '2026', '9', '9')).toEqual([
+      { account: '200041', name: '200041', debit: 10000, credit: 0, net: 10000, currency: 'SAR' },
+      { account: '700000', name: '700000', debit: 0, credit: 5000, net: -5000, currency: 'SAR' },
+    ]);
+    expect(sdk.sent[0]!.request.params!.$filter).toBe("Ledger eq '0L' and CompanyCode eq '1030' and LedgerFiscalYear eq '2026'");
+
+    sdk.sent.length = 0;
+    sdk.reply = () => ({ d: { results: [{ GLAccountExternal: '220001', GLAccount_Text: 'ALINMA BANK', CompanyCode: '1030', ChartOfAccounts: 'ACGC' }, { GLAccountExternal: '220001', GLAccount_Text: 'ALINMA BANK', CompanyCode: '1030', ChartOfAccounts: 'ACGC' }] } });
+    expect(await gateway.searchGLAccounts(ctx, "ba'nk", '1030')).toHaveLength(1);
+    expect(sdk.sent[0]!.request.url).toBe('/sap/opu/odata/sap/FAC_GL_DOCUMENT_POST_SRV/FAC_POST_JOUR_ENTRY_GLACCT_VH');
+    expect(sdk.sent[0]!.request.params!.$filter).toBe("CompanyCode eq '1030' and substringof('BA''NK',GLAccount_Text)");
+  });
+
+  it('ages receivables through the parameterized view and payables from the open supplier items', async () => {
+    sdk.reply = () => ({ d: { results: [{ Customer: '7000000010', TotalAmountInDisplayCrcy: '2500', NetDueIntvl2AmtInDspCrcy: '500', NetDueIntvl3AmtInDspCrcy: '0', NetDueIntvl4AmtInDspCrcy: '1000', DisplayCurrency: 'SAR' }, { Customer: '7000000010', TotalAmountInDisplayCrcy: '100' }] } });
+    expect(await gateway.getReceivablesAging(ctx, '1030', 'SAR')).toEqual([{ customer: '7000000010', total: 2600, upTo30: 1100, days31to60: 500, days61to90: 0, over90: 1000, currency: 'SAR' }]);
+    expect(sdk.sent[0]!.request.url).toBe("/sap/opu/odata/sap/C_ARAGINGANALYSISOVW_CDS/C_ARAGINGANALYSISOVW(P_DisplayCurrency='SAR',P_NetDueInterval1InDays='30',P_NetDueInterval2InDays='60',P_NetDueInterval3InDays='90')/Results");
+    await expect(gateway.getReceivablesAging(ctx, '1030', "S'R")).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+
+    sdk.sent.length = 0;
+    const item = (dc: string, amount: string, due: number) => ({ Supplier: '7002200010', SupplierName: 'AL-QASSIM', DebitCreditCode: dc, AmountInCompanyCodeCurrency: amount, CompanyCodeCurrency: 'SAR', NetDueDate: `/Date(${due})/` });
+    sdk.reply = () => ({ d: { results: [item('H', '-1120.00', Date.UTC(2026, 8, 23)), item('H', '-3360.00', Date.UTC(2026, 9, 20)), item('S', '200.00', Date.UTC(2026, 5, 1))] } });
+    const aging = await gateway.getPayablesAging(ctx, '1030', '2026-10-02');
+    expect(sdk.sent[0]!.request.url).toBe('/sap/opu/odata/sap/FAP_VENDOR_LINE_ITEMS_SRV/Items');
+    expect(sdk.sent[0]!.request.params!.$filter).toBe("CompanyCode eq '1030' and ClearingStatus eq '2'");
+    expect(aging.buckets).toEqual([
+      { bucket: 'Not due', amount: 3360, items: 1 },
+      { bucket: '1-30 days', amount: 1120, items: 1 },
+      { bucket: '31-60 days', amount: 0, items: 0 },
+      { bucket: '61-90 days', amount: 0, items: 0 },
+      { bucket: 'Over 90 days', amount: -200, items: 1 },
+    ]);
+    expect(aging.suppliers).toEqual([{ supplier: '7002200010', name: 'AL-QASSIM', amount: 4280, overdue: 920, items: 3 }]);
+  });
+
+  it('reads the payment run proposal, its items and its exceptions', async () => {
+    sdk.reply = (r) => {
+      if (r.url.endsWith('PaymentSummarySet')) return { d: { results: [{ PaymentRunId: 'PRW01', PaymentRunIsProposal: true, Currency: 'SAR', AmountInCompanyCodeCurrency: '-1120.00' }] } };
+      if (r.url.endsWith('PaymentItemSet')) return { d: { results: [{ PaymentRunId: 'PRW01', Supplier: '7002200010', AccountingDocument: '2001000', NetAmountInCoCodeCurrency: '-1120.00', Currency: 'SAR' }] } };
+      return { d: { results: [{ PaymentRunId: 'PRW01', Supplier: '7002200010', AccountingDocument: '2001002', PaymentBlockingReason: 'R', SystemMessageDescription: 'Item is blocked for payment', AmountInTransactionCurrency: '-3900.00', Currency: 'SAR' }] } };
+    };
+    const proposal = await gateway.getPaymentRunProposal(ctx, '1030', 'PRW01');
+    expect(sdk.sent.map((s) => s.request.params!.$filter).sort()).toEqual(["CompanyCode eq '1030' and PaymentRunId eq 'PRW01'", "CompanyCode eq '1030' and PaymentRunId eq 'PRW01'", "PayingCompanyCode eq '1030' and PaymentRunId eq 'PRW01'"]);
+    expect(proposal.runs).toEqual([{ runId: 'PRW01', isProposal: true, amount: { amount: 1120, currency: 'SAR' } }]);
+    expect(proposal.items[0]).toMatchObject({ document: '2001000', amount: { amount: 1120 } });
+    expect(proposal.exceptions[0]).toMatchObject({ blockingReason: 'R', message: 'Item is blocked for payment', amount: { amount: 3900 } });
+  });
+
+  it('reads depreciation per asset through the parameterized value views', async () => {
+    sdk.reply = (r) => {
+      if (r.url.includes('C_FixedAssetMaintain')) return { d: { results: [{ MasterFixedAsset: '100000000010', FixedAsset: '0', FixedAssetDescription: 'Forklift truck' }] } };
+      if (r.url.includes('C_FxdAstDeprValueByCrcyRole')) return { d: { results: [{ FiscalPeriod: '009', DepreciationStatus: '2', OrdinaryDeprAmtInDspCrcy: '-1000', Currency: 'SAR' }, { FiscalPeriod: '010', DepreciationStatus: '1', OrdinaryDeprAmtInDspCrcy: '-1000', Currency: 'SAR' }] } };
+      return { d: { results: [{ EndingBalAmtInDspCrcy: '48000', Currency: 'SAR' }] } };
+    };
+    const overview = await gateway.getDepreciationOverview(ctx, '1030', '2026');
+    expect(sdk.sent[1]!.request.url).toMatch(/^\/sap\/opu\/odata\/sap\/FAA_ASSET_VALUES_OVERVIEW_SRV\/C_FxdAstDeprValueByCrcyRole\(P_MasterFixedAsset='100000000010',P_FixedAsset='0',P_CompanyCode='1030',P_AssetDepreciationArea='01',P_CurrencyRole='10',P_CreationDateTime=datetimeoffset'\d{4}-\d{2}-\d{2}T00:00:00Z',P_FirstFiscalYear='2026'\)\/Results$/);
+    expect(overview.assets).toEqual([{ asset: '100000000010', description: 'Forklift truck', posted: 1000, unposted: 1000, netBookValue: 48000, currency: 'SAR' }]);
+    expect(overview.exceptions).toEqual([{ asset: '100000000010', period: '010', status: 'Planned, not yet posted', amount: 1000, currency: 'SAR' }]);
+  });
+
+  it('clears the open items of an account through the three steps of the posting service', async () => {
+    sdk.reply = (r) => {
+      if (r.url.endsWith('CreateClearingForOpenItem')) return { d: { CreateClearingForOpenItem: { TmpId: 'T1', TmpIdType: 'C' } } };
+      if (r.url.endsWith('/Post')) return { d: { Post: { AccountingDocument: '1600000001', FiscalYear: '2026', CompanyCode: '1030' } } };
+      if (r.url.includes('A_OperationalAcctgDocItemCube')) return { d: { results: [{ CompanyCode: '1030', FiscalYear: '2026', AccountingDocument: '2000016', AccountingDocumentItem: '1', Customer: '7000000010', AmountInCompanyCodeCurrency: '2500', CompanyCodeCurrency: 'SAR' }] } };
+      return {};
+    };
+    expect(await gateway.clearOpenItems(ctx, { companyCode: '1030', accountType: 'CUSTOMER', account: '7000000010' })).toEqual({ document: '1600000001', fiscalYear: '2026', companyCode: '1030' });
+
+    expect(posts().map((r) => r.url.split('/').at(-1))).toEqual(['CreateClearingForOpenItem', 'ActivateItemsToBeCleared', 'Post']);
+    expect(posts()[0]!.params).toEqual({ AccountingDocument: "'2000016'", CompanyCode: "'1030'", FiscalYear: "'2026'", AccountingDocumentItem: "'1'", Account: "'7000000010'", FinancialAccountType: "'D'", ClearingTransaction: "'UMBUCHNG'" });
+    expect(posts()[1]!.params).toMatchObject({ TmpId: "'T1'", TmpIdType: "'C'", Account: "'7000000010'", FinancialAccountType: "'D'" });
+    expect(posts()[2]!.params).toMatchObject({ TmpId: "'T1'", TmpIdType: "'C'" });
+    // This gateway protects writes with X-Requested-With.
+    expect(posts()[0]!.headers).toMatchObject({ 'x-requested-with': 'XMLHttpRequest' });
+  });
+
+  it('posts a journal entry as header, lines and post, and reports when SAP creates no document', async () => {
+    const entry = { companyCode: '1030', currency: 'SAR', postingDate: '2026-10-02', headerText: 'Write-off', lines: [{ glAccount: '200041', debitCredit: 'D' as const, amount: 750, costCenter: '10000' }, { glAccount: '200040', debitCredit: 'C' as const, amount: 750 }] };
+    let document = '100000001';
+    sdk.reply = (r) => {
+      if (r.url.endsWith('FinsPostingGLHeaders')) return { d: { TmpId: 'T2', TmpIdType: 'T' } };
+      if (r.url.endsWith('/Post')) return { d: { Post: { AccountingDocument: document, FiscalYear: '2026', CompanyCode: '1030' } } };
+      return { d: {} };
+    };
+    expect(await gateway.postJournalEntry(ctx, entry)).toEqual({ document: '100000001', fiscalYear: '2026', companyCode: '1030' });
+
+    expect(posts().map((r) => r.url.split('/').at(-1))).toEqual(['FinsPostingGLHeaders', 'FinsPostingGLItems', 'FinsPostingGLItems', 'Post']);
+    expect(posts()[0]!.data).toEqual({ CompanyCode: '1030', AccountingDocumentType: 'SA', DocumentDate: `/Date(${Date.UTC(2026, 9, 2)})/`, PostingDate: `/Date(${Date.UTC(2026, 9, 2)})/`, TransactionCurrency: 'SAR', AccountingDocumentHeaderText: 'Write-off' });
+    expect(posts()[1]!.data).toEqual({ TmpId: 'T2', TmpIdType: 'T', AccountingDocumentItemRef: '1', CompanyCode: '1030', GLAccount: '200041', GLAccountForInput: '200041', DebitAmountInTransCrcy: '750.00', CostCenter: '10000', DocumentItemText: 'Write-off' });
+    expect(posts()[2]!.data).toMatchObject({ AccountingDocumentItemRef: '2', CreditAmountInTransCrcy: '750.00' });
+
+    document = '';
+    await expect(gateway.postJournalEntry(ctx, entry)).rejects.toMatchObject({ code: 'BUSINESS_RULE', message: 'SAP did not post journal entry in company code 1030. Check the document in SAP for the reason.' });
+  });
+});
+
 describe('OData V2: purchase-to-pay postings', () => {
   const odataDate = expect.stringMatching(/^\/Date\(\d+\)\/$/);
   const purchaseOrder = {
@@ -227,7 +460,8 @@ describe('OData V2: delivery and goods issue', () => {
 
     const post = sdk.sent.find((s) => s.request.method === 'post')!;
     expect(post.request.url).toBe('/sap/opu/odata/sap/API_OUTBOUND_DELIVERY_SRV;v=0002/A_OutbDeliveryHeader');
-    expect(post.request.params).toEqual({ $format: 'json' });
+    // No query options on a POST: SAP Gateway rejects $format there.
+    expect(post.request.params).toBeUndefined();
     expect(post.request.data).toEqual({
       to_DeliveryDocumentItem: { results: [{ ReferenceSDDocument: '649', ReferenceSDDocumentItem: '10' }, { ReferenceSDDocument: '649', ReferenceSDDocumentItem: '20' }] },
     });

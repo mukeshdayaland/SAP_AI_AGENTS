@@ -2,10 +2,11 @@ import { z } from 'zod';
 import { SapError, type BillingDocument, type DocumentFlowStep, type OutboundDelivery, type SalesOrder } from '../sap/model.js';
 import { defineTool, fmt, now, type ToolContext } from './types.js';
 
-const salesOrder = z.string().regex(/^\d{1,10}$/).describe('Sales order number, e.g. 648');
+export const salesOrder = z.string().regex(/^\d{1,10}$/).describe('Sales order number, e.g. 648');
+export const billingNumber = z.string().regex(/^\d{1,10}$/).describe('Billing document number, e.g. 90000181');
 const humanize = (s: string) => s.replaceAll('_', ' ').toLowerCase();
 
-function salesOrderComponent(o: SalesOrder) {
+export function salesOrderComponent(o: SalesOrder) {
   const blocks = [
     ...(o.creditStatus === 'BLOCKED' ? ['Credit block'] : []),
     ...(o.deliveryBlock ? [`Delivery block ${o.deliveryBlock}`] : []),
@@ -31,7 +32,7 @@ function salesOrderComponent(o: SalesOrder) {
   };
 }
 
-function deliveryComponent(d: OutboundDelivery) {
+export function deliveryComponent(d: OutboundDelivery) {
   return {
     type: 'outbound_delivery' as const,
     data: {
@@ -78,7 +79,7 @@ function salesOrderSummary(o: SalesOrder) {
 const orderSource = (ctx: ToolContext, number: string) => ({ system: ctx.gateway.systemId, objectType: 'SalesOrder', objectId: number, retrievedAt: now(), mock: ctx.gateway.mock });
 
 /** The delivery of a sales order that is ready for the next step, or a business-rule error that says why there is none. */
-async function findDelivery(ctx: ToolContext, salesOrder: string, ready: (d: OutboundDelivery) => boolean, none: string): Promise<OutboundDelivery> {
+export async function findDelivery(ctx: ToolContext, salesOrder: string, ready: (d: OutboundDelivery) => boolean, none: string): Promise<OutboundDelivery> {
   const flow = await ctx.gateway.getSalesOrderFlow(ctx.sap, salesOrder);
   for (const step of flow.filter((s) => s.category === 'DELIVERY')) {
     const delivery = await ctx.gateway.getDelivery(ctx.sap, step.document);
@@ -87,7 +88,7 @@ async function findDelivery(ctx: ToolContext, salesOrder: string, ready: (d: Out
   throw new SapError('BUSINESS_RULE', none);
 }
 
-const quantities = (items: { quantity: number; unit: string; description: string }[]) => items.map((i) => `${i.quantity} ${i.unit} ${i.description}`).join(', ');
+export const quantities = (items: { quantity: number; unit: string; description: string }[]) => items.map((i) => `${i.quantity} ${i.unit} ${i.description}`).join(', ');
 
 const FLOW_LABEL: Record<DocumentFlowStep['category'], string> = {
   DELIVERY: 'Outbound delivery',
@@ -263,7 +264,7 @@ export const sdTools = [
     risk: 'READ',
     operation: 'SAP_READ',
     statusLabel: 'Retrieving billing document',
-    input: { billingDocument: z.string().regex(/^\d{1,10}$/).describe('Billing document number, e.g. 90000181') },
+    input: { billingDocument: billingNumber },
     async run({ billingDocument }, ctx) {
       const b = await ctx.gateway.getBillingDocument(ctx.sap, billingDocument);
       return {

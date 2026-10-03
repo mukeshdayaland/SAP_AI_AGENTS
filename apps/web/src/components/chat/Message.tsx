@@ -1,9 +1,9 @@
 'use client';
 
 import type { ConfirmationRequest, MessageDTO } from '@prowess/contracts';
-import { Check, Copy, Database, FileText, RefreshCw, ThumbsDown, ThumbsUp, Wrench } from 'lucide-react';
+import { Check, Copy, FileText, RefreshCw, ThumbsDown, ThumbsUp, Wrench, X } from 'lucide-react';
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatDateTime, formatTime } from '@/lib/format';
 import type { ChatMessage } from '@/lib/use-chat';
 import { SapComponent } from '../sap/cards';
@@ -18,7 +18,7 @@ const Markdown = dynamic(() => import('./Markdown'), { ssr: false, loading: () =
 export function UserMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-md border border-area-nonsap/25 bg-area-nonsap-fill px-4 py-2.5 text-[15px] text-ink" title={formatDateTime(message.createdAt)}>
+      <div className="max-w-[min(85%,48rem)] rounded-2xl rounded-br-md border border-area-nonsap/25 bg-area-nonsap-fill px-4 py-2.5 text-[14px] text-ink" title={formatDateTime(message.createdAt)}>
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
         {message.attachments && (
           <ul className="mt-2 flex flex-wrap gap-1.5">
@@ -42,6 +42,8 @@ export function AssistantMessage({
   onRegenerate,
   onRate,
   onConfirmation,
+  onShowDetails,
+  detailsShown,
 }: {
   message: ChatMessage;
   isLast: boolean;
@@ -50,8 +52,12 @@ export function AssistantMessage({
   onRegenerate: () => void;
   onRate: (rating: 'up' | 'down') => void;
   onConfirmation: (c: ConfirmationRequest, messages?: MessageDTO[]) => void;
+  /** On wide screens the details show in the context panel; otherwise they open over the page. */
+  onShowDetails?: () => void;
+  detailsShown?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [details, setDetails] = useState(false);
   const ask = useAsk();
   const streaming = message.status === 'streaming';
   const mock = message.sources.some((s) => s.mock) || message.execution?.tools.some((t) => t.mock);
@@ -83,7 +89,7 @@ export function AssistantMessage({
         )}
 
         {message.content && (
-          <div className={cx('prose-prowess text-ink', streaming && 'streaming-caret')}>
+          <div className={cx('prose-prowess max-w-3xl text-ink', streaming && 'streaming-caret')}>
             <Markdown text={message.content} />
           </div>
         )}
@@ -109,77 +115,18 @@ export function AssistantMessage({
         )}
 
         {!streaming && message.actions.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2" aria-label="Suggested follow-ups">
+          <div className="mt-3 flex max-w-3xl flex-wrap gap-2" aria-label="Suggested follow-ups">
             {message.actions.map((a) => (
               <button
                 key={a.id}
                 type="button"
                 onClick={() => ask(a.prompt)}
-                className="rounded-full border border-brand/40 bg-surface px-3 py-1 text-[13px] font-medium text-brand transition-colors hover:bg-brand-soft"
+                className="rounded-full border border-brand/40 bg-surface px-3 py-1 text-[12px] font-medium text-brand transition-colors hover:bg-brand-soft"
               >
                 {a.label}
               </button>
             ))}
           </div>
-        )}
-
-        {!streaming && message.sources.length > 0 && (
-          <details className="mt-3 overflow-hidden rounded-area border border-area-sap/60 bg-surface text-[13px]">
-            <summary className="flex cursor-pointer items-center gap-2 bg-area-sap-fill px-4 py-2 font-semibold text-ink hover:text-brand">
-              <Database size={13} aria-hidden /> Sources ({message.sources.length})
-            </summary>
-            <ul className="divide-y divide-line border-t border-area-sap/25">
-              {message.sources.map((s) => (
-                <li key={s.id} className="grid grid-cols-1 gap-x-4 gap-y-0.5 px-4 py-2 sm:grid-cols-[1fr_auto]">
-                  <span className="text-ink">
-                    <span className="font-medium">{s.mock ? 'Mock S/4HANA' : 'SAP S/4HANA'}</span> · {s.system} · {s.objectType} <span className="font-mono">{s.objectId}</span>
-                  </span>
-                  <span className="text-ink-3">
-                    Retrieved {formatDateTime(s.retrievedAt)} · {s.agent}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-
-        {!streaming && technical && message.execution && (
-          <details className="mt-2 rounded-area border border-dotted border-area-nonsap/50 text-xs">
-            <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-ink-3 hover:text-ink-2">
-              <Wrench size={12} aria-hidden /> Technical details
-            </summary>
-            <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 border-t border-dotted border-area-nonsap/50 px-3 py-2 font-mono text-ink-2">
-              <dt className="text-ink-3">Agent</dt>
-              <dd>{message.execution.agent}</dd>
-              <dt className="text-ink-3">Model tier</dt>
-              <dd>{message.execution.modelTier}</dd>
-              {message.execution.provider && (
-                <>
-                  <dt className="text-ink-3">Provider</dt>
-                  <dd>
-                    {message.execution.provider} · {message.execution.model}
-                  </dd>
-                </>
-              )}
-              {message.execution.usage && (
-                <>
-                  <dt className="text-ink-3">Tokens</dt>
-                  <dd>
-                    {message.execution.usage.inputTokens} in / {message.execution.usage.outputTokens} out
-                  </dd>
-                </>
-              )}
-              <dt className="text-ink-3">Duration</dt>
-              <dd>{message.execution.durationMs} ms</dd>
-              <dt className="text-ink-3">Correlation ID</dt>
-              <dd className="break-all">{message.execution.correlationId}</dd>
-              {message.execution.tools.map((t) => (
-                <div key={t.id} className="col-span-2 mt-1 rounded border border-line px-2 py-1">
-                  {t.tool} · {t.system} · {t.durationMs} ms · {t.status} · {t.risk}
-                </div>
-              ))}
-            </dl>
-          </details>
         )}
 
         {!streaming && (
@@ -194,6 +141,11 @@ export function AssistantMessage({
                 <RefreshCw size={15} />
               </IconButton>
             )}
+            {technical && message.execution && (
+              <IconButton label="Technical details" active={detailsShown ?? details} onClick={() => (onShowDetails ? onShowDetails() : setDetails(true))} {...(!onShowDetails && { 'aria-haspopup': 'dialog' as const })}>
+                <Wrench size={15} />
+              </IconButton>
+            )}
             {message.status !== 'error' && !message.id.startsWith('__') && (
               <>
                 <IconButton label="Helpful" active={message.feedback === 'up'} onClick={() => onRate('up')} aria-pressed={message.feedback === 'up'}>
@@ -206,7 +158,69 @@ export function AssistantMessage({
             )}
           </div>
         )}
+        {details && message.execution && <TechnicalDetails execution={message.execution} onClose={() => setDetails(false)} />}
       </div>
     </article>
+  );
+}
+
+/** How a response was produced: agent, model, tokens, duration and the SAP tool calls. */
+export function TechnicalDetailsList({ execution }: { execution: NonNullable<ChatMessage['execution']> }) {
+  return (
+    <dl className="space-y-2 font-mono text-[10px] leading-snug text-ink-2">
+      {(
+        [
+          ['Agent', execution.agent],
+          ['Model tier', execution.modelTier],
+          ...(execution.provider ? [['Provider', `${execution.provider} · ${execution.model}`]] : []),
+          ...(execution.usage ? [['Tokens', `${execution.usage.inputTokens} in / ${execution.usage.outputTokens} out`]] : []),
+          ['Duration', `${execution.durationMs} ms`],
+          ['Correlation ID', execution.correlationId],
+        ] as [string, string][]
+      ).map(([label, value]) => (
+        <div key={label}>
+          <dt className="text-ink-3">{label}</dt>
+          <dd className="break-all text-ink">{value}</dd>
+        </div>
+      ))}
+      {execution.tools.length > 0 && (
+        <div>
+          <dt className="text-ink-3">SAP tool calls</dt>
+          {execution.tools.map((t) => (
+            <dd key={t.id} className="mt-1 rounded border border-line px-2 py-1">
+              <span className="block break-all text-ink">{t.tool}</span>
+              {t.system} · {t.durationMs} ms · {t.status} · {t.risk}
+            </dd>
+          ))}
+        </div>
+      )}
+    </dl>
+  );
+}
+
+/** Panel over the right edge with the technical details, for screens without the context panel. */
+function TechnicalDetails({ execution, onClose }: { execution: NonNullable<ChatMessage['execution']>; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden />
+      <aside role="dialog" aria-label="Technical details" className="fixed inset-y-0 right-0 z-50 flex w-[272px] max-w-[85vw] flex-col border-l border-line bg-surface shadow-lift">
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-line px-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+            <Wrench size={14} aria-hidden /> Technical details
+          </h2>
+          <IconButton label="Close" onClick={onClose} autoFocus>
+            <X size={16} />
+          </IconButton>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          <TechnicalDetailsList execution={execution} />
+        </div>
+      </aside>
+    </>
   );
 }

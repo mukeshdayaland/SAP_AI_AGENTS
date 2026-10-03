@@ -17,6 +17,39 @@ interface Intent {
 }
 
 const INTENTS: Intent[] = [
+  { tool: 'clearOpenItems', when: /\bclear\b/i, pattern: /\bcustomer\D{0,12}(\d{4,10})\b/i, args: (m, t) => ({ accountType: 'CUSTOMER', partner: m[1], companyCode: companyCodeIn(t) }) },
+  { tool: 'clearOpenItems', when: /\bclear\b/i, pattern: /\b(?:vendor|supplier)\D{0,12}(\d{4,10})\b/i, args: (m, t) => ({ accountType: 'SUPPLIER', partner: m[1], companyCode: companyCodeIn(t) }) },
+  { tool: 'ar_proposeClearing', when: /\bclearing\b/i, pattern: /\b(customers?|receivables?)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'ap_proposeClearing', when: /\bclearing\b/i, pattern: /\b(suppliers?|vendors?|payables?)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'ar_getAging', when: /\baging\b/i, pattern: /\b(receivables?|customers?|AR)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t), currency: 'SAR' }) },
+  { tool: 'ap_getAging', when: /\baging\b/i, pattern: /\b(payables?|suppliers?|vendors?|AP)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'getPaymentRunProposal', when: /\bpayment (run|proposal)\b/i, pattern: /\bpayment\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'getBankReconciliation', when: /\bbank\b/i, pattern: /\breconcil/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'getDepreciationOverview', when: /\bdepreciation\b/i, pattern: /\bdepreciation\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t), fiscalYear: /\b(20\d{2})\b/.exec(t)?.[1] ?? String(new Date().getFullYear()) }) },
+  { tool: 'listCreditBlockedOrders', when: /\bcredit[- ]blocked\b/i, pattern: /\borders?\b/i, args: () => ({}) },
+  { tool: 'listGRIRCases', when: /\bGR\/?IR\b/i, pattern: /\b(cases?|mismatch\w*|balances?)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
+  { tool: 'searchGLAccounts', when: /\b(find|search|which)\b/i, pattern: /\bG\/?L accounts?\b.*?\b(?:for|named|called|containing|with)\s+["“]?([A-Za-z][A-Za-z /-]{1,30})/i, args: (m, t) => ({ searchText: m[1]!.trim(), companyCode: companyCodeIn(t) }) },
+  { tool: 'approvePaymentRequest', when: /\bapprove\b/i, pattern: /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i, args: (m) => ({ paymentRequest: m[1]!.toLowerCase() }) },
+  { tool: 'rejectPaymentRequest', when: /\breject\b/i, pattern: /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i, args: (m) => ({ paymentRequest: m[1]!.toLowerCase() }) },
+  { tool: 'postPaymentRequest', when: /\bpost\b/i, pattern: /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i, args: (m) => ({ paymentRequest: m[1]!.toLowerCase() }) },
+  {
+    tool: 'listPaymentRequests',
+    when: /\bpayment requests?\b/i,
+    pattern: /\b(list|show|which|what)\b/i,
+    args: (_m, t) => ({ companyCode: companyCodeIn(t), ...(/\b(waiting|approval|approve)\b/i.test(t) && { status: 'NEW' }) }),
+  },
+  {
+    tool: 'requestIncomingPayment',
+    when: /\bincoming payment\b/i,
+    pattern: /\bcustomer\D{0,12}(\d{4,10})\b/i,
+    args: (m, t) => ({ partner: m[1], companyCode: companyCodeIn(t), ...paymentArgsIn(t.replace(m[1]!, '')) }),
+  },
+  {
+    tool: 'requestOutgoingPayment',
+    when: /\boutgoing payment\b/i,
+    pattern: /\b(?:vendor|supplier)\D{0,12}(\d{4,10})\b/i,
+    args: (m, t) => ({ partner: m[1], companyCode: companyCodeIn(t), ...paymentArgsIn(t.replace(m[1]!, '')) }),
+  },
   { tool: 'releaseInvoicePaymentBlock', when: /\b(release|unblock|remove (the )?block)\b/i, pattern: /\b(51\d{8})\b/, args: (m) => ({ invoiceNumber: m[1] }) },
   { tool: 'addInvoiceNote', when: /\b(add|attach|post) (a )?(note|comment)\b/i, pattern: /\b(51\d{8})\b/, args: (m, t) => ({ invoiceNumber: m[1], note: (/["“](.+?)["”]/.exec(t)?.[1] ?? 'Reviewed via Prowess AI').slice(0, 200) }) },
   { tool: 'getPaymentStatus', when: /\bpayment status|paid\b/i, pattern: /\b(51\d{8})\b/, args: (m) => ({ invoiceNumber: m[1] }) },
@@ -94,6 +127,12 @@ const INTENTS: Intent[] = [
 
 /** Company code named in the prompt, else the demo company code of the mock scenarios. */
 const companyCodeIn = (text: string) => /company code (\w{4})/i.exec(text)?.[1] ?? '1030';
+/** Amount ("of 2500") and bank G/L account ("bank account 220001") of a payment request. */
+const paymentArgsIn = (text: string) => ({
+  amount: (/\bof\s+(?:[A-Z]{3}\s*)?(\d[\d,]*(?:\.\d{1,2})?)/i.exec(text)?.[1] ?? '').replaceAll(',', ''),
+  currency: 'SAR',
+  bankAccount: /\bbank account\D{0,6}(\d{6,10})\b/i.exec(text)?.[1] ?? '220001',
+});
 const itemStatusIn = (text: string) => (/\ball\b/i.test(text) ? 'ALL' : /\bcleared\b/i.test(text) ? 'CLEARED' : 'OPEN');
 
 function findTool(tools: ToolSpec[] | undefined, suffix: string): ToolSpec | undefined {
@@ -175,7 +214,8 @@ export class MockProvider implements LLMProvider {
         continue;
       }
       if (r.isError) {
-        lines.push(`I couldn't complete **${r.name.replace(/^[a-z]+_/, '')}**: ${String(data.error ?? parsed.error ?? 'the SAP system returned an error')}.`);
+        // The user already sees the failure as a notice card with the cause and the next step.
+        lines.push('I could not complete this request. The notice above says why and what you can do.');
         continue;
       }
       const summary = typeof data.summary === 'string' ? data.summary : undefined;

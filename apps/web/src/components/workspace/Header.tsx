@@ -26,7 +26,7 @@ function Select({ id, label, value, options, onChange, disabled }: { id: string;
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 appearance-none rounded-lg border border-line bg-surface py-0 pl-2.5 pr-7 text-[13px] font-medium text-ink hover:border-line-strong disabled:opacity-60"
+        className="h-8 appearance-none rounded-lg border border-line bg-surface py-0 pl-2.5 pr-7 text-[12px] font-medium text-ink hover:border-line-strong disabled:opacity-60"
       >
         {options.map((o) => (
           <option key={o.id} value={o.id} title={o.hint}>

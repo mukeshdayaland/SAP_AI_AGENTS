@@ -27,7 +27,7 @@ export function Landing({ config, onStarter }: { config: WorkspaceConfig; onStar
   return (
     <div className="mx-auto my-auto flex w-full max-w-3xl flex-col items-center px-4 py-10 text-center">
       <ProwessMark size={52} />
-      <p className="mt-5 text-[13px] font-semibold uppercase tracking-[0.18em] text-brand">{config.product.name}</p>
+      <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.18em] text-brand">{config.product.name}</p>
       <p className="mt-1 text-sm text-ink-3">{config.product.subtitle}</p>
       <h2 className="mt-6 text-2xl font-bold tracking-tight text-ink sm:text-3xl">
         {greeting()}, {first}. How can I help you today?
@@ -48,7 +48,7 @@ export function Landing({ config, onStarter }: { config: WorkspaceConfig; onStar
                   </span>
                   <span>
                     <span className="block text-sm font-semibold text-ink">{s.label}</span>
-                    <span className="mt-0.5 block text-[13px] text-ink-3 group-hover:text-ink-2">{s.description}</span>
+                    <span className="mt-0.5 block text-[12px] text-ink-3 group-hover:text-ink-2">{s.description}</span>
                   </span>
                 </button>
               </li>

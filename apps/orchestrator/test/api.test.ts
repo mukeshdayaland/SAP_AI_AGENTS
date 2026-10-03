@@ -73,7 +73,25 @@ describe('Invoice analysis vertical slice', () => {
     const { events } = await stack.chat(USERS.alex, { message: 'Show invoice 5100099999', agent: 'fi-ap' });
     const err = ofType(events, 'tool.error')[0]!;
     expect(err.message).toMatch(/not authorized for company code 3000/);
-    expect(ofType(events, 'component')).toHaveLength(0);
+    expect(err.tool.status).toBe('denied');
+
+    // The user gets one notice that says what happened and what to do; no SAP data and no internal code.
+    const components = ofType(events, 'component').map((c) => c.component);
+    expect(components).toHaveLength(1);
+    expect(components[0]).toMatchObject({
+      type: 'notice',
+      data: { kind: 'NOT_AUTHORIZED', title: 'SAP did not allow this', action: expect.stringMatching(/^Ask your SAP authorization team/), reference: expect.stringMatching(/^PRW-/) },
+    });
+    expect((components[0]!.data as { message: string }).message).toMatch(/not authorized for company code 3000/);
+    expect(JSON.stringify(components)).not.toMatch(/SAP_NOT_AUTHORIZED|retryPrompt/);
+  });
+
+  it('explains other failed SAP reads by their cause', async () => {
+    const { events } = await stack.chat(USERS.alex, { message: 'Check purchase order 4599999999', agent: 'mm' });
+    expect(ofType(events, 'tool.error')[0]!.tool.status).toBe('error');
+    expect(ofType(events, 'component').map((c) => c.component)).toEqual([
+      { type: 'notice', data: { kind: 'NOT_FOUND', title: 'Not found in SAP', message: 'Purchase order 4599999999 was not found in SAP.', action: 'Check the number and the company code, then ask again.', reference: expect.stringMatching(/^PRW-/) } },
+    ]);
   });
 });
 

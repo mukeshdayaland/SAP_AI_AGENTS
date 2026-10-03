@@ -64,7 +64,7 @@ applications:
     instances: 1
     buildpacks: [nodejs_buildpack]
     routes:
-      - route: prowess-ai-((env)).((domain))
+      - route: prowess-((env)).((domain))
     env:
       INCOMING_CONNECTION_TIMEOUT: 300000
       destinations: >

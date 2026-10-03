@@ -41,7 +41,7 @@ const STATUS: Record<ActivityEntry['status'], { label: string; tone: Tone }> = {
 function Table({ head, rows, empty }: { head: string[]; rows: ReactNode[][]; empty: string }) {
   return (
     <div className="overflow-x-auto rounded-area border border-line bg-surface">
-      <table className="w-full text-left text-[13px]">
+      <table className="w-full text-left text-[12px]">
         <thead className="bg-muted text-ink-2">
           <tr>
             {head.map((h) => (
@@ -120,7 +120,7 @@ export function HelpCenter() {
             <ArrowLeft size={15} aria-hidden /> Workspace
           </a>
           <ProwessMark size={24} />
-          <h1 className="text-[15px] font-semibold text-ink">Help</h1>
+          <h1 className="text-[14px] font-semibold text-ink">Help</h1>
           <span className="ml-auto">
             <EnvironmentBadge env={config.environment} />
           </span>
@@ -157,7 +157,7 @@ export function HelpCenter() {
                       </span>
                       <h2 className="text-base font-semibold text-ink">{a.name}</h2>
                     </div>
-                    <p className="mt-3 text-[13px] text-ink-2">{a.description}</p>
+                    <p className="mt-3 text-[12px] text-ink-2">{a.description}</p>
                     <p className="mt-3 text-xs text-ink-3">
                       {a.capabilities.length - changes.length} ways to read data · {changes.length} {changes.length === 1 ? 'change' : 'changes'} you confirm
                     </p>
@@ -173,7 +173,7 @@ export function HelpCenter() {
                     {examples.length > 0 && (
                       <div className="mt-4 border-t border-line pt-3">
                         <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-3">Try asking</h3>
-                        <ul className="mt-1.5 space-y-1.5 text-[13px] text-ink">
+                        <ul className="mt-1.5 space-y-1.5 text-[12px] text-ink">
                           {examples.map((s) => (
                             <li key={s.id}>“{s.prompt}”</li>
                           ))}

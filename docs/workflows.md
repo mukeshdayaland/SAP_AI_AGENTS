@@ -39,7 +39,11 @@ Workflows live in `apps/orchestrator/config/workflows.json` and are validated at
 Purchase-to-pay takes the purchase order, the company code, the supplier's invoice number and its gross amount. The
 goods receipt covers the quantity still open; the invoice covers the quantity received, at the order price. If
 invoice verification blocks the invoice for payment (price or quantity variance), the run ends as **blocked** and the
-block is released separately with `mm_releaseInvoicePaymentBlock`. Payment itself is not part of the workflow.
+block is released separately with `mm_releaseInvoicePaymentBlock`.
+
+Payment is not a workflow step. A payment is requested with `ar_requestIncomingPayment` or
+`ap_requestOutgoingPayment`, approved by a second person and then posted, so one user's run could not finish it,
+and repeating a run would create a second request.
 
 ## How a run executes
 

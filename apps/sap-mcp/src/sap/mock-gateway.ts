@@ -17,29 +17,49 @@ import {
   SCENARIO_VENDORS,
 } from './mock-scenarios.js';
 import {
+  AGING_BUCKETS,
   SapError,
+  type AccountActivity,
   type AccountingDocument,
+  type BankReconciliationAccount,
   type BillingDocument,
+  type ClearingRequest,
+  type CreditMemoRequest,
   type CreditProfile,
   type Customer,
+  type DepreciationOverview,
   type DocumentFlowStep,
   type Equipment,
+  type GLAccountInfo,
   type GLBalance,
+  type GRIRCase,
   type GoodsReceipt,
   type InfoRecord,
   type Invoice,
+  type InvoiceApproval,
   type MaintenanceEvent,
   type MaintenanceNotification,
   type MaterialStock,
+  type NewJournalEntry,
   type NewPurchaseOrder,
+  type NewPaymentRequest,
   type NewPurchaseRequisition,
+  type NewSalesOrder,
   type NewSupplierInvoice,
   type OpenItem,
   type OpenItemQuery,
   type OutboundDelivery,
+  type PayablesAging,
+  type PaymentRequest,
+  type PaymentRequestQuery,
+  type PaymentRunProposal,
+  type PostedDocument,
   type PurchaseOrder,
   type PurchaseRequisition,
+  type ReceivablesAging,
+  type Reversal,
   type SalesOrder,
+  type SalesOrderSimulation,
   type SapCallContext,
   type SapGateway,
   type SearchHit,
@@ -230,8 +250,43 @@ const GL: GLBalance[] = [
   },
 ];
 
+/** Chart of accounts of the scenario company code. */
+const GL_ACCOUNTS: GLAccountInfo[] = [
+  { account: '200025', name: 'VAT 12%-PURC TAX', companyCode: '1030', chartOfAccounts: 'ACGC' },
+  { account: '200040', name: 'RAW MATERIAL', companyCode: '1030', chartOfAccounts: 'ACGC' },
+  { account: '200041', name: 'COGS', longName: 'Cost of goods sold', companyCode: '1030', chartOfAccounts: 'ACGC' },
+  { account: '220001', name: 'ALINMA INCOMI A/C', longName: 'Alinma bank incoming account', companyCode: '1030', chartOfAccounts: 'ACGC' },
+  { account: '220002', name: 'BANK OUTGOING A/C', longName: 'Bank outgoing account (assumed)', companyCode: '1030', chartOfAccounts: 'ACGC' },
+  { account: '500030', name: 'GR/IR CLEARING', companyCode: '1030', chartOfAccounts: 'ACGC' },
+  { account: '700000', name: 'SALES', companyCode: '1030', chartOfAccounts: 'ACGC' },
+];
+
+/** Assumed fixed assets, bank accounts and their state: the walkthrough documents do not cover them. */
+const BANK_ACCOUNTS: BankReconciliationAccount[] = [
+  { companyCode: '1030', glAccount: '220001', glAccountName: 'ALINMA INCOMI A/C', houseBank: 'ALIN1', houseBankAccount: 'INC01', openItems: 0, openBalance: { amount: 0, currency: 'SAR' } },
+  { companyCode: '1030', glAccount: '220002', glAccountName: 'BANK OUTGOING A/C', houseBank: 'ALIN1', houseBankAccount: 'OUT01', openItems: 1, openBalance: { amount: -2_240, currency: 'SAR' } },
+];
+const DEPRECIATION: Omit<DepreciationOverview, 'fiscalYear'> = {
+  companyCode: '1030',
+  assets: [
+    { asset: '100000000010', description: 'Forklift truck', posted: 9_000, unposted: 3_000, netBookValue: 48_000, currency: 'SAR' },
+    { asset: '100000000011', description: 'Warehouse racking', posted: 6_000, unposted: 0, netBookValue: 54_000, currency: 'SAR' },
+  ],
+  exceptions: [
+    { asset: '100000000010', period: '010', status: 'Planned, not yet posted', amount: 1_000, currency: 'SAR' },
+    { asset: '100000000010', period: '011', status: 'Planned, not yet posted', amount: 1_000, currency: 'SAR' },
+    { asset: '100000000010', period: '012', status: 'Planned, not yet posted', amount: 1_000, currency: 'SAR' },
+  ],
+  truncated: false,
+};
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
+const overdueDays = (dueDate: string | undefined, keyDate: string) => (dueDate ? Math.floor((Date.parse(keyDate) - Date.parse(dueDate)) / 86_400_000) : 0);
+
 /** Assumed valuation price per unit of the scenario material, used to value mock goods issues. */
 const MOCK_VALUATION_PRICE = 1_000;
+/** Assumed sales price per unit of the scenario material (sales order 648: 10 PC for SAR 5,000). */
+const MOCK_SALES_PRICE = 500;
 /** VAT rate of the scenario tax code V1 and the invoice-verification price tolerance. */
 const MOCK_TAX_RATE = 0.12;
 const MOCK_PRICE_TOLERANCE = 0.02;
@@ -241,10 +296,11 @@ const fmtSar = (amount: number) => `SAR ${amount.toLocaleString('en-US', { maxim
 interface SapAuth {
   companyCodes: string[];
   mayReleaseInvoices: boolean;
+  mayReleaseCredit: boolean;
 }
-const DEFAULT_AUTH: SapAuth = { companyCodes: ['1000', '1030', '2000'], mayReleaseInvoices: false };
+const DEFAULT_AUTH: SapAuth = { companyCodes: ['1000', '1030', '2000'], mayReleaseInvoices: false, mayReleaseCredit: false };
 const SAP_AUTH: Record<string, SapAuth> = {
-  'alex.morgan@prowess.example': { companyCodes: ['1000', '1030', '2000'], mayReleaseInvoices: true },
+  'alex.morgan@prowess.example': { companyCodes: ['1000', '1030', '2000'], mayReleaseInvoices: true, mayReleaseCredit: true },
 };
 
 export class MockSapGateway implements SapGateway {
@@ -263,6 +319,8 @@ export class MockSapGateway implements SapGateway {
   private readonly journals = structuredClone(SCENARIO_JOURNALS);
   private readonly lineItems = structuredClone(SCENARIO_LINE_ITEMS);
   private readonly stock = structuredClone(SCENARIO_STOCK);
+  private readonly credit = structuredClone(SCENARIO_CREDIT);
+  private readonly payments: PaymentRequest[] = [];
   private readonly lastNumber = {
     delivery: 80000257,
     goodsIssue: 1000000009,
@@ -274,6 +332,13 @@ export class MockSapGateway implements SapGateway {
     goodsReceiptPosting: 1002001,
     invoice: 5105600002,
     invoicePosting: 2001001,
+    salesOrder: 650,
+    creditMemoRequest: 60000000,
+    incomingPayment: 5000006,
+    outgoingPayment: 3000007,
+    reversal: 1700000000,
+    clearing: 1600000000,
+    journal: 100000000,
   };
 
   constructor(private readonly latencyMs = 150) {}
@@ -415,7 +480,7 @@ export class MockSapGateway implements SapGateway {
 
   async getCreditProfile(_ctx: SapCallContext, customer: string): Promise<CreditProfile> {
     await this.latency();
-    return this.find(SCENARIO_CREDIT, (c) => c.customer === customer, 'Credit account of customer', customer);
+    return this.find(this.credit, (c) => c.customer === customer, 'Credit account of customer', customer);
   }
 
   async listOpenItems(ctx: SapCallContext, query: OpenItemQuery): Promise<OpenItem[]> {
@@ -762,6 +827,462 @@ export class MockSapGateway implements SapGateway {
       { category: 'ACCOUNTING', document: accountingDocument, date: today, status: 'Open receivable' },
     );
     return structuredClone(doc);
+  }
+
+  /* ---------------- finance analysis ---------------- */
+
+  async searchGLAccounts(_ctx: SapCallContext, searchText: string, companyCode?: string): Promise<GLAccountInfo[]> {
+    await this.latency();
+    return structuredClone(GL_ACCOUNTS.filter((a) => (!companyCode || a.companyCode === companyCode) && a.name.includes(searchText.toUpperCase())));
+  }
+
+  async getAccountActivity(ctx: SapCallContext, companyCode: string, fiscalYear: string, periodFrom = '1', periodTo = '16'): Promise<AccountActivity[]> {
+    await this.latency();
+    this.requireCompanyCode(ctx, companyCode, 'G/L account balances');
+    const byAccount = new Map<string, AccountActivity>();
+    for (const j of this.journals.filter((d) => d.companyCode === companyCode && d.fiscalYear === fiscalYear)) {
+      const period = Number(j.postingDate.slice(5, 7));
+      if (period < Number(periodFrom) || period > Number(periodTo)) continue;
+      // Customer and supplier lines post to reconciliation accounts, which the scenario does not name.
+      for (const i of j.items.filter((line) => line.account.length <= 6)) {
+        const entry = byAccount.get(i.account) ?? { account: i.account, name: GL_ACCOUNTS.find((a) => a.account === i.account)?.name ?? i.description ?? i.account, debit: 0, credit: 0, net: 0, currency: i.amount.currency };
+        if (i.amount.amount >= 0) entry.debit += i.amount.amount;
+        else entry.credit -= i.amount.amount;
+        entry.net = round2(entry.debit - entry.credit);
+        byAccount.set(i.account, entry);
+      }
+    }
+    return [...byAccount.values()].sort((x, y) => Math.abs(y.net) - Math.abs(x.net));
+  }
+
+  async getReceivablesAging(ctx: SapCallContext, companyCode: string, currency: string): Promise<ReceivablesAging[]> {
+    const today = new Date().toISOString().slice(0, 10);
+    const open = await this.listOpenItems(ctx, { accountType: 'CUSTOMER', companyCode, status: 'OPEN' });
+    const byCustomer = new Map<string, ReceivablesAging>();
+    for (const i of open) {
+      const entry = byCustomer.get(i.account) ?? { customer: i.account, total: 0, upTo30: 0, days31to60: 0, days61to90: 0, over90: 0, currency };
+      const days = overdueDays(i.dueDate, today);
+      entry.total += i.amount.amount;
+      entry[days <= 30 ? 'upTo30' : days <= 60 ? 'days31to60' : days <= 90 ? 'days61to90' : 'over90'] += i.amount.amount;
+      byCustomer.set(i.account, entry);
+    }
+    return [...byCustomer.values()].sort((x, y) => y.total - x.total);
+  }
+
+  async getPayablesAging(ctx: SapCallContext, companyCode: string, keyDate = new Date().toISOString().slice(0, 10)): Promise<PayablesAging> {
+    const open = await this.listOpenItems(ctx, { accountType: 'SUPPLIER', companyCode, status: 'OPEN' });
+    const buckets = AGING_BUCKETS.map((bucket) => ({ bucket, amount: 0, items: 0 }));
+    const suppliers = new Map<string, PayablesAging['suppliers'][number]>();
+    for (const i of open) {
+      const amount = -i.amount.amount;
+      const days = overdueDays(i.dueDate, keyDate);
+      const bucket = buckets[days <= 0 ? 0 : days <= 30 ? 1 : days <= 60 ? 2 : days <= 90 ? 3 : 4]!;
+      bucket.amount += amount;
+      bucket.items += 1;
+      const supplier = suppliers.get(i.account) ?? { supplier: i.account, ...(i.accountName && { name: i.accountName }), amount: 0, overdue: 0, items: 0 };
+      supplier.amount += amount;
+      if (days > 0) supplier.overdue += amount;
+      supplier.items += 1;
+      suppliers.set(i.account, supplier);
+    }
+    return { companyCode, keyDate, currency: open[0]?.amount.currency ?? 'SAR', buckets, suppliers: [...suppliers.values()].sort((x, y) => y.amount - x.amount), truncated: false };
+  }
+
+  async listInvoiceApprovals(ctx: SapCallContext, companyCode: string): Promise<InvoiceApproval[]> {
+    await this.latency();
+    this.requireCompanyCode(ctx, companyCode, 'supplier invoices');
+    const STATUS: Record<Invoice['status'], string> = { OPEN: 'Posted', PAYMENT_BLOCKED: 'Posted, blocked for payment', PARKED: 'Parked', PAID: 'Paid', REVERSED: 'Reversed' };
+    return this.invoices
+      .filter((i) => i.companyCode === companyCode && i.status !== 'REVERSED')
+      .map((i) => ({
+        invoice: i.number,
+        fiscalYear: i.fiscalYear,
+        supplier: i.vendorId,
+        supplierName: i.vendorName,
+        gross: i.gross,
+        ...(i.postingDate && { postingDate: i.postingDate }),
+        status: STATUS[i.status],
+        blocked: !!i.paymentBlock,
+        ...(i.paymentBlock && { approvalStatus: 'Waiting for release' }),
+      }));
+  }
+
+  /** Proposal of the next payment run: every open supplier item, with blocked items as exceptions. */
+  async getPaymentRunProposal(ctx: SapCallContext, companyCode: string, runId?: string): Promise<PaymentRunProposal> {
+    const RUN = 'PRW01';
+    if (runId && runId !== RUN) return { runs: [], items: [], exceptions: [] };
+    const open = (await this.listOpenItems(ctx, { accountType: 'SUPPLIER', companyCode, status: 'OPEN' })).filter((i) => i.amount.amount < 0);
+    const payable = open.filter((i) => !i.paymentBlock);
+    const amount = (i: (typeof open)[number]) => ({ amount: -i.amount.amount, currency: i.amount.currency });
+    if (!open.length) return { runs: [], items: [], exceptions: [] };
+    return {
+      runs: [{ runId: RUN, runDate: new Date().toISOString().slice(0, 10), isProposal: true, paymentMethod: 'Bank transfer', amount: { amount: payable.reduce((sum, i) => sum - i.amount.amount, 0), currency: open[0]!.amount.currency } }],
+      items: payable.map((i) => ({ runId: RUN, supplier: i.account, ...(i.accountName && { supplierName: i.accountName }), document: i.document, paymentMethod: 'T', amount: amount(i) })),
+      exceptions: open
+        .filter((i) => i.paymentBlock)
+        .map((i) => ({ runId: RUN, supplier: i.account, ...(i.accountName && { supplierName: i.accountName }), document: i.document, blockingReason: i.paymentBlock!, message: 'Item is blocked for payment', amount: amount(i) })),
+    };
+  }
+
+  async listGRIRCases(ctx: SapCallContext, companyCode: string, fiscalYear?: string): Promise<GRIRCase[]> {
+    const open = (await this.listOpenItems(ctx, { accountType: 'GL', account: '500030', companyCode, status: 'OPEN' })).filter((i) => !fiscalYear || i.fiscalYear === fiscalYear);
+    const cases: GRIRCase[] = [];
+    for (const purchaseOrder of new Set(open.map((i) => i.assignment ?? ''))) {
+      const items = open.filter((i) => (i.assignment ?? '') === purchaseOrder);
+      const balance = round2(items.reduce((sum, i) => sum + i.amount.amount, 0));
+      if (!purchaseOrder || balance === 0) continue;
+      const po = this.purchaseOrders.find((p) => p.number === purchaseOrder);
+      cases.push({
+        purchaseOrder,
+        item: '10',
+        supplier: po?.vendorId ?? '',
+        ...(po && { supplierName: po.vendorName }),
+        status: 'New',
+        rootCause: balance < 0 ? 'Goods received, invoice missing' : 'Invoice received, goods receipt missing',
+        dueDays: overdueDays(items[0]!.postingDate, new Date().toISOString().slice(0, 10)),
+        openItems: items.length,
+        balance: { amount: balance, currency: items[0]!.amount.currency },
+      });
+    }
+    return cases;
+  }
+
+  async listCreditBlockedOrders(_ctx: SapCallContext, customer?: string): Promise<SalesOrder[]> {
+    await this.latency();
+    return structuredClone(this.salesOrders.filter((o) => o.creditStatus === 'BLOCKED' && (!customer || o.soldTo === customer)));
+  }
+
+  async getBankReconciliation(ctx: SapCallContext, companyCode: string): Promise<BankReconciliationAccount[]> {
+    await this.latency();
+    this.requireCompanyCode(ctx, companyCode, 'bank reconciliation');
+    return structuredClone(BANK_ACCOUNTS.filter((a) => a.companyCode === companyCode));
+  }
+
+  async getDepreciationOverview(ctx: SapCallContext, companyCode: string, fiscalYear: string): Promise<DepreciationOverview> {
+    await this.latency();
+    this.requireCompanyCode(ctx, companyCode, 'fixed assets');
+    return companyCode === DEPRECIATION.companyCode ? { ...structuredClone(DEPRECIATION), fiscalYear } : { companyCode, fiscalYear, assets: [], exceptions: [], truncated: false };
+  }
+
+  async clearOpenItems(ctx: SapCallContext, request: ClearingRequest): Promise<PostedDocument> {
+    await this.latency();
+    this.requireCompanyCode(ctx, request.companyCode, 'clearing open items');
+    const open = this.lineItems.filter((i) => i.accountType === request.accountType && i.account === request.account && i.companyCode === request.companyCode && !i.clearingDocument);
+    const label = `${request.accountType === 'CUSTOMER' ? 'customer' : 'supplier'} ${request.account}`;
+    if (!open.length) throw new SapError('BUSINESS_RULE', `There are no open items on the account of ${label} in company code ${request.companyCode}.`);
+    const balance = round2(open.reduce((sum, i) => sum + i.amount.amount, 0));
+    if (balance !== 0) throw new SapError('BUSINESS_RULE', `The open items of ${label} do not balance: ${fmtSar(balance)} would remain. SAP cannot clear them.`);
+    const today = new Date().toISOString().slice(0, 10);
+    const document = this.nextNumber('clearing');
+    for (const i of open) {
+      i.clearingDocument = document;
+      i.clearingDate = today;
+    }
+    return { document, fiscalYear: today.slice(0, 4), companyCode: request.companyCode };
+  }
+
+  async postJournalEntry(ctx: SapCallContext, entry: NewJournalEntry): Promise<PostedDocument> {
+    await this.latency();
+    this.requireCompanyCode(ctx, entry.companyCode, 'posting a journal entry');
+    const signed = entry.lines.map((l) => (l.debitCredit === 'D' ? l.amount : -l.amount));
+    if (round2(signed.reduce((sum, a) => sum + a, 0)) !== 0) throw new SapError('BUSINESS_RULE', 'Balance in transaction currency: debits and credits of the journal entry are not equal.');
+    for (const l of entry.lines) {
+      if (!GL_ACCOUNTS.some((a) => a.account === l.glAccount && a.companyCode === entry.companyCode)) throw new SapError('BUSINESS_RULE', `G/L account ${l.glAccount} is not defined in company code ${entry.companyCode}.`);
+    }
+    const today = entry.postingDate ?? new Date().toISOString().slice(0, 10);
+    const document = this.nextNumber('journal');
+    this.journals.push({
+      companyCode: entry.companyCode,
+      fiscalYear: today.slice(0, 4),
+      number: document,
+      documentType: entry.documentType ?? 'SA',
+      postingDate: today,
+      documentDate: today,
+      ...(entry.headerText && { reference: entry.headerText }),
+      items: entry.lines.map((l, index) => ({
+        item: String(index + 1),
+        account: l.glAccount,
+        description: GL_ACCOUNTS.find((a) => a.account === l.glAccount)?.name ?? l.glAccount,
+        amount: { amount: signed[index]!, currency: entry.currency },
+        debitCredit: l.debitCredit,
+        ...(l.costCenter && { costCenter: l.costCenter }),
+      })),
+    });
+    return { document, fiscalYear: today.slice(0, 4), companyCode: entry.companyCode };
+  }
+
+  /* ---------------- payments on account (request, second-person approval, posting) ---------------- */
+
+  private payment(ctx: SapCallContext, id: string): PaymentRequest {
+    const payment = this.payments.find((p) => p.id === id);
+    if (!payment) throw new SapError('NOT_FOUND', `Payment request ${id} was not found in SAP.`);
+    this.requireCompanyCode(ctx, payment.companyCode, 'payment requests');
+    return payment;
+  }
+
+  async listPaymentRequests(ctx: SapCallContext, query: PaymentRequestQuery): Promise<PaymentRequest[]> {
+    await this.latency();
+    if (query.companyCode) this.requireCompanyCode(ctx, query.companyCode, 'payment requests');
+    const allowed = this.auth(ctx).companyCodes;
+    return structuredClone(
+      this.payments
+        .filter((p) => allowed.includes(p.companyCode) && (!query.companyCode || p.companyCode === query.companyCode) && (!query.status || p.status === query.status))
+        .reverse(),
+    );
+  }
+
+  async getPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    await this.latency();
+    return structuredClone(this.payment(ctx, id));
+  }
+
+  async createPaymentRequest(ctx: SapCallContext, request: NewPaymentRequest): Promise<PaymentRequest> {
+    await this.latency();
+    this.requireCompanyCode(ctx, request.companyCode, 'payment requests');
+    const partnerName = request.direction === 'INCOMING' ? SCENARIO_CUSTOMERS.find((c) => c.id === request.partner)?.name : VENDORS.find((v) => v.id === request.partner)?.name;
+    if (!partnerName) throw new SapError('NOT_FOUND', `${request.direction === 'INCOMING' ? 'Customer' : 'Supplier'} ${request.partner} was not found in SAP.`);
+    const created: PaymentRequest = {
+      id: randomUUID(),
+      direction: request.direction,
+      companyCode: request.companyCode,
+      partner: request.partner,
+      partnerName,
+      bankAccount: request.bankAccount,
+      amount: { amount: request.amount, currency: request.currency },
+      status: 'NEW',
+      ...(request.reference && { reference: request.reference }),
+      ...(request.text && { text: request.text }),
+      createdBy: ctx.principal.sub,
+      createdOn: new Date().toISOString().slice(0, 10),
+    };
+    this.payments.push(created);
+    return structuredClone(created);
+  }
+
+  async approvePaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    await this.latency();
+    const payment = this.payment(ctx, id);
+    if (payment.status !== 'NEW') throw new SapError('BUSINESS_RULE', `Payment request ${id} is ${payment.status.toLowerCase()} and can no longer be approved.`);
+    if (payment.createdBy === ctx.principal.sub) throw new SapError('BUSINESS_RULE', 'You created this payment request, so a second person must approve it.');
+    payment.status = 'APPROVED';
+    payment.approvedBy = ctx.principal.sub;
+    return structuredClone(payment);
+  }
+
+  async rejectPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    await this.latency();
+    const payment = this.payment(ctx, id);
+    if (payment.status !== 'NEW' && payment.status !== 'APPROVED') throw new SapError('BUSINESS_RULE', `Payment request ${id} is ${payment.status.toLowerCase()} and can no longer be rejected.`);
+    payment.status = 'REJECTED';
+    return structuredClone(payment);
+  }
+
+  async postPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    await this.latency();
+    const payment = this.payment(ctx, id);
+    if (payment.status !== 'APPROVED') throw new SapError('BUSINESS_RULE', `Payment request ${id} is ${payment.status.toLowerCase()}; only an approved request can be posted.`);
+    const incoming = payment.direction === 'INCOMING';
+    const today = new Date().toISOString().slice(0, 10);
+    const document = this.nextNumber(incoming ? 'incomingPayment' : 'outgoingPayment');
+    const { amount, currency } = payment.amount;
+    // Incoming: debit bank, credit customer. Outgoing: debit supplier, credit bank.
+    const partnerAmount = incoming ? -amount : amount;
+    this.journals.push({
+      companyCode: payment.companyCode,
+      fiscalYear: today.slice(0, 4),
+      number: document,
+      documentType: incoming ? 'DZ' : 'KZ',
+      postingDate: today,
+      documentDate: today,
+      ...(payment.reference && { reference: payment.reference }),
+      items: [
+        { item: '1', account: payment.bankAccount, description: 'Bank account', amount: { amount: -partnerAmount, currency }, debitCredit: incoming ? 'D' : 'C' },
+        { item: '2', account: payment.partner, ...(payment.partnerName && { description: payment.partnerName }), amount: { amount: partnerAmount, currency }, debitCredit: incoming ? 'C' : 'D' },
+      ],
+    });
+    // A payment on account: the item stays open on the partner account until it is cleared against invoices.
+    this.lineItems.push({
+      companyCode: payment.companyCode,
+      fiscalYear: today.slice(0, 4),
+      document,
+      item: '2',
+      documentType: incoming ? 'DZ' : 'KZ',
+      accountType: incoming ? 'CUSTOMER' : 'SUPPLIER',
+      account: payment.partner,
+      ...(payment.partnerName && { accountName: payment.partnerName }),
+      postingDate: today,
+      dueDate: today,
+      amount: { amount: partnerAmount, currency },
+      ...(payment.text && { text: payment.text }),
+    });
+    payment.status = 'POSTED';
+    payment.accountingDocument = document;
+    payment.fiscalYear = today.slice(0, 4);
+    return structuredClone(payment);
+  }
+
+  /* ---------------- sales order entry, credit release, credit memo request ---------------- */
+
+  async simulateSalesOrder(_ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrderSimulation> {
+    await this.latency();
+    const customer = SCENARIO_CUSTOMERS.find((c) => c.id === order.soldTo);
+    if (!customer) throw new SapError('NOT_FOUND', `Customer ${order.soldTo} was not found in SAP.`);
+    if (customer.orderBlocked) throw new SapError('BUSINESS_RULE', `Customer ${order.soldTo} is blocked for sales orders.`);
+    const rows = this.stock.filter((r) => r.material === order.material);
+    if (!rows.length) throw new SapError('BUSINESS_RULE', `Material ${order.material} is not maintained for sales organization ${order.salesOrganization}.`);
+    const available = rows.reduce((sum, r) => sum + r.unrestricted, 0);
+    const net = order.quantity * MOCK_SALES_PRICE;
+    const credit = this.credit.find((c) => c.customer === order.soldTo);
+    return {
+      soldTo: customer.id,
+      soldToName: customer.name,
+      netValue: SAR(net),
+      taxAmount: SAR(Math.round(net * MOCK_TAX_RATE * 100) / 100),
+      creditStatus: !credit ? 'NOT_CHECKED' : credit.exposure.amount + net > credit.limit.amount ? 'BLOCKED' : 'APPROVED',
+      items: [{ material: order.material, description: rows[0]!.description ?? order.material, quantity: order.quantity, unit: rows[0]!.unit, netValue: SAR(net), confirmedQuantity: Math.min(order.quantity, available) }],
+    };
+  }
+
+  async createSalesOrder(ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrder> {
+    const sim = await this.simulateSalesOrder(ctx, order);
+    const today = new Date().toISOString().slice(0, 10);
+    const created: SalesOrder = {
+      number: this.nextNumber('salesOrder'),
+      orderType: order.orderType ?? 'OR',
+      salesOrganization: order.salesOrganization,
+      distributionChannel: order.distributionChannel,
+      division: order.division,
+      soldTo: sim.soldTo,
+      soldToName: sim.soldToName,
+      ...(order.customerReference && { customerReference: order.customerReference }),
+      netValue: sim.netValue,
+      createdOn: today,
+      requestedDeliveryDate: order.requestedDeliveryDate ?? today,
+      deliveryStatus: 'NOT_STARTED',
+      billingStatus: 'NOT_STARTED',
+      creditStatus: sim.creditStatus,
+      items: sim.items.map((i) => ({ item: '10', material: i.material, description: i.description, quantity: i.quantity, unit: i.unit, netValue: i.netValue, plant: SCENARIO_COMPANY_CODE })),
+    };
+    this.salesOrders.push(created);
+    this.flows[created.number] = [];
+    const credit = this.credit.find((c) => c.customer === created.soldTo);
+    if (credit) credit.exposure = SAR(credit.exposure.amount + created.netValue.amount);
+    return structuredClone(created);
+  }
+
+  async releaseCreditBlock(ctx: SapCallContext, salesOrder: string): Promise<SalesOrder> {
+    await this.latency();
+    const order = this.salesOrders.find((o) => o.number === salesOrder);
+    if (!order) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} was not found in SAP.`);
+    if (order.creditStatus !== 'BLOCKED') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is not blocked by the credit check.`);
+    if (!this.auth(ctx).mayReleaseCredit) throw new SapError('NOT_AUTHORIZED', 'SAP denied the release: you lack authorization to release credit-blocked sales documents.');
+    order.creditStatus = 'APPROVED';
+    return structuredClone(order);
+  }
+
+  async createCreditMemoRequest(ctx: SapCallContext, billingDocument: string, reason: string): Promise<CreditMemoRequest> {
+    const doc = await this.getBillingDocument(ctx, billingDocument);
+    if (doc.cancelled) throw new SapError('BUSINESS_RULE', `Billing document ${billingDocument} is cancelled, so no credit memo can be requested for it.`);
+    return { number: this.nextNumber('creditMemoRequest'), billingDocument: doc.number, soldTo: doc.payer, soldToName: doc.payerName, netValue: doc.netValue, reason };
+  }
+
+  /* ---------------- reversals ---------------- */
+
+  async reverseGoodsReceipt(ctx: SapCallContext, materialDocument: string, year: string): Promise<Reversal> {
+    await this.latency();
+    const receipts = this.goodsReceipts.filter((g) => g.materialDocument === materialDocument && g.year === year);
+    const po = this.purchaseOrders.find((p) => p.number === receipts[0]?.purchaseOrder);
+    if (!receipts.length || !po) throw new SapError('NOT_FOUND', `Material document ${materialDocument}/${year} was not found in SAP.`);
+    this.requireCompanyCode(ctx, po.companyCode, `material document ${materialDocument}`);
+    if (this.invoices.some((i) => i.purchaseOrder === po.number && i.status !== 'REVERSED')) {
+      throw new SapError('BUSINESS_RULE', `Purchase order ${po.number} has already been invoiced. Reverse the supplier invoice before the goods receipt.`);
+    }
+    for (const g of receipts) {
+      const row = this.stock.find((r) => r.material === po.items.find((i) => i.item === g.item)?.material);
+      if (row && row.unrestricted < g.quantity) throw new SapError('BUSINESS_RULE', `Only ${row.unrestricted} ${row.unit} are in stock, so the receipt of ${g.quantity} ${g.unit} cannot be reversed.`);
+    }
+    for (const g of receipts) {
+      const row = this.stock.find((r) => r.material === po.items.find((i) => i.item === g.item)?.material);
+      if (row) row.unrestricted -= g.quantity;
+      this.goodsReceipts.splice(this.goodsReceipts.indexOf(g), 1);
+    }
+    po.status = this.goodsReceipts.some((g) => g.purchaseOrder === po.number) ? 'PARTIALLY_DELIVERED' : 'RELEASED';
+    const value = receipts.reduce((sum, g) => sum + (g.value?.amount ?? 0), 0);
+    const today = new Date().toISOString().slice(0, 10);
+    this.lineItems.push({ companyCode: po.companyCode, fiscalYear: today.slice(0, 4), document: this.nextNumber('goodsReceiptPosting'), item: '2', documentType: 'WE', accountType: 'GL', account: '500030', accountName: 'GR/IR Clearing', postingDate: today, amount: SAR(value), assignment: po.number });
+    return { document: this.nextNumber('materialDocument'), year: today.slice(0, 4), reversedDocument: materialDocument };
+  }
+
+  async reverseSupplierInvoice(ctx: SapCallContext, number: string, fiscalYear: string, _reason: string): Promise<Reversal> {
+    await this.latency();
+    const inv = this.invoices.find((i) => i.number === number && i.fiscalYear === fiscalYear);
+    if (!inv) throw new SapError('NOT_FOUND', `Supplier invoice ${number}/${fiscalYear} was not found in SAP.`);
+    this.requireCompanyCode(ctx, inv.companyCode, `invoice ${number}`);
+    if (inv.status === 'REVERSED') throw new SapError('BUSINESS_RULE', `Supplier invoice ${number} is already reversed.`);
+    if (inv.status === 'PAID') throw new SapError('BUSINESS_RULE', `Supplier invoice ${number} is already paid. Reset the payment clearing before reversing it.`);
+    const today = new Date().toISOString().slice(0, 10);
+    const reversal = this.nextNumber('invoice');
+    const posting = this.nextNumber('invoicePosting');
+    // The payable and its reversal clear each other; the GR/IR account is debited back.
+    const payable = this.lineItems.find((i) => i.accountType === 'SUPPLIER' && i.account === inv.vendorId && !i.clearingDocument && i.amount.amount === -inv.gross.amount);
+    if (payable) {
+      payable.clearingDocument = posting;
+      payable.clearingDate = today;
+      delete payable.paymentBlock;
+      this.lineItems.push({ ...structuredClone(payable), document: posting, postingDate: today, dueDate: today, amount: SAR(inv.gross.amount) });
+    }
+    if (inv.purchaseOrder) {
+      const net = Math.round((inv.gross.amount / (1 + MOCK_TAX_RATE)) * 100) / 100;
+      this.lineItems.push({ companyCode: inv.companyCode, fiscalYear: today.slice(0, 4), document: posting, item: '2', documentType: 'RE', accountType: 'GL', account: '500030', accountName: 'GR/IR Clearing', postingDate: today, amount: SAR(-net), assignment: inv.purchaseOrder });
+    }
+    inv.status = 'REVERSED';
+    inv.paymentBlock = null;
+    return { document: reversal, year: today.slice(0, 4), reversedDocument: number };
+  }
+
+  async reverseGoodsIssue(_ctx: SapCallContext, number: string): Promise<OutboundDelivery> {
+    await this.latency();
+    const delivery = this.deliveries.find((d) => d.number === number);
+    if (!delivery) throw new SapError('NOT_FOUND', `Outbound delivery ${number} was not found in SAP.`);
+    if (delivery.goodsIssueStatus !== 'COMPLETE') throw new SapError('BUSINESS_RULE', `No goods issue has been posted for delivery ${number}.`);
+    const flow = (this.flows[delivery.salesOrder ?? ''] ??= []);
+    if (flow.some((f) => f.category === 'BILLING')) throw new SapError('BUSINESS_RULE', `Delivery ${number} is already billed. Cancel the billing document before reversing the goods issue.`);
+    for (const i of delivery.items) {
+      const row = this.stock.find((r) => r.material === i.material && (!i.plant || r.plant === i.plant));
+      if (row) row.unrestricted += i.quantity;
+    }
+    delivery.goodsIssueStatus = 'NOT_STARTED';
+    delete delivery.actualGoodsIssueDate;
+    const issue = flow.findIndex((f) => f.category === 'GOODS_ISSUE');
+    if (issue >= 0) flow.splice(issue, 1);
+    const step = flow.find((f) => f.category === 'DELIVERY' && f.document === delivery.number);
+    if (step) step.status = 'Goods issue outstanding';
+    return structuredClone(delivery);
+  }
+
+  async cancelBillingDocument(ctx: SapCallContext, number: string): Promise<Reversal> {
+    await this.latency();
+    const doc = this.billing.find((b) => b.number === number);
+    if (!doc) throw new SapError('NOT_FOUND', `Billing document ${number} was not found in SAP.`);
+    this.requireCompanyCode(ctx, doc.companyCode, `billing document ${number}`);
+    if (doc.cancelled) throw new SapError('BUSINESS_RULE', `Billing document ${number} is already cancelled.`);
+    const receivable = this.lineItems.find((i) => i.accountType === 'CUSTOMER' && i.document === doc.accountingDocument);
+    if (receivable?.clearingDocument) throw new SapError('BUSINESS_RULE', `The invoice of billing document ${number} is already paid (clearing document ${receivable.clearingDocument}). Reset the clearing before cancelling it.`);
+    const today = new Date().toISOString().slice(0, 10);
+    const cancellation = this.nextNumber('billing');
+    const posting = this.nextNumber('accounting');
+    if (receivable) {
+      receivable.clearingDocument = posting;
+      receivable.clearingDate = today;
+      this.lineItems.push({ ...structuredClone(receivable), document: posting, postingDate: today, dueDate: today, amount: SAR(-receivable.amount.amount) });
+    }
+    doc.cancelled = true;
+    const order = this.salesOrders.find((o) => o.number === doc.salesOrder);
+    if (order) {
+      order.billingStatus = 'NOT_STARTED';
+      this.flows[order.number] = (this.flows[order.number] ?? []).filter((f) => f.category !== 'BILLING' && f.category !== 'ACCOUNTING');
+    }
+    return { document: cancellation, year: today.slice(0, 4), reversedDocument: number };
   }
 
   async releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice> {

@@ -32,7 +32,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
         {...props}
         className={cx(
           'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-          size === 'sm' ? 'h-8 px-3 text-[13px]' : 'h-10 px-4 text-sm',
+          size === 'sm' ? 'h-8 px-3 text-[12px]' : 'h-10 px-4 text-sm',
           variant === 'primary' && 'bg-brand text-on-brand hover:bg-brand-hover',
           variant === 'secondary' && 'border border-line bg-surface text-ink hover:bg-muted',
           variant === 'ghost' && 'text-ink-2 hover:bg-muted hover:text-ink',
@@ -113,7 +113,7 @@ export function Badge({ tone = 'neutral', children, className }: { tone?: Tone; 
   return (
     <span
       className={cx(
-        'inline-flex items-center gap-1 rounded-full border border-current/25 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide',
+        'inline-flex items-center gap-1 rounded-full border border-current/25 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
         tone === 'neutral' && 'bg-muted text-ink-2',
         tone === 'brand' && 'bg-brand-soft text-brand',
         tone === 'success' && 'bg-success-soft text-success',

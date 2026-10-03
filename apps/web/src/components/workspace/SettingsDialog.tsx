@@ -15,7 +15,7 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
             role="radio"
             aria-checked={value === o.id}
             onClick={() => onChange(o.id)}
-            className={cx('rounded-md px-3 py-1.5 text-[13px] font-medium', value === o.id ? 'bg-surface text-ink shadow-soft' : 'text-ink-3 hover:text-ink')}
+            className={cx('rounded-md px-3 py-1.5 text-[12px] font-medium', value === o.id ? 'bg-surface text-ink shadow-soft' : 'text-ink-3 hover:text-ink')}
           >
             {o.label}
           </button>

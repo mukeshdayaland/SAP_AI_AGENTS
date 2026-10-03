@@ -24,7 +24,7 @@ export interface PendingActionRequest {
 
 export type PendingActionResult =
   | { ok: true; action: PendingActionRecord; durationMs: number; mock: boolean }
-  | { ok: false; message: string; durationMs: number };
+  | { ok: false; message: string; code?: string; durationMs: number };
 
 /**
  * Turns a requested SAP write into a pending action awaiting human
@@ -35,7 +35,7 @@ export type PendingActionResult =
 export async function preparePendingAction(deps: { store: Store; audit: AuditTrail; config: OrchestratorConfig }, req: PendingActionRequest): Promise<PendingActionResult> {
   const preview = req.allTools.find((t) => t.name === 'system_previewAction' && t.serverId === req.tool.serverId);
   const out = preview ? await req.session.callTool(preview, { tool: req.tool.name, arguments: req.arguments }, req.signal) : undefined;
-  if (!out?.ok) return { ok: false, message: out?.errorMessage ?? 'This action cannot be prepared right now.', durationMs: out?.durationMs ?? 0 };
+  if (!out?.ok) return { ok: false, message: out?.errorMessage ?? 'This action cannot be prepared right now.', ...(out?.errorCode && { code: out.errorCode }), durationMs: out?.durationMs ?? 0 };
 
   const data = (out.structured?.data ?? {}) as {
     preview: PendingActionRecord['preview'];

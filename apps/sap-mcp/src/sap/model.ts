@@ -295,6 +295,208 @@ export interface InfoRecord {
   lastPurchaseOrder?: string;
 }
 
+export type PaymentStatus = 'NEW' | 'APPROVED' | 'POSTED' | 'REJECTED';
+
+/** A payment on account (F-28 incoming, F-53 outgoing) that one person requests and another approves before it is posted. */
+export interface PaymentRequest {
+  id: string;
+  direction: 'INCOMING' | 'OUTGOING';
+  companyCode: string;
+  /** Customer of an incoming payment, supplier of an outgoing one. */
+  partner: string;
+  partnerName?: string;
+  /** Bank G/L account the payment is posted to. */
+  bankAccount: string;
+  amount: Amount;
+  status: PaymentStatus;
+  reference?: string;
+  text?: string;
+  accountingDocument?: string;
+  fiscalYear?: string;
+  message?: string;
+  createdBy: string;
+  createdOn?: string;
+  approvedBy?: string;
+}
+
+export interface NewPaymentRequest {
+  direction: PaymentRequest['direction'];
+  companyCode: string;
+  partner: string;
+  amount: number;
+  currency: string;
+  bankAccount: string;
+  reference?: string;
+  text?: string;
+}
+
+export interface PaymentRequestQuery {
+  companyCode?: string;
+  status?: PaymentStatus;
+}
+
+export interface NewSalesOrder {
+  soldTo: string;
+  material: string;
+  quantity: number;
+  salesOrganization: string;
+  distributionChannel: string;
+  division: string;
+  /** Defaults to the standard order type OR. */
+  orderType?: string;
+  customerReference?: string;
+  requestedDeliveryDate?: string;
+}
+
+/** Result of pricing, availability and credit checks for an order that is not saved. */
+export interface SalesOrderSimulation {
+  soldTo: string;
+  soldToName: string;
+  netValue: Amount;
+  taxAmount?: Amount;
+  creditStatus: SalesOrder['creditStatus'];
+  items: { material: string; description: string; quantity: number; unit: string; netValue: Amount; confirmedQuantity?: number }[];
+}
+
+export interface CreditMemoRequest {
+  number: string;
+  billingDocument: string;
+  soldTo: string;
+  soldToName: string;
+  netValue: Amount;
+  reason: string;
+}
+
+/** A document that reverses another one. */
+export interface Reversal {
+  document: string;
+  year?: string;
+  reversedDocument: string;
+}
+
+/* ---------------- finance analysis (G/L, aging, payment run, fixed assets, bank) ---------------- */
+
+export interface GLAccountInfo {
+  account: string;
+  name: string;
+  longName?: string;
+  companyCode?: string;
+  chartOfAccounts?: string;
+}
+
+/** Debit and credit postings of one G/L account over a range of periods. */
+export interface AccountActivity {
+  account: string;
+  name: string;
+  debit: number;
+  credit: number;
+  /** Debit minus credit. */
+  net: number;
+  currency: string;
+}
+
+/** Open receivables of one customer by days overdue. */
+export interface ReceivablesAging {
+  customer: string;
+  total: number;
+  /** Not due or up to 30 days overdue. */
+  upTo30: number;
+  days31to60: number;
+  days61to90: number;
+  over90: number;
+  currency: string;
+}
+
+export const AGING_BUCKETS = ['Not due', '1-30 days', '31-60 days', '61-90 days', 'Over 90 days'] as const;
+
+/** Open payables by days overdue at a key date. Amounts are positive payables. */
+export interface PayablesAging {
+  companyCode: string;
+  keyDate: string;
+  currency: string;
+  buckets: { bucket: (typeof AGING_BUCKETS)[number]; amount: number; items: number }[];
+  suppliers: { supplier: string; name?: string; amount: number; overdue: number; items: number }[];
+  /** True when SAP returned more items than were read. */
+  truncated: boolean;
+}
+
+export interface InvoiceApproval {
+  invoice: string;
+  fiscalYear: string;
+  supplier: string;
+  supplierName: string;
+  gross: Amount;
+  postingDate?: string;
+  status: string;
+  blocked: boolean;
+  approvalStatus?: string;
+  approver?: string;
+}
+
+/** Payment run (F110) proposal: what would be paid, and what SAP excluded and why. */
+export interface PaymentRunProposal {
+  runs: { runId: string; runDate?: string; isProposal: boolean; paymentMethod?: string; amount: Amount }[];
+  items: { runId: string; supplier: string; supplierName?: string; document: string; paymentMethod?: string; amount: Amount }[];
+  exceptions: { runId: string; supplier: string; supplierName?: string; document: string; blockingReason?: string; message: string; amount: Amount }[];
+}
+
+/** One purchase order item with an open balance on the GR/IR clearing account. */
+export interface GRIRCase {
+  purchaseOrder: string;
+  item: string;
+  supplier: string;
+  supplierName?: string;
+  status?: string;
+  priority?: string;
+  rootCause?: string;
+  dueDays?: number;
+  openItems: number;
+  balance: Amount;
+}
+
+export interface BankReconciliationAccount {
+  companyCode: string;
+  glAccount: string;
+  glAccountName?: string;
+  houseBank: string;
+  houseBankAccount: string;
+  openItems: number;
+  openBalance: Amount;
+}
+
+export interface DepreciationOverview {
+  companyCode: string;
+  fiscalYear: string;
+  assets: { asset: string; description: string; posted: number; unposted: number; netBookValue: number; currency: string }[];
+  /** Periods whose planned depreciation has not been posted. */
+  exceptions: { asset: string; period: string; status: string; amount: number; currency: string }[];
+  /** True when the company code has more assets than were examined. */
+  truncated: boolean;
+}
+
+/** Open items of one customer or supplier that offset each other. */
+export interface ClearingRequest {
+  companyCode: string;
+  accountType: 'CUSTOMER' | 'SUPPLIER';
+  account: string;
+}
+
+export interface NewJournalEntry {
+  companyCode: string;
+  currency: string;
+  postingDate?: string;
+  documentType?: string;
+  headerText?: string;
+  lines: { glAccount: string; debitCredit: 'D' | 'C'; amount: number; costCenter?: string; text?: string }[];
+}
+
+/** A document SAP created for a posting. */
+export interface PostedDocument {
+  document: string;
+  fiscalYear?: string;
+  companyCode: string;
+}
+
 export interface Equipment {
   number: string;
   description: string;
@@ -416,6 +618,40 @@ export interface SapGateway {
   postGoodsIssue(ctx: SapCallContext, delivery: string): Promise<OutboundDelivery>;
   /** Bills a goods-issued delivery (VF01) and releases the billing document to accounting. */
   createBillingDocument(ctx: SapCallContext, delivery: string): Promise<BillingDocument>;
+
+  searchGLAccounts(ctx: SapCallContext, searchText: string, companyCode?: string): Promise<GLAccountInfo[]>;
+  /** Postings per G/L account for a period range of a fiscal year (leading ledger). */
+  getAccountActivity(ctx: SapCallContext, companyCode: string, fiscalYear: string, periodFrom?: string, periodTo?: string): Promise<AccountActivity[]>;
+  getReceivablesAging(ctx: SapCallContext, companyCode: string, currency: string): Promise<ReceivablesAging[]>;
+  getPayablesAging(ctx: SapCallContext, companyCode: string, keyDate?: string): Promise<PayablesAging>;
+  listInvoiceApprovals(ctx: SapCallContext, companyCode: string): Promise<InvoiceApproval[]>;
+  getPaymentRunProposal(ctx: SapCallContext, companyCode: string, runId?: string): Promise<PaymentRunProposal>;
+  listGRIRCases(ctx: SapCallContext, companyCode: string, fiscalYear?: string): Promise<GRIRCase[]>;
+  listCreditBlockedOrders(ctx: SapCallContext, customer?: string): Promise<SalesOrder[]>;
+  getBankReconciliation(ctx: SapCallContext, companyCode: string): Promise<BankReconciliationAccount[]>;
+  getDepreciationOverview(ctx: SapCallContext, companyCode: string, fiscalYear: string): Promise<DepreciationOverview>;
+  /** Posts a clearing document for the open items of one account. SAP selects the items of the account. */
+  clearOpenItems(ctx: SapCallContext, request: ClearingRequest): Promise<PostedDocument>;
+  postJournalEntry(ctx: SapCallContext, entry: NewJournalEntry): Promise<PostedDocument>;
+
+  listPaymentRequests(ctx: SapCallContext, query: PaymentRequestQuery): Promise<PaymentRequest[]>;
+  getPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest>;
+  createPaymentRequest(ctx: SapCallContext, request: NewPaymentRequest): Promise<PaymentRequest>;
+  /** SAP refuses approval by the person who created the request. */
+  approvePaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest>;
+  rejectPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest>;
+  /** Posts an approved request as a journal entry (document type DZ or KZ). */
+  postPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest>;
+
+  simulateSalesOrder(ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrderSimulation>;
+  createSalesOrder(ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrder>;
+  releaseCreditBlock(ctx: SapCallContext, salesOrder: string): Promise<SalesOrder>;
+  createCreditMemoRequest(ctx: SapCallContext, billingDocument: string, reason: string): Promise<CreditMemoRequest>;
+
+  reverseGoodsReceipt(ctx: SapCallContext, materialDocument: string, year: string): Promise<Reversal>;
+  reverseSupplierInvoice(ctx: SapCallContext, number: string, fiscalYear: string, reason: string): Promise<Reversal>;
+  reverseGoodsIssue(ctx: SapCallContext, delivery: string): Promise<OutboundDelivery>;
+  cancelBillingDocument(ctx: SapCallContext, number: string): Promise<Reversal>;
 
   releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice>;
   addInvoiceNote(ctx: SapCallContext, number: string, fiscalYear: string, note: string): Promise<{ noteId: string }>;

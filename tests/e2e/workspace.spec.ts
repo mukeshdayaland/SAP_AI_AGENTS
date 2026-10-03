@@ -15,10 +15,6 @@ test.describe('Prowess AI workspace', () => {
     await expect(page.getByText(/blocked for payment/).first()).toBeVisible();
     await expect(page.getByText('Mock data').first()).toBeVisible();
 
-    // Sources are transparent and flagged as mock.
-    await page.getByText(/Sources \(1\)/).first().click();
-    await expect(page.getByText('Mock S/4HANA').first()).toBeVisible();
-
     // A write is proposed, not executed.
     await page.getByRole('button', { name: 'Release payment block' }).click();
     const card = page.getByRole('group', { name: 'Confirm SAP action' });

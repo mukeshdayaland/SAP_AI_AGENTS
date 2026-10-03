@@ -87,7 +87,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
+    <div className="mx-auto w-full max-w-[76rem]">
       <div className="rounded-area border border-line-strong bg-elevated shadow-lift transition-colors focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/15">
         {(attachments.length > 0 || uploading > 0) && (
           <ul className="flex flex-wrap gap-2 px-3 pt-3" aria-label="Attachments">
@@ -122,7 +122,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
           onKeyDown={onKeyDown}
           placeholder="Ask Prowess AI…"
           aria-describedby="prowess-prompt-hint"
-          className="focus-bare block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-relaxed text-ink placeholder:text-ink-3"
+          className="focus-bare block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[14px] leading-relaxed text-ink placeholder:text-ink-3"
         />
         <div className="flex items-center justify-between px-2.5 pb-2.5">
           <div className="flex items-center gap-1">
@@ -133,7 +133,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
                   type="button"
                   onClick={() => fileInput.current?.click()}
                   disabled={attachments.length >= 5}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] text-ink-3 hover:bg-muted hover:text-ink disabled:opacity-40"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] text-ink-3 hover:bg-muted hover:text-ink disabled:opacity-40"
                 >
                   <Paperclip size={15} aria-hidden /> Attach
                 </button>
@@ -141,7 +141,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span id="prowess-prompt-hint" className="hidden text-[11px] text-ink-3 sm:inline">
+            <span id="prowess-prompt-hint" className="hidden text-[10px] text-ink-3 sm:inline">
               {sendKey === 'enter' ? 'Enter to send · Shift + Enter for new line' : 'Ctrl/⌘ + Enter to send'}
             </span>
             {streaming ? (
@@ -163,11 +163,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
         </div>
       </div>
       {error && (
-        <p role="alert" className="mt-2 px-2 text-[13px] text-error">
+        <p role="alert" className="mt-2 px-2 text-[12px] text-error">
           {error}
         </p>
       )}
-      <p className="mt-2 text-center text-[11px] text-ink-3">AI can make mistakes. SAP remains the system of record — verify important figures.</p>
+      <p className="mt-2 text-center text-[10px] text-ink-3">AI can make mistakes. SAP remains the system of record — verify important figures.</p>
     </div>
   );
 });
