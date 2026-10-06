@@ -2,10 +2,14 @@ import { z } from 'zod';
 import { apTools } from './ap.js';
 import { arTools } from './ar.js';
 import { creditTools } from './credit.js';
+import { financeTools } from './finance.js';
 import { glTools } from './gl.js';
 import { mmInvoiceTools } from './mm-invoice.js';
+import { mmReversalTools } from './mm-reversal.js';
 import { mmTools } from './mm.js';
+import { paymentTools } from './payments.js';
 import { pmTools } from './pm.js';
+import { sdProcessTools } from './sd-process.js';
 import { sdTools } from './sd.js';
 import { sharedTools } from './shared.js';
 import { defineTool, type Domain, type ToolDefinition } from './types.js';
@@ -17,12 +21,16 @@ import { defineTool, type Domain, type ToolDefinition } from './types.js';
  */
 const ALL: ToolDefinition[] = [
   ...sdTools,
+  ...sdProcessTools,
   ...creditTools,
   ...arTools,
   ...apTools,
   ...glTools,
   ...mmTools,
   ...mmInvoiceTools,
+  ...mmReversalTools,
+  ...paymentTools,
+  ...financeTools,
   ...pmTools,
   ...sharedTools,
 ] as unknown as ToolDefinition[];

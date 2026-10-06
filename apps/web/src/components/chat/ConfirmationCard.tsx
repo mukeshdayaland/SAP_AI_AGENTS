@@ -97,7 +97,7 @@ export function ConfirmationCard({
         {pending && !expired ? (
           <>
             {isProd ? (
-              <label className="flex items-center gap-2 text-[13px] text-ink">
+              <label className="flex items-center gap-2 text-[12px] text-ink">
                 <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="h-4 w-4 accent-[var(--error)]" />I understand this changes <strong>production</strong> data.
               </label>
             ) : (
@@ -119,7 +119,7 @@ export function ConfirmationCard({
         )}
       </footer>
       {error && (
-        <p role="alert" className="border-t border-line bg-error-soft px-4 py-2 text-[13px] text-error">
+        <p role="alert" className="border-t border-line bg-error-soft px-4 py-2 text-[12px] text-error">
           {error}
         </p>
       )}

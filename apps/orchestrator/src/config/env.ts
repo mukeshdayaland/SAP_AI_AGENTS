@@ -50,6 +50,8 @@ export interface OrchestratorConfig {
   configDir: string;
   audit: { sink: 'stdout' | 'btp-auditlog'; btp?: { url: string; tokenUrl: string; clientId: string; clientSecret: string } };
   cors: { allowedOrigins: string[] };
+  /** Vendor map. The browser key is sent to the page; the geocoding key stays on the server. */
+  maps: { browserKey?: string; mapId?: string; geocodingKey?: string; geocodeCacheFile: string };
 }
 
 type Env = Record<string, string | undefined>;
@@ -173,5 +175,11 @@ export function loadConfig(rawEnv: Env = process.env): OrchestratorConfig {
     configDir: env.PROWESS_CONFIG_DIR ?? defaultConfigDir(),
     audit: { sink: btpAudit ? 'btp-auditlog' : 'stdout', ...(btpAudit && { btp: btpAudit }) },
     cors: { allowedOrigins: (env.CORS_ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean) },
+    maps: {
+      ...(env.MAPS_API && { browserKey: env.MAPS_API }),
+      ...(env.MAPS_MAP_ID && { mapId: env.MAPS_MAP_ID }),
+      ...(env.GEO_API && { geocodingKey: env.GEO_API }),
+      geocodeCacheFile: env.GEOCODE_CACHE_FILE ?? resolve(process.cwd(), '.cache/geocode.json'),
+    },
   };
 }

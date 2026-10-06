@@ -8,6 +8,62 @@ const supplier = partnerNumber.describe('SAP supplier / business partner number,
 /** FI-AP: supplier exposure, payment status, vendor line items (FBL1N) and payables due for payment. */
 export const apTools = [
   defineTool({
+    name: 'ap_listVendorAddresses',
+    domain: 'ap',
+    title: 'List vendor addresses',
+    description: 'List every supplier the user may see with its address. Feeds the vendor map; too large for a model, so only the orchestrator calls it.',
+    risk: 'READ',
+    operation: 'SAP_READ',
+    statusLabel: 'Retrieving vendor addresses',
+    internal: true,
+    input: {},
+    async run(_args, ctx) {
+      const vendors = await ctx.gateway.listVendorAddresses(ctx.sap);
+      return {
+        data: { vendors, summary: `${vendors.length} supplier(s).` },
+        source: { system: ctx.gateway.systemId, objectType: 'Supplier', objectId: 'all', retrievedAt: now(), mock: ctx.gateway.mock },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'ap_showVendorMap',
+    domain: 'ap',
+    title: 'Show vendors on a map',
+    description:
+      'Show the suppliers on a map in the chat, optionally only those of one country or city. Use it when the user asks where vendors are, or for a map of vendors or suppliers.',
+    risk: 'READ',
+    operation: 'SAP_READ',
+    statusLabel: 'Preparing the vendor map',
+    input: {
+      country: z.string().trim().regex(/^[A-Za-z]{2}$/).optional().describe('ISO country code, e.g. IN or US'),
+      city: z.string().trim().min(2).max(60).optional().describe('City name as written in SAP, e.g. Bangalore'),
+    },
+    async run({ country, city }, ctx) {
+      const iso = country?.toUpperCase();
+      const wanted = city?.toLowerCase();
+      const vendors = (await ctx.gateway.listVendorAddresses(ctx.sap)).filter((v) => (!iso || v.country === iso) && (!wanted || (v.city ?? '').toLowerCase().includes(wanted)));
+      const where = [city, iso].filter(Boolean).join(', ');
+      const byCity = new Map<string, number>();
+      for (const v of vendors) if (v.city) byCity.set(v.city.toUpperCase(), (byCity.get(v.city.toUpperCase()) ?? 0) + 1);
+      const topCities = [...byCity].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, count]) => ({ city: name, vendors: count }));
+      const withoutAddress = vendors.filter((v) => !v.city && !v.postalCode).length;
+      return {
+        data: {
+          vendors: vendors.length,
+          withoutAddress,
+          topCities,
+          summary: vendors.length
+            ? `The map shows the ${vendors.length} supplier(s)${where ? ` in ${where}` : ''}. ${withoutAddress} of them have no usable address in SAP and are left off.`
+            : `No suppliers were found${where ? ` in ${where}` : ''}.`,
+        },
+        components: vendors.length ? [{ type: 'vendor_map', data: { title: where ? `Vendors in ${where}` : 'All vendors', vendors: vendors.length, ...(iso && { country: iso }), ...(city && { city }) } }] : [],
+        source: { system: ctx.gateway.systemId, objectType: 'Supplier', objectId: where || 'all', retrievedAt: now(), mock: ctx.gateway.mock },
+      };
+    },
+  }),
+
+  defineTool({
     name: 'ap_getVendor',
     domain: 'ap',
     title: 'Get vendor financials',

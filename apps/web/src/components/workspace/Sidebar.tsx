@@ -1,7 +1,7 @@
 'use client';
 
 import type { ConversationSummary, UserProfile } from '@prowess/contracts';
-import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
+import { ChevronsUpDown, CircleHelp, LayoutDashboard, LogOut, MapPin, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { groupConversations } from '@/lib/format';
 import { IconButton, Menu, MenuItem, ProwessMark, cx } from '../ui/primitives';
@@ -12,6 +12,7 @@ interface Props {
   collapsed: boolean;
   mobileOpen: boolean;
   user: UserProfile;
+  showAdmin: boolean;
   onToggle: () => void;
   onCloseMobile: () => void;
   onNew: () => void;
@@ -19,6 +20,13 @@ interface Props {
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onSettings: () => void;
+}
+
+function roleLabel(user: UserProfile) {
+  if (user.roles.includes('AI_ADMIN')) return 'Administrator';
+  if (user.roles.includes('AI_POWER_USER')) return 'Power user';
+  if (user.roles.includes('AI_AUDITOR')) return 'Auditor';
+  return 'Business user';
 }
 
 export function Sidebar(p: Props) {
@@ -48,7 +56,7 @@ export function Sidebar(p: Props) {
           {!collapsed && (
             <div className="flex items-center gap-2.5">
               <ProwessMark size={26} />
-              <span className="text-[15px] font-semibold tracking-tight text-ink">Prowess AI</span>
+              <span className="text-[14px] font-semibold tracking-tight text-ink">Prowess AI</span>
             </div>
           )}
           <span className="hidden md:inline-flex">
@@ -77,7 +85,7 @@ export function Sidebar(p: Props) {
           {!collapsed &&
             groups.map((g) => (
               <section key={g.label} className="mt-3 first:mt-1" aria-label={g.label}>
-                <h3 className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-3">{g.label}</h3>
+                <h3 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-3">{g.label}</h3>
                 <ul>
                   {g.items.map((c) => (
                     <li key={c.id} className="group relative">
@@ -146,25 +154,68 @@ export function Sidebar(p: Props) {
                 </ul>
               </section>
             ))}
-          {!collapsed && !groups.length && <p className="px-2 pt-2 text-[13px] text-ink-3">Your conversations will appear here.</p>}
+          {!collapsed && !groups.length && <p className="px-2 pt-2 text-[12px] text-ink-3">Your conversations will appear here.</p>}
         </div>
 
-        <div className={cx('border-t border-line p-2', collapsed && 'flex flex-col items-center gap-1')}>
-          <button type="button" onClick={p.onSettings} className={cx('flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-sm text-ink-2 hover:bg-muted hover:text-ink', collapsed && 'justify-center')} aria-label="Settings">
-            <Settings size={16} aria-hidden />
-            {!collapsed && 'Settings'}
-          </button>
-          <div className={cx('flex items-center gap-2.5 rounded-lg px-2 py-2', collapsed && 'justify-center')}>
-            <span aria-hidden className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent">
-              {initials}
-            </span>
-            {!collapsed && (
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-ink">{p.user.displayName}</p>
-                <p className="truncate text-[11px] text-ink-3">{p.user.email ?? p.user.id}</p>
-              </div>
+        <div className="border-t border-line p-2">
+          <Menu
+            label="Account"
+            side="top"
+            align="left"
+            triggerClassName={cx(
+              'flex w-full items-center gap-2.5 rounded-lg border border-transparent text-left transition-colors hover:border-line hover:bg-muted aria-expanded:border-line aria-expanded:bg-muted',
+              collapsed ? 'justify-center p-1.5' : 'px-2 py-2',
             )}
-          </div>
+            trigger={
+              <>
+                <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-semibold text-on-brand">
+                  {initials}
+                </span>
+                {!collapsed && (
+                  <>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold text-ink">{p.user.displayName}</span>
+                      <span className="block truncate text-xs text-ink-3">{roleLabel(p.user)}</span>
+                    </span>
+                    <ChevronsUpDown size={15} aria-hidden className="shrink-0 text-ink-3" />
+                  </>
+                )}
+              </>
+            }
+          >
+            {(close) => (
+              <>
+                <div className="border-b border-line px-2.5 pb-2 pt-1.5">
+                  <p className="truncate text-sm font-medium text-ink">{p.user.displayName}</p>
+                  <p className="truncate text-xs text-ink-3">{p.user.email ?? p.user.id}</p>
+                </div>
+                <div className="pt-1">
+                  <MenuItem
+                    onSelect={() => {
+                      close();
+                      p.onSettings();
+                    }}
+                  >
+                    <Settings size={15} /> Settings
+                  </MenuItem>
+                  <MenuItem href="/vendors/">
+                    <MapPin size={15} /> Vendor map
+                  </MenuItem>
+                  <MenuItem href="/help/">
+                    <CircleHelp size={15} /> Help and my activity
+                  </MenuItem>
+                  {p.showAdmin && (
+                    <MenuItem href="/admin/">
+                      <LayoutDashboard size={15} /> Administration
+                    </MenuItem>
+                  )}
+                  <MenuItem href="/logout">
+                    <LogOut size={15} /> Sign out
+                  </MenuItem>
+                </div>
+              </>
+            )}
+          </Menu>
         </div>
       </nav>
     </>

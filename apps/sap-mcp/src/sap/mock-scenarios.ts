@@ -266,6 +266,8 @@ const poItem = (quantity: number) => ({ item: '10', ...MATERIAL, quantity, netPr
 export const SCENARIO_PURCHASE_ORDERS: PurchaseOrder[] = [
   { number: '4200000401', vendorId: '7002200010', vendorName: 'AL-QASSIM', value: SAR(1_000), status: 'DELIVERED', createdOn: '2026-09-23', purchasingGroup: '103', companyCode: CC, items: [poItem(1)] },
   { number: '4200000402', vendorId: '7002200010', vendorName: 'AL-QASSIM', value: SAR(2_000), status: 'DELIVERED', createdOn: '2026-09-27', purchasingGroup: '103', companyCode: CC, items: [poItem(2)] },
+  // assumed: a released order with nothing received yet, for the purchase-to-pay postings
+  { number: '4200000403', vendorId: '7002200010', vendorName: 'AL-QASSIM', value: SAR(3_000), status: 'RELEASED', createdOn: '2026-10-01', purchasingGroup: '103', companyCode: CC, items: [poItem(3)] },
 ];
 
 export const SCENARIO_GOODS_RECEIPTS: GoodsReceipt[] = [

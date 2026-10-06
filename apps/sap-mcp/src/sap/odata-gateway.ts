@@ -2,31 +2,58 @@ import { executeHttpRequest } from '@sap-cloud-sdk/http-client';
 import { M, type Logger } from '@prowess/observability';
 import {
   SapError,
+  AGING_BUCKETS,
+  type AccountActivity,
   type AccountingDocument,
+  type BankReconciliationAccount,
   type BillingDocument,
+  type ClearingRequest,
+  type CreditMemoRequest,
   type CreditProfile,
   type Customer,
+  type DepreciationOverview,
   type DocumentFlowStep,
   type Equipment,
+  type GLAccountInfo,
   type GLBalance,
+  type GRIRCase,
   type GoodsReceipt,
   type InfoRecord,
   type Invoice,
+  type InvoiceApproval,
   type MaintenanceEvent,
   type MaintenanceNotification,
   type MaterialStock,
+  type NewJournalEntry,
+  type NewPurchaseOrder,
+  type NewPaymentRequest,
+  type NewPurchaseRequisition,
+  type NewSalesOrder,
+  type NewSupplierInvoice,
   type OpenItem,
   type OpenItemQuery,
   type OutboundDelivery,
+  type PayablesAging,
+  type PaymentRequest,
+  type PaymentRequestQuery,
+  type PaymentRunProposal,
+  type PaymentStatus,
+  type PostedDocument,
   type ProcessStatus,
   type PurchaseOrder,
   type PurchaseRequisition,
+  type ReceivablesAging,
+  type Reversal,
   type SalesOrder,
+  type SalesOrderChange,
+  type IncompletionEntry,
+  type SalesOrderSimulation,
   type SapCallContext,
   type SapGateway,
   type SearchHit,
   type SystemInfo,
   type Vendor,
+  type VendorAddress,
   type WorkOrder,
 } from './model.js';
 
@@ -75,7 +102,39 @@ const SERVICES = {
   infoRecord: '/sap/opu/odata/sap/API_INFORECORD_PROCESS_SRV',
   // OData V4 (RAP service binding): <binding>/srvd/sap/<service definition>/<version>
   billingV4: '/sap/opu/odata4/sap/api_billingdocument/srvd/sap/api_billingdocument/0001',
+  // Custom RAP service ZAPI_FI_AGENTPAYMENT (package ZODATA): payment requests with second-person approval.
+  payment: '/sap/opu/odata4/sap/zapi_fi_agentpayment_o4/srvd/sap/zapi_fi_agentpayment/0001',
+  // Custom read-only service on the incompletion log (VBUV); not in the released sales order API.
+  incompletion: '/sap/opu/odata4/sap/zapi_sd_incompletionlog_o4/srvd/sap/zapi_sd_incompletionlog/0001',
+  salesSimulation: '/sap/opu/odata/sap/API_SALES_ORDER_SIMULATION_SRV',
+  // Finance analysis: Fiori application services, verified on this S/4HANA 2023 system.
+  glBalance: '/sap/opu/odata/sap/FAC_GL_ACCOUNT_BALANCE_SRV',
+  glPost: '/sap/opu/odata/sap/FAC_GL_DOCUMENT_POST_SRV',
+  arAging: '/sap/opu/odata/sap/C_ARAGINGANALYSISOVW_CDS',
+  supplierItems: '/sap/opu/odata/sap/FAP_VENDOR_LINE_ITEMS_SRV',
+  invoiceList: '/sap/opu/odata/sap/MM_SUPPLIER_INVOICE_LIST_ENH_SRV',
+  paymentProposal: '/sap/opu/odata/sap/FAP_SCHEDULE_PAYMENT_PROPOSAL',
+  grir: '/sap/opu/odata/sap/FAC_GRIR_ANALYSIS_SRV',
+  bankReconciliation: '/sap/opu/odata/sap/FAR_BS_ITM_REPROC_SRV',
+  assets: '/sap/opu/odata/sap/FAA_ASSET_MANAGE_SRV',
+  assetValues: '/sap/opu/odata/sap/FAA_ASSET_VALUES_OVERVIEW_SRV',
+  creditMemo: '/sap/opu/odata/sap/API_CREDIT_MEMO_REQUEST_SRV',
 } as const;
+
+/** Price condition types: PPR0 in S/4HANA pricing procedures, PR00 in classic ones such as RVAA01. */
+const PRICE_CONDITIONS = ['PPR0', 'PR00'];
+
+const PAYMENT_STATUS: Record<string, PaymentStatus> = { N: 'NEW', A: 'APPROVED', P: 'POSTED', R: 'REJECTED' };
+const PAYMENT_STATUS_CODE: Record<PaymentStatus, string> = { NEW: 'N', APPROVED: 'A', POSTED: 'P', REJECTED: 'R' };
+
+/** OData V4 key of a payment request. Anything but a UUID is refused, which also prevents path injection. */
+function paymentKey(id: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new SapError('INVALID_INPUT', 'The payment request id is not valid.');
+  return `Payment(${id.toLowerCase()})`;
+}
+
+/** OData V2 date-time literal for function import parameters. */
+const dateTimeLit = (isoDate: string) => `datetime'${isoDate}T00:00:00'`;
 
 /** Line-item fields read from the operational accounting document item cube. */
 const LINE_ITEM_FIELDS = [
@@ -107,6 +166,11 @@ const processStatus = (v: unknown): ProcessStatus => (v === 'C' ? 'COMPLETE' : v
 /** Follow-on document categories in the SD document flow. */
 const FLOW_CATEGORY: Record<string, DocumentFlowStep['category']> = { J: 'DELIVERY', T: 'DELIVERY', R: 'GOODS_ISSUE', M: 'BILLING', N: 'BILLING', O: 'BILLING', P: 'BILLING' };
 
+/** Suppliers are read in pages; the page limit caps one map load at 10,000 suppliers. */
+const VENDOR_PAGE_SIZE = 500;
+const VENDOR_MAX_PAGES = 20;
+const VENDOR_ADDRESS_FIELDS = ['StreetName', 'HouseNumber', 'CityName', 'PostalCode', 'Region', 'Country'];
+
 const results = (v: unknown) => ((v as { results?: ODataEntity[] } | undefined)?.results ?? []) as ODataEntity[];
 const str = (v: unknown) => String(v ?? '').trim();
 
@@ -120,6 +184,21 @@ function odataDate(v: unknown): string | undefined {
   if (ms) return new Date(Number(ms)).toISOString().slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : undefined;
 }
+
+/** OData V2 date literal for request bodies: `2026-10-02` -> `/Date(1790899200000)/`. */
+const toODataDate = (isoDate: string) => `/Date(${Date.parse(`${isoDate}T00:00:00Z`)})/`;
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+const encodeParameterValues = (params: Record<string, unknown>) => Object.fromEntries(Object.entries(params).map(([key, value]) => [key, encodeURIComponent(String(value))]));
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
+const isTrue = (v: unknown) => v === true || v === 'true' || v === 'X';
+/** Whole days from a date (YYYY-MM-DD) to the key date; positive when the date is in the past. */
+const daysBetween = (date: string, keyDate: string) => Math.floor((Date.parse(`${keyDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000);
+/** Depreciation status codes of FI-AA that mean the period is posted. */
+const DEPRECIATION_POSTED = new Set(['2', '3', 'P']);
+/** Fixed assets examined per depreciation overview: each one needs two reads. */
+const MAX_ASSETS = 20;
 
 const num = (v: unknown) => (typeof v === 'number' ? v : Number.parseFloat(String(v ?? '0')) || 0);
 
@@ -149,6 +228,17 @@ function sapMessageOf(err: unknown): string | undefined {
   return undefined;
 }
 
+/** SAP's error body (message ID, details, inner error), shortened for the log. */
+function sapErrorBodyOf(err: unknown): string | undefined {
+  let e: unknown = err;
+  for (let i = 0; i < 6 && e; i++) {
+    const body = (e as { response?: { data?: { error?: unknown } } }).response?.data?.error;
+    if (body) return JSON.stringify(body).slice(0, 2000);
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 type ODataEntity = Record<string, unknown>;
 
 export class ODataSapGateway implements SapGateway {
@@ -171,24 +261,31 @@ export class ODataSapGateway implements SapGateway {
   private async request(
     ctx: SapCallContext,
     what: string,
-    method: 'get' | 'post',
+    method: 'get' | 'post' | 'patch',
     url: string,
     params?: Record<string, string>,
     write?: { body?: unknown; headers?: Record<string, string> },
   ): Promise<unknown> {
-    const data = await this.send(ctx, what, method, url, { $format: 'json', ...params }, write);
+    // SAP Gateway rejects system query options such as $format on a POST; the Accept header asks for JSON there.
+    const data = await this.send(ctx, what, method, url, method === 'get' ? { $format: 'json', ...params } : params, write);
     return (data as { d?: unknown }).d ?? data;
   }
 
   /** OData V4 request. V4 has no `d` envelope and takes no `$format`; collections arrive as `{ value: [...] }`. */
-  private requestV4(ctx: SapCallContext, what: string, method: 'get' | 'post', url: string, options: { params?: Record<string, string>; body?: unknown } = {}): Promise<unknown> {
-    return this.send(ctx, what, method, url, options.params, { ...(options.body !== undefined && { body: options.body }), headers: { 'content-type': 'application/json' } });
+  private requestV4(
+    ctx: SapCallContext,
+    what: string,
+    method: 'get' | 'post',
+    url: string,
+    options: { params?: Record<string, string>; body?: unknown; headers?: Record<string, string> } = {},
+  ): Promise<unknown> {
+    return this.send(ctx, what, method, url, options.params, { ...(options.body !== undefined && { body: options.body }), headers: { 'content-type': 'application/json', ...options.headers } });
   }
 
   private async send(
     ctx: SapCallContext,
     what: string,
-    method: 'get' | 'post',
+    method: 'get' | 'post' | 'patch',
     url: string,
     params?: Record<string, string>,
     write?: { body?: unknown; headers?: Record<string, string> },
@@ -200,9 +297,11 @@ export class ODataSapGateway implements SapGateway {
         {
           method,
           url,
-          ...(params && { params }),
+          // The SDK sends parameters of a plain request config as they are, so $filter values must be encoded here.
+          ...(params && { params, parameterEncoder: encodeParameterValues }),
           ...(write?.body !== undefined && { data: write.body }),
-          headers: { accept: 'application/json', 'x-correlation-id': ctx.correlationId, ...write?.headers },
+          // This gateway protects writes with X-Requested-With; it does not always issue a CSRF token.
+          headers: { accept: 'application/json', 'x-correlation-id': ctx.correlationId, ...(method !== 'get' && { 'x-requested-with': 'XMLHttpRequest' }), ...write?.headers },
           timeout: 20_000,
         },
         { fetchCsrfToken: method !== 'get' },
@@ -212,7 +311,9 @@ export class ODataSapGateway implements SapGateway {
       if (err instanceof SapError) throw err;
       const status = statusOf(err);
       const sapMessage = sapMessageOf(err);
-      this.cfg.logger.warn('sap.request_failed', { what, status, error: (err as Error).message });
+      const sapError = sapErrorBodyOf(err);
+      // SAP's own message and error body are logged so a rejected posting can be diagnosed from the logs.
+      this.cfg.logger.warn('sap.request_failed', { what, method, status, error: (err as Error).message, ...(sapMessage && { sapMessage }), ...(sapError && { sapError }) });
       if (status === 404) throw new SapError('NOT_FOUND', `${what} was not found in SAP.`);
       if (status === 401 || status === 403) throw new SapError('NOT_AUTHORIZED', `SAP denied access to ${what}.`);
       // A rejected posting is a business outcome the user must be able to act on, so SAP's reason is passed on.
@@ -237,21 +338,21 @@ export class ODataSapGateway implements SapGateway {
     let e: ODataEntity;
     if (fiscalYear) {
       e = (await this.request(ctx, what, 'get', `${SERVICES.invoice}/A_SupplierInvoice(SupplierInvoice=${lit(number)},FiscalYear=${lit(fiscalYear)})`, {
-        $expand: 'to_SupplierInvoiceItemPurOrdRef',
+        $expand: 'to_SuplrInvcItemPurOrdRef',
       })) as ODataEntity;
     } else {
       const res = (await this.request(ctx, what, 'get', `${SERVICES.invoice}/A_SupplierInvoice`, {
         $filter: `SupplierInvoice eq ${lit(number)}`,
         $orderby: 'FiscalYear desc',
         $top: '1',
-        $expand: 'to_SupplierInvoiceItemPurOrdRef',
+        $expand: 'to_SuplrInvcItemPurOrdRef',
       })) as { results?: ODataEntity[] };
       const first = res.results?.[0];
       if (!first) throw new SapError('NOT_FOUND', `${what} was not found in SAP.`);
       e = first;
     }
     const block = String(e.PaymentBlockingReason ?? '').trim();
-    const poRefs = ((e.to_SupplierInvoiceItemPurOrdRef as { results?: ODataEntity[] } | undefined)?.results ?? []) as ODataEntity[];
+    const poRefs = ((e.to_SuplrInvcItemPurOrdRef as { results?: ODataEntity[] } | undefined)?.results ?? []) as ODataEntity[];
     const vendorId = String(e.InvoicingParty ?? '');
     const vendorName = vendorId ? await this.getVendor(ctx, vendorId).then((v) => v.name, () => vendorId) : '';
     return {
@@ -281,8 +382,69 @@ export class ODataSapGateway implements SapGateway {
     };
   }
 
-  async getGLBalance(): Promise<GLBalance> {
-    return this.notSupported('G/L balances (configure a CDS view such as C_TRIALBALANCE_CDS and extend this gateway)');
+  async listVendorAddresses(ctx: SapCallContext): Promise<VendorAddress[]> {
+    const vendors: VendorAddress[] = [];
+    for (let page = 0; page < VENDOR_MAX_PAGES; page++) {
+      const d = (await this.request(ctx, 'Suppliers', 'get', `${SERVICES.bp}/A_BusinessPartner`, {
+        $filter: "Supplier ne ''",
+        $expand: 'to_BusinessPartnerAddress',
+        $select: `BusinessPartner,BusinessPartnerFullName,Customer,Supplier,${VENDOR_ADDRESS_FIELDS.map((f) => `to_BusinessPartnerAddress/${f}`).join(',')}`,
+        $orderby: 'BusinessPartner',
+        $top: String(VENDOR_PAGE_SIZE),
+        $skip: String(vendors.length),
+      })) as { results?: ODataEntity[]; __next?: string };
+      const rows = d.results ?? [];
+      for (const e of rows) {
+        const a = results(e.to_BusinessPartnerAddress)[0] ?? {};
+        vendors.push({
+          id: str(e.Supplier),
+          businessPartner: str(e.BusinessPartner),
+          name: str(e.BusinessPartnerFullName) || str(e.Supplier),
+          isCustomer: str(e.Customer) !== '',
+          ...(str(a.StreetName) && { street: str(a.StreetName) }),
+          ...(str(a.HouseNumber) && { houseNumber: str(a.HouseNumber) }),
+          ...(str(a.CityName) && { city: str(a.CityName) }),
+          ...(str(a.PostalCode) && { postalCode: str(a.PostalCode) }),
+          ...(str(a.Region) && { region: str(a.Region) }),
+          country: str(a.Country),
+        });
+      }
+      // SAP may return fewer rows than asked for and point to the rest with __next.
+      if (!rows.length || (rows.length < VENDOR_PAGE_SIZE && !d.__next)) break;
+    }
+    return vendors;
+  }
+
+  /**
+   * Balance of a G/L account from the G/L account balance service (leading ledger 0L).
+   * The service returns one row per period plus period 000 (balance carried forward) and 999 (year total).
+   */
+  async getGLBalance(ctx: SapCallContext, account: string, companyCode: string, fiscalYear: string, period?: string): Promise<GLBalance> {
+    const rows = results(
+      await this.request(ctx, `G/L account ${account}`, 'get', `${SERVICES.glBalance}/GL_ACCOUNT_BALANCESet`, {
+        $select: 'GLAccount,GLAccountName,LedgerFiscalPeriod,DebitAmountInCompanyCodeCrcy,CreditAmountInCoCodeCrcy,BalAmtInCompanyCodeCrcy,AccmltdBalAmtInCoCodeCrcy,CompanyCodeCurrency',
+        $filter: `Ledger eq '0L' and CompanyCode eq ${lit(companyCode)} and LedgerFiscalYear eq ${lit(fiscalYear)} and GLAccount eq ${lit(account)}`,
+        $top: '200',
+      }),
+    );
+    if (!rows.length) throw new SapError('NOT_FOUND', `No balance was found in SAP for G/L account ${account} in company code ${companyCode}, fiscal year ${fiscalYear}.`);
+    const currency = str(rows.find((r) => str(r.CompanyCodeCurrency))?.CompanyCodeCurrency);
+    const periodOf = (r: ODataEntity) => str(r.LedgerFiscalPeriod).padStart(3, '0');
+    const wanted = period?.padStart(3, '0');
+    const postings = rows.filter((r) => periodOf(r) !== '000' && periodOf(r) !== '999' && (!wanted || periodOf(r) <= wanted)).sort((x, y) => periodOf(x).localeCompare(periodOf(y)));
+    const sum = (field: string) => postings.reduce((total, r) => total + Math.abs(num(r[field])), 0);
+    // The accumulated balance of the last period read includes the balance carried forward.
+    const closing = postings.at(-1) ?? rows.find((r) => periodOf(r) === '000');
+    return {
+      account,
+      description: str(rows.find((r) => str(r.GLAccountName))?.GLAccountName) || `G/L account ${account}`,
+      companyCode,
+      fiscalYear,
+      period: wanted ?? (postings.length ? periodOf(postings.at(-1)!) : '000'),
+      debit: { amount: round2(sum('DebitAmountInCompanyCodeCrcy')), currency },
+      credit: { amount: round2(sum('CreditAmountInCoCodeCrcy')), currency },
+      balance: { amount: round2(num(closing?.AccmltdBalAmtInCoCodeCrcy)), currency },
+    };
   }
 
   async getPurchaseOrder(ctx: SapCallContext, number: string): Promise<PurchaseOrder> {
@@ -454,6 +616,9 @@ export class ODataSapGateway implements SapGateway {
         unit: str(i.RequestedQuantityUnit),
         netValue: { amount: num(i.NetAmount), currency: str(i.TransactionCurrency) || currency },
         ...(str(i.ProductionPlant) && { plant: str(i.ProductionPlant) }),
+        ...(str(i.ShippingPoint) && { shippingPoint: str(i.ShippingPoint) }),
+        ...(str(i.StorageLocation) && { storageLocation: str(i.StorageLocation) }),
+        ...(str(i.ItemWeightUnit) && { grossWeight: num(i.ItemGrossWeight), netWeight: num(i.ItemNetWeight), weightUnit: str(i.ItemWeightUnit) }),
       })),
     };
   }
@@ -724,6 +889,129 @@ export class ODataSapGateway implements SapGateway {
     });
   }
 
+  async getInvoicesForPurchaseOrder(ctx: SapCallContext, purchaseOrder: string): Promise<Invoice[]> {
+    const refs = results(
+      await this.request(ctx, `Invoices for purchase order ${purchaseOrder}`, 'get', `${SERVICES.invoice}/A_SuplrInvcItemPurOrdRef`, {
+        $filter: `PurchaseOrder eq ${lit(purchaseOrder)}`,
+        $select: 'SupplierInvoice,FiscalYear',
+        $top: '100',
+      }),
+    );
+    const keys = [...new Set(refs.map((r) => `${str(r.SupplierInvoice)}/${str(r.FiscalYear)}`))].slice(0, 20);
+    const invoices = await Promise.all(keys.map((key) => this.getInvoice(ctx, key.split('/')[0]!, key.split('/')[1])));
+    return invoices.filter((i) => i.status !== 'REVERSED');
+  }
+
+  async createPurchaseRequisition(ctx: SapCallContext, requisition: NewPurchaseRequisition): Promise<PurchaseRequisition> {
+    const created = (await this.request(ctx, `Purchase requisition for material ${requisition.material}`, 'post', `${SERVICES.pr}/A_PurchaseRequisitionHeader`, undefined, {
+      body: {
+        PurchaseRequisitionType: 'NB',
+        to_PurchaseReqnItem: {
+          results: [
+            {
+              Material: requisition.material,
+              Plant: requisition.plant,
+              RequestedQuantity: String(requisition.quantity),
+              ...(requisition.deliveryDate && { DeliveryDate: toODataDate(requisition.deliveryDate) }),
+            },
+          ],
+        },
+      },
+    })) as ODataEntity;
+    return this.getPurchaseRequisition(ctx, str(created.PurchaseRequisition));
+  }
+
+  async createPurchaseOrder(ctx: SapCallContext, order: NewPurchaseOrder): Promise<PurchaseOrder> {
+    const created = (await this.request(ctx, `Purchase order for supplier ${order.supplier}`, 'post', `${SERVICES.po}/A_PurchaseOrder`, undefined, {
+      body: {
+        PurchaseOrderType: 'NB',
+        CompanyCode: order.companyCode,
+        PurchasingOrganization: order.purchasingOrganization,
+        PurchasingGroup: order.purchasingGroup,
+        Supplier: order.supplier,
+        to_PurchaseOrderItem: {
+          results: [
+            {
+              Material: order.material,
+              Plant: order.plant,
+              OrderQuantity: String(order.quantity),
+              // Without a price SAP takes it from the purchasing info record.
+              ...(order.netPrice !== undefined && { NetPriceAmount: String(order.netPrice) }),
+            },
+          ],
+        },
+      },
+    })) as ODataEntity;
+    return this.getPurchaseOrder(ctx, str(created.PurchaseOrder));
+  }
+
+  async postGoodsReceipt(ctx: SapCallContext, purchaseOrder: string): Promise<GoodsReceipt[]> {
+    const [po, received] = await Promise.all([this.getPurchaseOrder(ctx, purchaseOrder), this.getGoodsReceipts(ctx, purchaseOrder)]);
+    const open = po.items
+      .map((i) => ({ ...i, open: i.quantity - received.filter((g) => g.item === i.item).reduce((sum, g) => sum + g.quantity, 0) }))
+      .filter((i) => i.open > 0);
+    if (!open.length) throw new SapError('BUSINESS_RULE', `Purchase order ${purchaseOrder} is already completely received.`);
+
+    const today = toODataDate(todayIso());
+    const created = (await this.request(ctx, `Goods receipt for purchase order ${purchaseOrder}`, 'post', `${SERVICES.gr}/A_MaterialDocumentHeader`, undefined, {
+      body: {
+        GoodsMovementCode: '01', // goods receipt for purchase order (MIGO A01 / R01)
+        PostingDate: today,
+        DocumentDate: today,
+        to_MaterialDocumentItem: {
+          results: open.map((i) => ({
+            Material: i.material,
+            GoodsMovementType: '101',
+            GoodsMovementRefDocType: 'B',
+            PurchaseOrder: purchaseOrder,
+            PurchaseOrderItem: i.item,
+            QuantityInEntryUnit: String(i.open),
+            EntryUnit: i.unit,
+          })),
+        },
+      },
+    })) as ODataEntity;
+    const document = str(created.MaterialDocument);
+    return (await this.getGoodsReceipts(ctx, purchaseOrder)).filter((g) => g.materialDocument === document);
+  }
+
+  async createSupplierInvoice(ctx: SapCallContext, invoice: NewSupplierInvoice): Promise<Invoice> {
+    const [po, received] = await Promise.all([this.getPurchaseOrder(ctx, invoice.purchaseOrder), this.getGoodsReceipts(ctx, invoice.purchaseOrder)]);
+    const currency = po.value.currency;
+    const date = toODataDate(invoice.invoiceDate ?? todayIso());
+    // Each order item is invoiced for the quantity received so far, at the order price.
+    const items = po.items
+      .map((i) => ({ ...i, received: received.filter((g) => g.item === i.item).reduce((sum, g) => sum + g.quantity, 0) }))
+      .filter((i) => i.received > 0);
+    if (!items.length) throw new SapError('BUSINESS_RULE', `No goods receipt has been posted for purchase order ${invoice.purchaseOrder}, so there is nothing to invoice.`);
+
+    const created = (await this.request(ctx, `Supplier invoice for purchase order ${invoice.purchaseOrder}`, 'post', `${SERVICES.invoice}/A_SupplierInvoice`, undefined, {
+      body: {
+        CompanyCode: po.companyCode,
+        DocumentDate: date,
+        PostingDate: toODataDate(todayIso()),
+        InvoicingParty: po.vendorId,
+        DocumentCurrency: currency,
+        InvoiceGrossAmount: String(invoice.grossAmount),
+        SupplierInvoiceIDByInvcgParty: invoice.reference,
+        TaxIsCalculatedAutomatically: true,
+        to_SuplrInvcItemPurOrdRef: {
+          results: items.map((i, index) => ({
+            SupplierInvoiceItem: String(index + 1),
+            PurchaseOrder: invoice.purchaseOrder,
+            PurchaseOrderItem: i.item,
+            DocumentCurrency: currency,
+            SupplierInvoiceItemAmount: String(i.netPrice.amount * i.received),
+            PurchaseOrderQuantityUnit: i.unit,
+            QuantityInPurchaseOrderUnit: String(i.received),
+            ...(invoice.taxCode && { TaxCode: invoice.taxCode }),
+          })),
+        },
+      },
+    })) as ODataEntity;
+    return this.getInvoice(ctx, str(created.SupplierInvoice), str(created.FiscalYear) || undefined);
+  }
+
   async createDelivery(ctx: SapCallContext, salesOrder: string): Promise<OutboundDelivery> {
     const order = await this.getSalesOrder(ctx, salesOrder);
     const created = (await this.request(ctx, `Outbound delivery for sales order ${salesOrder}`, 'post', `${SERVICES.delivery}/A_OutbDeliveryHeader`, undefined, {
@@ -748,6 +1036,621 @@ export class ODataSapGateway implements SapGateway {
     const created = str((res.value?.[0] ?? res).BillingDocument);
     if (!created) throw new SapError('BUSINESS_RULE', `SAP did not create a billing document for delivery ${delivery}.`);
     return this.getBillingDocument(ctx, created);
+  }
+
+  /* ---------------- finance analysis ---------------- */
+
+  async searchGLAccounts(ctx: SapCallContext, searchText: string, companyCode?: string): Promise<GLAccountInfo[]> {
+    const rows = results(
+      await this.request(ctx, `G/L accounts matching "${searchText}"`, 'get', `${SERVICES.glPost}/FAC_POST_JOUR_ENTRY_GLACCT_VH`, {
+        $select: 'GLAccountExternal,GLAccount_Text,GLAccountLongName,CompanyCode,ChartOfAccounts',
+        // The value help matches the short text case-sensitively; account texts are upper case.
+        $filter: [...(companyCode ? [`CompanyCode eq ${lit(companyCode)}`] : []), `substringof(${lit(searchText.toUpperCase())},GLAccount_Text)`].join(' and '),
+        $top: '50',
+      }),
+    );
+    const seen = new Set<string>();
+    return rows
+      .filter((r) => str(r.GLAccountExternal) && !seen.has(`${str(r.GLAccountExternal)}|${str(r.ChartOfAccounts)}`) && seen.add(`${str(r.GLAccountExternal)}|${str(r.ChartOfAccounts)}`))
+      .map((r) => ({
+        account: str(r.GLAccountExternal),
+        name: str(r.GLAccount_Text),
+        ...(str(r.GLAccountLongName) && { longName: str(r.GLAccountLongName) }),
+        ...(str(r.CompanyCode) && { companyCode: str(r.CompanyCode) }),
+        ...(str(r.ChartOfAccounts) && { chartOfAccounts: str(r.ChartOfAccounts) }),
+      }));
+  }
+
+  async getAccountActivity(ctx: SapCallContext, companyCode: string, fiscalYear: string, periodFrom?: string, periodTo?: string): Promise<AccountActivity[]> {
+    const rows = results(
+      await this.request(ctx, `G/L activity of company code ${companyCode}`, 'get', `${SERVICES.glBalance}/GL_ACCOUNT_BALANCESet`, {
+        $select: 'GLAccount,GLAccountName,LedgerFiscalPeriod,DebitAmountInCompanyCodeCrcy,CreditAmountInCoCodeCrcy,CompanyCodeCurrency',
+        $filter: `Ledger eq '0L' and CompanyCode eq ${lit(companyCode)} and LedgerFiscalYear eq ${lit(fiscalYear)}`,
+        $top: '2000',
+      }),
+    );
+    // The service rejects period ranges in $filter, so the range and the 000 / 999 rows are filtered here.
+    const from = Math.max(Number(periodFrom ?? '1'), 1);
+    const to = Math.min(Number(periodTo ?? '16'), 16);
+    const byAccount = new Map<string, AccountActivity>();
+    for (const r of rows) {
+      const period = Number(str(r.LedgerFiscalPeriod));
+      const account = str(r.GLAccount);
+      if (!account || !(period >= from && period <= to)) continue;
+      const entry = byAccount.get(account) ?? { account, name: str(r.GLAccountName), debit: 0, credit: 0, net: 0, currency: str(r.CompanyCodeCurrency) };
+      entry.debit += Math.abs(num(r.DebitAmountInCompanyCodeCrcy));
+      entry.credit += Math.abs(num(r.CreditAmountInCoCodeCrcy));
+      entry.name ||= str(r.GLAccountName);
+      byAccount.set(account, entry);
+    }
+    return [...byAccount.values()]
+      .map((e) => ({ ...e, debit: round2(e.debit), credit: round2(e.credit), net: round2(e.debit - e.credit) }))
+      .sort((x, y) => Math.abs(y.net) - Math.abs(x.net));
+  }
+
+  async getReceivablesAging(ctx: SapCallContext, companyCode: string, currency: string): Promise<ReceivablesAging[]> {
+    if (!/^[A-Z]{3}$/.test(currency)) throw new SapError('INVALID_INPUT', 'The currency must be a three-letter code.');
+    const entity = `C_ARAGINGANALYSISOVW(P_DisplayCurrency='${currency}',P_NetDueInterval1InDays='30',P_NetDueInterval2InDays='60',P_NetDueInterval3InDays='90')/Results`;
+    const rows = results(
+      await this.request(ctx, `Receivables aging of company code ${companyCode}`, 'get', `${SERVICES.arAging}/${entity}`, {
+        $select: 'Customer,CompanyCode,TotalAmountInDisplayCrcy,NetDueIntvl2AmtInDspCrcy,NetDueIntvl3AmtInDspCrcy,NetDueIntvl4AmtInDspCrcy,DisplayCurrency',
+        $filter: `CompanyCode eq ${lit(companyCode)}`,
+        $top: '500',
+      }),
+    );
+    const byCustomer = new Map<string, ReceivablesAging>();
+    for (const r of rows) {
+      const customer = str(r.Customer);
+      if (!customer) continue;
+      const entry = byCustomer.get(customer) ?? { customer, total: 0, upTo30: 0, days31to60: 0, days61to90: 0, over90: 0, currency: str(r.DisplayCurrency) || currency };
+      entry.total += num(r.TotalAmountInDisplayCrcy);
+      entry.days31to60 += num(r.NetDueIntvl2AmtInDspCrcy);
+      entry.days61to90 += num(r.NetDueIntvl3AmtInDspCrcy);
+      entry.over90 += num(r.NetDueIntvl4AmtInDspCrcy);
+      byCustomer.set(customer, entry);
+    }
+    return [...byCustomer.values()]
+      .map((e) => ({ ...e, total: round2(e.total), days31to60: round2(e.days31to60), days61to90: round2(e.days61to90), over90: round2(e.over90), upTo30: round2(e.total - e.days31to60 - e.days61to90 - e.over90) }))
+      .sort((x, y) => y.total - x.total);
+  }
+
+  async getPayablesAging(ctx: SapCallContext, companyCode: string, keyDate = todayIso()): Promise<PayablesAging> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(keyDate)) throw new SapError('INVALID_INPUT', 'The key date must have the format YYYY-MM-DD.');
+    const limit = 2000;
+    const rows = results(
+      await this.request(ctx, `Open supplier items of company code ${companyCode}`, 'get', `${SERVICES.supplierItems}/Items`, {
+        $select: 'Supplier,SupplierName,DebitCreditCode,AmountInCompanyCodeCurrency,CompanyCodeCurrency,NetDueDate',
+        // Clearing status 2 = open.
+        $filter: `CompanyCode eq ${lit(companyCode)} and ClearingStatus eq '2'`,
+        $top: String(limit),
+      }),
+    );
+    const buckets = AGING_BUCKETS.map((bucket) => ({ bucket, amount: 0, items: 0 }));
+    const suppliers = new Map<string, PayablesAging['suppliers'][number]>();
+    for (const r of rows) {
+      // Payables are credits; they are reported as positive amounts and debit memos as negative.
+      const raw = Math.abs(num(r.AmountInCompanyCodeCurrency));
+      const amount = str(r.DebitCreditCode) === 'S' ? -raw : raw;
+      const due = odataDate(r.NetDueDate);
+      const overdueDays = due ? daysBetween(due, keyDate) : 0;
+      const bucket = buckets[overdueDays <= 0 ? 0 : overdueDays <= 30 ? 1 : overdueDays <= 60 ? 2 : overdueDays <= 90 ? 3 : 4]!;
+      bucket.amount += amount;
+      bucket.items += 1;
+      const supplier = suppliers.get(str(r.Supplier)) ?? { supplier: str(r.Supplier), ...(str(r.SupplierName) && { name: str(r.SupplierName) }), amount: 0, overdue: 0, items: 0 };
+      supplier.amount += amount;
+      if (overdueDays > 0) supplier.overdue += amount;
+      supplier.items += 1;
+      suppliers.set(supplier.supplier, supplier);
+    }
+    return {
+      companyCode,
+      keyDate,
+      currency: str(rows[0]?.CompanyCodeCurrency),
+      buckets: buckets.map((b) => ({ ...b, amount: round2(b.amount) })),
+      suppliers: [...suppliers.values()].map((x) => ({ ...x, amount: round2(x.amount), overdue: round2(x.overdue) })).sort((x, y) => y.amount - x.amount),
+      truncated: rows.length >= limit,
+    };
+  }
+
+  async listInvoiceApprovals(ctx: SapCallContext, companyCode: string): Promise<InvoiceApproval[]> {
+    const rows = results(
+      await this.request(ctx, `Supplier invoices of company code ${companyCode}`, 'get', `${SERVICES.invoiceList}/C_SupplierInvoiceList`, {
+        $select: 'SupplierInvoice,FiscalYear,InvoicingParty,InvoicingPartyName,PostingDate,InvoiceGrossAmount,DocumentCurrency,InvoiceStatusAndOrigin_Text,IsBlocked,ApprovalStatusName,ApproverName',
+        $filter: `CompanyCode eq ${lit(companyCode)}`,
+        $top: '100',
+      }),
+    );
+    return rows.map((r) => ({
+      invoice: str(r.SupplierInvoice),
+      fiscalYear: str(r.FiscalYear),
+      supplier: str(r.InvoicingParty),
+      supplierName: str(r.InvoicingPartyName) || str(r.InvoicingParty),
+      gross: { amount: num(r.InvoiceGrossAmount), currency: str(r.DocumentCurrency) },
+      ...(odataDate(r.PostingDate) && { postingDate: odataDate(r.PostingDate) }),
+      status: str(r.InvoiceStatusAndOrigin_Text),
+      blocked: isTrue(r.IsBlocked),
+      ...(str(r.ApprovalStatusName) && { approvalStatus: str(r.ApprovalStatusName) }),
+      ...(str(r.ApproverName) && { approver: str(r.ApproverName) }),
+    }));
+  }
+
+  async getPaymentRunProposal(ctx: SapCallContext, companyCode: string, runId?: string): Promise<PaymentRunProposal> {
+    const what = `Payment run proposal of company code ${companyCode}`;
+    const run = runId ? ` and PaymentRunId eq ${lit(runId)}` : '';
+    const read = (entity: string, companyField: string, top: string) =>
+      this.request(ctx, what, 'get', `${SERVICES.paymentProposal}/${entity}`, { $filter: `${companyField} eq ${lit(companyCode)}${run}`, $top: top }).then(results);
+    const [runs, items, exceptions] = await Promise.all([read('PaymentSummarySet', 'PayingCompanyCode', '100'), read('PaymentItemSet', 'CompanyCode', '500'), read('ExceptionSet', 'CompanyCode', '200')]);
+    const money = (r: ODataEntity, ...fields: string[]) => ({ amount: Math.abs(num(fields.map((f) => r[f]).find((v) => num(v) !== 0))), currency: str(r.Currency) || str(r.PaymentCurrency) });
+    return {
+      runs: runs.map((r) => ({
+        runId: str(r.PaymentRunId),
+        ...(odataDate(r.PaymentRunDate) && { runDate: odataDate(r.PaymentRunDate) }),
+        isProposal: isTrue(r.PaymentRunIsProposal),
+        ...(str(r.PaymentMethodName) || str(r.PaymentMethod) ? { paymentMethod: str(r.PaymentMethodName) || str(r.PaymentMethod) } : {}),
+        amount: money(r, 'AmountInCompanyCodeCurrency', 'PaidAmountInPaytCurrency'),
+      })),
+      items: items.map((r) => ({
+        runId: str(r.PaymentRunId),
+        supplier: str(r.Supplier),
+        ...(str(r.SupplierName) && { supplierName: str(r.SupplierName) }),
+        document: str(r.AccountingDocument),
+        ...(str(r.PaymentMethod) && { paymentMethod: str(r.PaymentMethod) }),
+        amount: money(r, 'NetAmountInCoCodeCurrency', 'AmountInTransactionCurrency'),
+      })),
+      exceptions: exceptions.map((r) => ({
+        runId: str(r.PaymentRunId),
+        supplier: str(r.Supplier),
+        ...(str(r.SupplierName) && { supplierName: str(r.SupplierName) }),
+        document: str(r.AccountingDocument),
+        ...(str(r.PaymentBlockingReason) && { blockingReason: str(r.PaymentBlockingReason) }),
+        message: str(r.SystemMessageDescription),
+        amount: money(r, 'AmountInTransactionCurrency'),
+      })),
+    };
+  }
+
+  async listGRIRCases(ctx: SapCallContext, companyCode: string, fiscalYear?: string): Promise<GRIRCase[]> {
+    const rows = results(
+      await this.request(ctx, `GR/IR cases of company code ${companyCode}`, 'get', `${SERVICES.grir}/C_GRIRProcessDigest`, {
+        $select:
+          'PurchasingDocument,PurchasingDocumentItem,Supplier,SupplierName,GRIRClearingProcessStatus_Text,GRIRClearingProcessPriority_Text,GRIRClearingProcessRootCause_Text,DueDays,NumberOfOpenItems,AmountInCompanyCodeCurrency,CompanyCodeCurrency',
+        $filter: `CompanyCode eq ${lit(companyCode)}${fiscalYear ? ` and FiscalYear eq ${lit(fiscalYear)}` : ''}`,
+        $top: '200',
+      }),
+    );
+    return rows.map((r) => ({
+      purchaseOrder: str(r.PurchasingDocument),
+      item: str(r.PurchasingDocumentItem),
+      supplier: str(r.Supplier),
+      ...(str(r.SupplierName) && { supplierName: str(r.SupplierName) }),
+      ...(str(r.GRIRClearingProcessStatus_Text) && { status: str(r.GRIRClearingProcessStatus_Text) }),
+      ...(str(r.GRIRClearingProcessPriority_Text) && { priority: str(r.GRIRClearingProcessPriority_Text) }),
+      ...(str(r.GRIRClearingProcessRootCause_Text) && { rootCause: str(r.GRIRClearingProcessRootCause_Text) }),
+      ...(str(r.DueDays) && { dueDays: num(r.DueDays) }),
+      openItems: num(r.NumberOfOpenItems),
+      balance: { amount: num(r.AmountInCompanyCodeCurrency), currency: str(r.CompanyCodeCurrency) },
+    }));
+  }
+
+  async listCreditBlockedOrders(ctx: SapCallContext, customer?: string): Promise<SalesOrder[]> {
+    const res = await this.request(ctx, 'Credit-blocked sales orders', 'get', `${SERVICES.salesOrder}/A_SalesOrder`, {
+      // Credit status B = the credit check was not passed.
+      $filter: `TotalCreditCheckStatus eq 'B'${customer ? ` and SoldToParty eq ${lit(customer)}` : ''}`,
+      $top: '100',
+    });
+    return results(res).map((e) => this.mapSalesOrder(e, str(e.SoldToParty)));
+  }
+
+  async getBankReconciliation(ctx: SapCallContext, companyCode: string): Promise<BankReconciliationAccount[]> {
+    const rows = results(
+      await this.request(ctx, `Bank reconciliation of company code ${companyCode}`, 'get', `${SERVICES.bankReconciliation}/GLAccountHouseBankAccountWorklistItems`, {
+        $select: 'CompanyCode,GLAccount,GLAccountName,HouseBank,HouseBankAccount,NumberOfOpenItems,BalanceAmountInCompanyCodeCrcy,CompanyCodeCurrency',
+        $filter: `CompanyCode eq ${lit(companyCode)}`,
+        $top: '200',
+      }),
+    );
+    return rows.map((r) => ({
+      companyCode: str(r.CompanyCode),
+      glAccount: str(r.GLAccount),
+      ...(str(r.GLAccountName) && { glAccountName: str(r.GLAccountName) }),
+      houseBank: str(r.HouseBank),
+      houseBankAccount: str(r.HouseBankAccount),
+      openItems: Math.trunc(num(r.NumberOfOpenItems)),
+      openBalance: { amount: num(r.BalanceAmountInCompanyCodeCrcy), currency: str(r.CompanyCodeCurrency) },
+    }));
+  }
+
+  async getDepreciationOverview(ctx: SapCallContext, companyCode: string, fiscalYear: string): Promise<DepreciationOverview> {
+    const what = `Fixed assets of company code ${companyCode}`;
+    const master = results(
+      await this.request(ctx, what, 'get', `${SERVICES.assets}/C_FixedAssetMaintain`, {
+        $select: 'MasterFixedAsset,FixedAsset,FixedAssetDescription',
+        $filter: `CompanyCode eq ${lit(companyCode)}`,
+        $top: '100',
+      }),
+    );
+    // The value views are parameterized per asset; a blank asset returns nothing, so each asset is read on its own.
+    const params = (r: ODataEntity) =>
+      `(P_MasterFixedAsset=${lit(str(r.MasterFixedAsset))},P_FixedAsset=${lit(str(r.FixedAsset) || '0')},P_CompanyCode=${lit(companyCode)},P_AssetDepreciationArea='01',P_CurrencyRole='10',` +
+      `P_CreationDateTime=datetimeoffset'${todayIso()}T00:00:00Z',P_FirstFiscalYear=${lit(fiscalYear)})/Results`;
+    const overview: DepreciationOverview = { companyCode, fiscalYear, assets: [], exceptions: [], truncated: master.length > MAX_ASSETS };
+    for (const asset of master.slice(0, MAX_ASSETS)) {
+      const [periods, balances] = await Promise.all([
+        this.request(ctx, what, 'get', `${SERVICES.assetValues}/C_FxdAstDeprValueByCrcyRole${params(asset)}`, { $top: '100' }).then(results),
+        this.request(ctx, what, 'get', `${SERVICES.assetValues}/C_Fixedassetnetbookvalue${params(asset)}`, { $top: '100' }).then(results),
+      ]);
+      if (!periods.length && !balances.length) continue;
+      const id = str(asset.MasterFixedAsset);
+      let posted = 0;
+      let unposted = 0;
+      for (const p of periods) {
+        // Depreciation is posted as a credit; it is reported as a positive expense.
+        const amount = Math.abs(num(p.OrdinaryDeprAmtInDspCrcy)) + Math.abs(num(p.SpecialDeprAmtInDspCrcy)) + Math.abs(num(p.UnplannedDeprAmtInDspCrcy));
+        const status = str(p.DepreciationStatus).toUpperCase();
+        if (DEPRECIATION_POSTED.has(status)) posted += amount;
+        else {
+          unposted += amount;
+          if (amount) overview.exceptions.push({ asset: id, period: str(p.FiscalPeriod), status: status === '1' ? 'Planned, not yet posted' : `Status ${status || 'unknown'}`, amount: round2(amount), currency: str(p.Currency) });
+        }
+      }
+      overview.assets.push({
+        asset: id,
+        description: str(asset.FixedAssetDescription),
+        posted: round2(posted),
+        unposted: round2(unposted),
+        netBookValue: round2(balances.reduce((sum, b) => sum + num(b.EndingBalAmtInDspCrcy), 0)),
+        currency: str(periods[0]?.Currency) || str(balances[0]?.Currency),
+      });
+    }
+    return overview;
+  }
+
+  /* ---------------- clearing and journal entry: posting service of the Post General Journal Entries app ---------------- */
+
+  /** Posts a temporary document of the posting service and returns the accounting document SAP created. */
+  private async postTemporaryDocument(ctx: SapCallContext, what: string, companyCode: string, draft: ODataEntity): Promise<PostedDocument> {
+    const res = (await this.request(ctx, what, 'post', `${SERVICES.glPost}/Post`, { TmpIdType: lit(str(draft.TmpIdType)), TmpId: lit(str(draft.TmpId)) })) as ODataEntity;
+    const key = (res.Post ?? res) as ODataEntity;
+    if (!str(key.AccountingDocument)) throw new SapError('BUSINESS_RULE', `SAP did not post ${what.charAt(0).toLowerCase()}${what.slice(1)}. Check the document in SAP for the reason.`);
+    return { document: str(key.AccountingDocument), ...(str(key.FiscalYear) && { fiscalYear: str(key.FiscalYear) }), companyCode: str(key.CompanyCode) || companyCode };
+  }
+
+  async clearOpenItems(ctx: SapCallContext, request: ClearingRequest): Promise<PostedDocument> {
+    const what = `Clearing of ${request.accountType.toLowerCase()} ${request.account}`;
+    const anchor = (await this.listOpenItems(ctx, { accountType: request.accountType, account: request.account, companyCode: request.companyCode, status: 'OPEN' }))[0];
+    if (!anchor) throw new SapError('BUSINESS_RULE', `${request.accountType === 'CUSTOMER' ? 'Customer' : 'Supplier'} ${request.account} has no open items in company code ${request.companyCode}.`);
+    const type = ACCOUNT_TYPE[request.accountType].code;
+    // The protocol of the app: start a clearing from one open item, select the account's open items, post.
+    const created = (await this.request(ctx, what, 'post', `${SERVICES.glPost}/CreateClearingForOpenItem`, {
+      AccountingDocument: lit(anchor.document),
+      CompanyCode: lit(request.companyCode),
+      FiscalYear: lit(anchor.fiscalYear),
+      AccountingDocumentItem: lit(anchor.item),
+      Account: lit(request.account),
+      FinancialAccountType: lit(type),
+      ClearingTransaction: "'UMBUCHNG'",
+    })) as ODataEntity;
+    const draft = (created.CreateClearingForOpenItem ?? created) as ODataEntity;
+    if (!str(draft.TmpId)) throw new SapError('BUSINESS_RULE', `SAP did not start a clearing for ${request.accountType.toLowerCase()} ${request.account}.`);
+    await this.request(ctx, what, 'post', `${SERVICES.glPost}/ActivateItemsToBeCleared`, {
+      TmpId: lit(str(draft.TmpId)),
+      TmpIdType: lit(str(draft.TmpIdType)),
+      Account: lit(request.account),
+      CompanyCode: lit(request.companyCode),
+      FinancialAccountType: lit(type),
+    });
+    return this.postTemporaryDocument(ctx, what, request.companyCode, draft);
+  }
+
+  async postJournalEntry(ctx: SapCallContext, entry: NewJournalEntry): Promise<PostedDocument> {
+    const what = `Journal entry in company code ${entry.companyCode}`;
+    const date = toODataDate(entry.postingDate ?? todayIso());
+    const draft = (await this.request(ctx, what, 'post', `${SERVICES.glPost}/FinsPostingGLHeaders`, undefined, {
+      body: {
+        CompanyCode: entry.companyCode,
+        AccountingDocumentType: entry.documentType ?? 'SA',
+        DocumentDate: date,
+        PostingDate: date,
+        TransactionCurrency: entry.currency,
+        AccountingDocumentHeaderText: (entry.headerText ?? 'Prowess AI posting').slice(0, 25),
+      },
+    })) as ODataEntity;
+    if (!str(draft.TmpId)) throw new SapError('BUSINESS_RULE', 'SAP did not accept the header of the journal entry.');
+    for (const [index, line] of entry.lines.entries()) {
+      await this.request(ctx, `${what}, line ${index + 1} (${line.glAccount})`, 'post', `${SERVICES.glPost}/FinsPostingGLItems`, undefined, {
+        body: {
+          TmpId: str(draft.TmpId),
+          TmpIdType: str(draft.TmpIdType),
+          AccountingDocumentItemRef: String(index + 1),
+          CompanyCode: entry.companyCode,
+          GLAccount: line.glAccount,
+          GLAccountForInput: line.glAccount,
+          [line.debitCredit === 'D' ? 'DebitAmountInTransCrcy' : 'CreditAmountInTransCrcy']: line.amount.toFixed(2),
+          ...(line.costCenter && { CostCenter: line.costCenter }),
+          DocumentItemText: (line.text ?? entry.headerText ?? '').slice(0, 50),
+        },
+      });
+    }
+    return this.postTemporaryDocument(ctx, what, entry.companyCode, draft);
+  }
+
+  /* ---------------- payments on account: custom RAP service ZAPI_FI_AGENTPAYMENT (OData V4) ---------------- */
+
+  private async mapPayment(ctx: SapCallContext, e: ODataEntity): Promise<PaymentRequest> {
+    const incoming = str(e.PaymentDirection) === 'I';
+    const partner = incoming ? str(e.Customer) : str(e.Supplier);
+    const partnerName = incoming ? await this.customerName(ctx, partner) : await this.getVendor(ctx, partner).then((v) => v.name, () => partner);
+    return {
+      id: str(e.PaymentUUID),
+      direction: incoming ? 'INCOMING' : 'OUTGOING',
+      companyCode: str(e.CompanyCode),
+      partner,
+      partnerName,
+      bankAccount: str(e.BankGLAccount),
+      amount: { amount: num(e.Amount), currency: str(e.Currency) },
+      status: PAYMENT_STATUS[str(e.Status)] ?? 'NEW',
+      ...(str(e.DocumentReferenceID) && { reference: str(e.DocumentReferenceID) }),
+      ...(str(e.HeaderText) && { text: str(e.HeaderText) }),
+      ...(str(e.AccountingDocument) && { accountingDocument: str(e.AccountingDocument) }),
+      ...(str(e.FiscalYear).replace(/^0+$/, '') && { fiscalYear: str(e.FiscalYear) }),
+      ...(str(e.Message) && { message: str(e.Message) }),
+      createdBy: str(e.CreatedBy),
+      ...(str(e.CreatedAt) && { createdOn: str(e.CreatedAt).slice(0, 10) }),
+      ...(str(e.ApprovedBy) && { approvedBy: str(e.ApprovedBy) }),
+    };
+  }
+
+  async listPaymentRequests(ctx: SapCallContext, query: PaymentRequestQuery): Promise<PaymentRequest[]> {
+    const filter = [...(query.companyCode ? [`CompanyCode eq ${lit(query.companyCode)}`] : []), ...(query.status ? [`Status eq '${PAYMENT_STATUS_CODE[query.status]}'`] : [])].join(' and ');
+    const res = (await this.requestV4(ctx, 'Payment requests', 'get', `${SERVICES.payment}/Payment`, {
+      params: { ...(filter && { $filter: filter }), $orderby: 'CreatedAt desc', $top: '50' },
+    })) as { value?: ODataEntity[] };
+    return Promise.all((res.value ?? []).map((e) => this.mapPayment(ctx, e)));
+  }
+
+  async getPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    return this.mapPayment(ctx, (await this.requestV4(ctx, `Payment request ${id}`, 'get', `${SERVICES.payment}/${paymentKey(id)}`)) as ODataEntity);
+  }
+
+  async createPaymentRequest(ctx: SapCallContext, request: NewPaymentRequest): Promise<PaymentRequest> {
+    const incoming = request.direction === 'INCOMING';
+    const created = (await this.requestV4(ctx, `Payment request for ${incoming ? 'customer' : 'supplier'} ${request.partner}`, 'post', `${SERVICES.payment}/Payment`, {
+      body: {
+        PaymentDirection: incoming ? 'I' : 'O',
+        CompanyCode: request.companyCode,
+        ...(incoming ? { Customer: request.partner } : { Supplier: request.partner }),
+        BankGLAccount: request.bankAccount,
+        Amount: request.amount,
+        Currency: request.currency,
+        ...(request.reference && { DocumentReferenceID: request.reference.slice(0, 16) }),
+        ...(request.text && { HeaderText: request.text.slice(0, 25) }),
+      },
+    })) as ODataEntity;
+    return this.mapPayment(ctx, created);
+  }
+
+  /** Bound action of the payment service. The request is read again afterwards: the journal entry number is only drawn when SAP saves. */
+  private async paymentAction(ctx: SapCallContext, id: string, action: 'approve' | 'reject' | 'post', what: string): Promise<PaymentRequest> {
+    await this.requestV4(ctx, `${what} of payment request ${id}`, 'post', `${SERVICES.payment}/${paymentKey(id)}/SAP__self.${action}`, { body: {}, headers: { 'if-match': '*' } });
+    return this.getPaymentRequest(ctx, id);
+  }
+
+  approvePaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    return this.paymentAction(ctx, id, 'approve', 'Approval');
+  }
+
+  rejectPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    return this.paymentAction(ctx, id, 'reject', 'Rejection');
+  }
+
+  postPaymentRequest(ctx: SapCallContext, id: string): Promise<PaymentRequest> {
+    return this.paymentAction(ctx, id, 'post', 'Posting');
+  }
+
+  /* ---------------- sales order entry, credit memo request ---------------- */
+
+  private salesOrderBody(order: NewSalesOrder) {
+    return {
+      SalesOrderType: order.orderType ?? 'OR',
+      SalesOrganization: order.salesOrganization,
+      DistributionChannel: order.distributionChannel,
+      OrganizationDivision: order.division,
+      SoldToParty: order.soldTo,
+      ...(order.customerReference && { PurchaseOrderByCustomer: order.customerReference }),
+      ...(order.requestedDeliveryDate && { RequestedDeliveryDate: toODataDate(order.requestedDeliveryDate) }),
+    };
+  }
+
+  async simulateSalesOrder(ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrderSimulation> {
+    const e = (await this.request(ctx, `Sales order simulation for customer ${order.soldTo}`, 'post', `${SERVICES.salesSimulation}/A_SalesOrderSimulation`, undefined, {
+      body: {
+        ...this.salesOrderBody(order),
+        to_Pricing: {},
+        to_Credit: {},
+        to_Item: { results: [{ SalesOrderItem: '10', Material: order.material, RequestedQuantity: String(order.quantity) }] },
+      },
+    })) as ODataEntity;
+    const pricing = (e.to_Pricing ?? {}) as ODataEntity;
+    const currency = str(pricing.TransactionCurrency) || str(e.TransactionCurrency);
+    const items = results(e.to_Item).map((i) => ({
+      material: str(i.Material),
+      description: str(i.SalesOrderItemText) || str(i.Material),
+      quantity: num(i.RequestedQuantity),
+      unit: str(i.RequestedQuantityUnit),
+      netValue: { amount: num(i.NetAmount), currency: str(i.TransactionCurrency) || currency },
+      ...(i.ConfdDelivQtyInOrderQtyUnit !== undefined && { confirmedQuantity: num(i.ConfdDelivQtyInOrderQtyUnit) }),
+    }));
+    const creditCheck = str(((e.to_Credit ?? {}) as ODataEntity).TotalCreditCheckStatus);
+    return {
+      soldTo: order.soldTo,
+      soldToName: await this.customerName(ctx, order.soldTo),
+      netValue: { amount: pricing.TotalNetAmount !== undefined ? num(pricing.TotalNetAmount) : items.reduce((sum, i) => sum + i.netValue.amount, 0), currency },
+      // SD credit status: A checked and in order, D released; B and C not in order.
+      creditStatus: creditCheck === 'B' || creditCheck === 'C' ? 'BLOCKED' : creditCheck === 'A' || creditCheck === 'D' ? 'APPROVED' : 'NOT_CHECKED',
+      items,
+    };
+  }
+
+  async createSalesOrder(ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrder> {
+    const created = (await this.request(ctx, `Sales order for customer ${order.soldTo}`, 'post', `${SERVICES.salesOrder}/A_SalesOrder`, undefined, {
+      body: { ...this.salesOrderBody(order), to_Item: { results: [{ Material: order.material, RequestedQuantity: String(order.quantity) }] } },
+    })) as ODataEntity;
+    return this.getSalesOrder(ctx, str(created.SalesOrder));
+  }
+
+  /**
+   * Price of a sales order item: the existing price condition is changed, or a manual one is added
+   * when the item has none (which is what leaves an order incomplete).
+   */
+  async setSalesOrderItemPrice(ctx: SapCallContext, salesOrder: string, item: string, price: number, currency: string, conditionType?: string): Promise<SalesOrder> {
+    const what = `Price of sales order ${salesOrder} item ${item}`;
+    const itemKey = `SalesOrder=${lit(salesOrder)},SalesOrderItem=${lit(item)}`;
+    const candidates = conditionType ? [conditionType] : PRICE_CONDITIONS;
+    const conditions = results(await this.request(ctx, what, 'get', `${SERVICES.salesOrder}/A_SalesOrderItem(${itemKey})/to_PricingElement`, { $top: '100' }));
+    const body = { ConditionRateValue: String(price), ConditionCurrency: currency };
+    const existing = conditions.find((c) => candidates.includes(str(c.ConditionType)));
+    if (existing) {
+      const key = `${itemKey},PricingProcedureStep=${lit(str(existing.PricingProcedureStep))},PricingProcedureCounter=${lit(str(existing.PricingProcedureCounter))}`;
+      await this.request(ctx, what, 'patch', `${SERVICES.salesOrder}/A_SalesOrderItemPrElement(${key})`, undefined, { body, headers: { 'if-match': '*' } });
+      return this.getSalesOrder(ctx, salesOrder);
+    }
+    // No price condition yet: add the one the item's pricing procedure contains, trying them in order.
+    for (const [index, type] of candidates.entries()) {
+      try {
+        await this.request(ctx, what, 'post', `${SERVICES.salesOrder}/A_SalesOrderItem(${itemKey})/to_PricingElement`, undefined, { body: { ConditionType: type, ...body } });
+        return this.getSalesOrder(ctx, salesOrder);
+      } catch (err) {
+        const notInProcedure = err instanceof SapError && /missing in pricing procedure/i.test(err.message);
+        if (!notInProcedure || index === candidates.length - 1) throw err;
+      }
+    }
+    return this.getSalesOrder(ctx, salesOrder);
+  }
+
+  async updateSalesOrder(ctx: SapCallContext, salesOrder: string, change: SalesOrderChange): Promise<SalesOrder> {
+    const what = `Change of sales order ${salesOrder}`;
+    const header = {
+      ...(change.customerReference && { PurchaseOrderByCustomer: change.customerReference }),
+      ...(change.paymentTerms && { CustomerPaymentTerms: change.paymentTerms }),
+      ...(change.incoterms && { IncotermsClassification: change.incoterms }),
+      ...(change.incotermsLocation && { IncotermsLocation1: change.incotermsLocation, IncotermsTransferLocation: change.incotermsLocation }),
+      ...(change.requestedDeliveryDate && { RequestedDeliveryDate: toODataDate(change.requestedDeliveryDate) }),
+    };
+    if (Object.keys(header).length) {
+      await this.request(ctx, what, 'patch', `${SERVICES.salesOrder}/A_SalesOrder(${lit(salesOrder)})`, undefined, { body: header, headers: { 'if-match': '*' } });
+    }
+    const item = {
+      ...(change.shippingPoint && { ShippingPoint: change.shippingPoint }),
+      ...(change.storageLocation && { StorageLocation: change.storageLocation }),
+    };
+    if (Object.keys(item).length) {
+      const order = await this.getSalesOrder(ctx, salesOrder);
+      for (const i of order.items) {
+        await this.request(ctx, what, 'patch', `${SERVICES.salesOrder}/A_SalesOrderItem(SalesOrder=${lit(salesOrder)},SalesOrderItem=${lit(i.item)})`, undefined, {
+          body: item,
+          headers: { 'if-match': '*' },
+        });
+      }
+    }
+    return this.getSalesOrder(ctx, salesOrder);
+  }
+
+  /** Item weights are read-only in the released sales order APIs; the custom action uses BAPI_SALESORDER_CHANGE. */
+  async setSalesOrderItemWeight(ctx: SapCallContext, salesOrder: string, item: string, grossWeight: number, netWeight: number, weightUnit: string): Promise<SalesOrder> {
+    const key = `SalesOrder=${lit(salesOrder.padStart(10, '0'))},SalesOrderItem=${lit(item.padStart(6, '0'))}`;
+    await this.requestV4(ctx, `Weight of sales order ${salesOrder} item ${item}`, 'post', `${SERVICES.incompletion}/ItemWeight(${key})/SAP__self.setWeight`, {
+      body: { GrossWeight: grossWeight, NetWeight: netWeight, WeightUnit: weightUnit },
+    });
+    return this.getSalesOrder(ctx, salesOrder);
+  }
+
+  async getIncompletionLog(ctx: SapCallContext, salesDocument: string): Promise<IncompletionEntry[]> {
+    const res = (await this.requestV4(ctx, `Incompletion log of sales document ${salesDocument}`, 'get', `${SERVICES.incompletion}/IncompletionLog`, {
+      params: { $filter: `SalesDocument eq ${lit(salesDocument.padStart(10, '0'))}`, $top: '200' },
+    })) as { value?: ODataEntity[] };
+    const flag = (v: unknown) => v === true || v === 'X';
+    return (res.value ?? []).map((e) => {
+      const item = str(e.SalesDocumentItem).replace(/^0+/, '');
+      const partner = str(e.PartnerFunction);
+      return {
+        ...(item && { item }),
+        field: str(e.FieldLabel) || `${str(e.TableName)}-${str(e.FieldName)}`,
+        table: str(e.TableName),
+        fieldName: str(e.FieldName),
+        ...(partner && { partnerFunction: partner }),
+        blocksDelivery: flag(e.BlocksDelivery),
+        blocksBilling: flag(e.BlocksBilling),
+      };
+    });
+  }
+
+  async releaseCreditBlock(): Promise<SalesOrder> {
+    return this.notSupported('Releasing a credit block (release the document in SAP Credit Management, for example with the Manage Documented Credit Decisions app)');
+  }
+
+  async createCreditMemoRequest(ctx: SapCallContext, billingDocument: string, reason: string): Promise<CreditMemoRequest> {
+    const what = `Credit memo request for billing document ${billingDocument}`;
+    const b = (await this.request(ctx, `Billing document ${billingDocument}`, 'get', `${SERVICES.billing}/A_BillingDocument(${lit(billingDocument)})`, { $expand: 'to_Item' })) as ODataEntity;
+    if (b.BillingDocumentIsCancelled === true) throw new SapError('BUSINESS_RULE', `Billing document ${billingDocument} is cancelled, so no credit memo can be requested for it.`);
+    const soldTo = str(b.SoldToParty);
+    const created = (await this.request(ctx, what, 'post', `${SERVICES.creditMemo}/A_CreditMemoRequest`, undefined, {
+      body: {
+        CreditMemoRequestType: 'CR',
+        SalesOrganization: str(b.SalesOrganization),
+        DistributionChannel: str(b.DistributionChannel),
+        OrganizationDivision: str(b.Division),
+        SoldToParty: soldTo,
+        SDDocumentReason: reason,
+        to_Item: {
+          results: results(b.to_Item).map((i) => ({
+            Material: str(i.Material),
+            RequestedQuantity: str(i.BillingQuantity),
+            ReferenceSDDocument: str(b.BillingDocument),
+            ReferenceSDDocumentItem: str(i.BillingDocumentItem),
+          })),
+        },
+      },
+    })) as ODataEntity;
+    return {
+      number: str(created.CreditMemoRequest),
+      billingDocument: str(b.BillingDocument),
+      soldTo,
+      soldToName: await this.customerName(ctx, soldTo),
+      netValue: { amount: num(created.TotalNetAmount ?? b.TotalNetAmount), currency: str(created.TransactionCurrency) || str(b.TransactionCurrency) },
+      reason,
+    };
+  }
+
+  /* ---------------- reversals ---------------- */
+
+  async reverseGoodsReceipt(ctx: SapCallContext, materialDocument: string, year: string): Promise<Reversal> {
+    const created = (await this.request(ctx, `Reversal of material document ${materialDocument}`, 'post', `${SERVICES.gr}/Cancel`, {
+      MaterialDocumentYear: lit(year),
+      MaterialDocument: lit(materialDocument),
+      PostingDate: dateTimeLit(todayIso()),
+    })) as ODataEntity;
+    const header = (created.Cancel ?? created) as ODataEntity;
+    return { document: str(header.MaterialDocument), ...(str(header.MaterialDocumentYear) && { year: str(header.MaterialDocumentYear) }), reversedDocument: materialDocument };
+  }
+
+  async reverseSupplierInvoice(ctx: SapCallContext, number: string, fiscalYear: string, reason: string): Promise<Reversal> {
+    const created = (await this.request(ctx, `Reversal of supplier invoice ${number}`, 'post', `${SERVICES.invoice}/Cancel`, {
+      FiscalYear: lit(fiscalYear),
+      SupplierInvoice: lit(number),
+      ReversalReason: lit(reason),
+      PostingDate: dateTimeLit(todayIso()),
+    })) as ODataEntity;
+    const result = (created.Cancel ?? created) as ODataEntity;
+    return { document: str(result.ReverseDocument), ...(str(result.FiscalYear) && { year: str(result.FiscalYear) }), reversedDocument: number };
+  }
+
+  async reverseGoodsIssue(ctx: SapCallContext, delivery: string): Promise<OutboundDelivery> {
+    await this.request(ctx, `Goods issue reversal for delivery ${delivery}`, 'post', `${SERVICES.delivery}/ReverseGoodsIssue`, { DeliveryDocument: lit(delivery) }, { headers: { 'if-match': '*' } });
+    return this.getDelivery(ctx, delivery);
+  }
+
+  async cancelBillingDocument(): Promise<Reversal> {
+    return this.notSupported('Cancelling a billing document (cancel it in SAP with transaction VF11)');
   }
 
   async releaseInvoiceBlock(ctx: SapCallContext, number: string, fiscalYear: string): Promise<Invoice> {

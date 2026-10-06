@@ -337,6 +337,22 @@ export const KPIBlockComponent = z.object({
   }),
 });
 
+export const NOTICE_KINDS = ['NOT_AUTHORIZED', 'NOT_FOUND', 'BUSINESS_RULE', 'UNAVAILABLE', 'NOT_SUPPORTED', 'INVALID_INPUT', 'OTHER'] as const;
+
+/** A failed SAP call, told to the user: what happened, what to do, and a reference for support. */
+export const NoticeComponent = z.object({
+  type: z.literal('notice'),
+  data: z.object({
+    kind: z.enum(NOTICE_KINDS),
+    title: text(120),
+    message: text(400),
+    action: text(400).optional(),
+    reference: text(80).optional(),
+    /** The user's request, offered as "Try again" for temporary failures. */
+    retryPrompt: text(600).optional(),
+  }),
+});
+
 export const TimelineComponent = z.object({
   type: z.literal('timeline'),
   data: z.object({
@@ -351,6 +367,18 @@ export const TimelineComponent = z.object({
         }),
       )
       .max(100),
+  }),
+});
+
+/** A map of vendors. Carries only the filter: the page loads the vendors itself, as the signed-in user. */
+export const VendorMapComponent = z.object({
+  type: z.literal('vendor_map'),
+  data: z.object({
+    title: text(120),
+    /** Vendors SAP holds for this filter, before any are dropped for lack of an address. */
+    vendors: z.number().int().nonnegative(),
+    country: z.string().regex(/^[A-Z]{2}$/).optional(),
+    city: text(60).optional(),
   }),
 });
 
@@ -373,6 +401,8 @@ export const UIComponentSchema = z.discriminatedUnion('type', [
   BusinessObjectTableComponent,
   KPIBlockComponent,
   TimelineComponent,
+  NoticeComponent,
+  VendorMapComponent,
 ]);
 
 export type UIComponent = z.infer<typeof UIComponentSchema>;

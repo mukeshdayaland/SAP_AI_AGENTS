@@ -25,6 +25,8 @@ export type StreamEvent =
       conversationTitle: string;
     }
   | { type: 'status'; step: ExecutionStep }
+  /** The orchestrator handed the request over to another agent, which answers the rest of this message. */
+  | { type: 'agent.handoff'; from: string; agent: string; modelTier: string }
   | { type: 'message.delta'; text: string }
   | { type: 'tool.start'; tool: Pick<ToolExecutionMetadata, 'id' | 'agent' | 'tool' | 'system' | 'risk'>; label: string }
   | { type: 'tool.complete'; tool: ToolExecutionMetadata }

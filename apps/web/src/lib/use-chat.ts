@@ -20,6 +20,8 @@ export interface StepView {
   id: string;
   label: string;
   state: StepState | 'pending_confirmation';
+  /** The step failed because SAP did not authorize the user. */
+  denied?: boolean;
 }
 
 export interface ChatMessage {
@@ -84,6 +86,7 @@ function fromDTO(m: MessageDTO): ChatMessage {
       id: t.id,
       label: t.tool.replace(/^[a-z]+_/, '').replace(/([A-Z])/g, ' $1').toLowerCase().trim(),
       state: t.status === 'success' ? 'done' : t.status === 'pending_confirmation' ? 'pending_confirmation' : 'error',
+      ...(t.status === 'denied' && { denied: true }),
     })),
     ...(m.feedback && { feedback: m.feedback }),
     ...(m.error && { error: m.error }),
@@ -119,7 +122,8 @@ function reducer(state: State, action: Action): State {
     case 'begin': {
       const cut = action.replaceFrom ? state.messages.findIndex((m) => m.id === action.replaceFrom) : -1;
       const base = cut >= 0 ? state.messages.slice(0, cut) : state.messages;
-      return { ...state, streaming: true, messages: [...base, action.user, action.assistant] };
+      // A new message replaces a failed load (for example a conversation that no longer exists).
+      return { ...state, loadError: null, streaming: true, messages: [...base, action.user, action.assistant] };
     }
     case 'event': {
       const e = action.event;
@@ -132,6 +136,8 @@ function reducer(state: State, action: Action): State {
         }
         case 'status':
           return patchStreaming(state, (m) => ({ ...m, steps: upsertStep(m.steps, e.step) }));
+        case 'agent.handoff':
+          return patchStreaming(state, (m) => ({ ...m, agent: e.agent }));
         case 'message.delta':
           return patchStreaming(state, (m) => ({ ...m, content: m.content + e.text }));
         case 'tool.start':
@@ -142,7 +148,7 @@ function reducer(state: State, action: Action): State {
             steps: m.steps.map((s) => (s.id === e.tool.id ? { ...s, state: e.tool.status === 'pending_confirmation' ? 'pending_confirmation' : 'done' } : s)),
           }));
         case 'tool.error':
-          return patchStreaming(state, (m) => ({ ...m, steps: m.steps.map((s) => (s.id === e.tool.id ? { ...s, state: 'error', label: `${s.label} — ${e.message}` } : s)) }));
+          return patchStreaming(state, (m) => ({ ...m, steps: m.steps.map((s) => (s.id === e.tool.id ? { ...s, state: 'error', label: `${s.label} — ${e.tool.status === 'denied' ? 'not allowed by SAP' : 'did not succeed'}`, ...(e.tool.status === 'denied' && { denied: true }) } : s)) }));
         case 'component':
           return patchStreaming(state, (m) => ({ ...m, components: [...m.components, e.component] }));
         case 'source':

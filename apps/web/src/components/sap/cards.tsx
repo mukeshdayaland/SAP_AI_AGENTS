@@ -1,11 +1,12 @@
 'use client';
 
 import type { UIComponent } from '@prowess/contracts';
-import { BookOpen, Building2, Check, CircleDashed, Cog, FileText, Hourglass, Landmark, ListChecks, Minus, Workflow, X, Package, PackageCheck, ReceiptText, ScrollText, ShoppingCart, Truck, UserRound, Wrench } from 'lucide-react';
-import type { ComponentType } from 'react';
+import { BookOpen, Building2, Check, CircleDashed, CircleSlash, Copy, Lock, SearchX, TriangleAlert, Unplug, Cog, FileText, Hourglass, Landmark, ListChecks, Minus, Workflow, X, Package, PackageCheck, ReceiptText, ScrollText, ShoppingCart, Truck, UserRound, Wrench } from 'lucide-react';
+import { useState, type ComponentType } from 'react';
 import { formatDate, formatMoney, humanize } from '@/lib/format';
 import { Badge, cx, type Tone } from '../ui/primitives';
-import { Field, Fields, SapArea, SapCard, toneText } from './card';
+import { VendorMapCard } from '../vendors/VendorMap';
+import { Field, Fields, SapArea, SapCard, toneText, useAsk } from './card';
 
 type Of<T extends UIComponent['type']> = Extract<UIComponent, { type: T }>['data'];
 
@@ -57,7 +58,7 @@ export function InvoiceCard({ data }: { data: Of<'invoice'> }) {
       {data.blockReasons && data.blockReasons.length > 0 && (
         <div className="mt-3 rounded-lg border border-error/25 bg-error-soft px-3 py-2.5">
           <p className="text-xs font-semibold text-error">Verification issues</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[13px] text-ink">
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[12px] text-ink">
             {data.blockReasons.map((r) => (
               <li key={r}>{r}</li>
             ))}
@@ -271,7 +272,7 @@ export function SalesOrderCard({ data }: { data: Of<'sales_order'> }) {
       {data.blocks && data.blocks.length > 0 && (
         <div className="mt-3 rounded-lg border border-error/25 bg-error-soft px-3 py-2.5">
           <p className="text-xs font-semibold text-error">Blocks</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[13px] text-ink">
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[12px] text-ink">
             {data.blocks.map((b) => (
               <li key={b}>{b}</li>
             ))}
@@ -424,7 +425,7 @@ export function OpenItemsCard({ data }: { data: Of<'open_items'> }) {
         )}
       </Fields>
       <div className="mt-2 overflow-x-auto rounded-lg border border-area-sap/25">
-        <table className="w-full border-collapse text-[13px]">
+        <table className="w-full border-collapse text-[12px]">
           <thead className="bg-area-sap-fill text-ink">
             <tr>
               {['Document', 'Type', 'Posted', 'Due'].map((h) => (
@@ -542,13 +543,13 @@ export function WorkflowRunCard({ data }: { data: Of<'workflow_run'> }) {
                 {s.title} <span className="text-ink-3">· {s.agent}</span>
                 <span className="sr-only"> — {stepLabel[s.state]}</span>
               </p>
-              {s.detail && <p className="text-[13px] text-ink-2">{s.detail}</p>}
+              {s.detail && <p className="text-[12px] text-ink-2">{s.detail}</p>}
             </div>
           </li>
         ))}
       </ol>
       {data.reason && data.status !== 'completed' && (
-        <p className={cx('mt-3 rounded-lg border px-3 py-2 text-[13px] text-ink', data.status === 'cancelled' ? 'border-line bg-area-nonsap-fill' : 'border-error/25 bg-error-soft')}>{data.reason}</p>
+        <p className={cx('mt-3 rounded-lg border px-3 py-2 text-[12px] text-ink', data.status === 'cancelled' ? 'border-line bg-area-nonsap-fill' : 'border-error/25 bg-error-soft')}>{data.reason}</p>
       )}
     </SapCard>
   );
@@ -557,7 +558,7 @@ export function WorkflowRunCard({ data }: { data: Of<'workflow_run'> }) {
 function Table({ columns, rows }: Pick<Of<'business_object_table'>, 'columns' | 'rows'>) {
   return (
     <div className="mt-2 overflow-x-auto rounded-lg border border-area-sap/25">
-      <table className="w-full border-collapse text-[13px]">
+      <table className="w-full border-collapse text-[12px]">
         <thead className="bg-area-sap-fill text-ink">
           <tr>
             {columns.map((c) => (
@@ -606,6 +607,65 @@ export function KPIBlock({ data }: { data: Of<'kpi_block'> }) {
   );
 }
 
+const NOTICE: Record<Of<'notice'>['kind'], { icon: ComponentType<{ size?: number }>; frame: string; accent: string }> = {
+  NOT_AUTHORIZED: { icon: Lock, frame: 'border-warning/60 bg-warning-soft', accent: 'text-warning' },
+  BUSINESS_RULE: { icon: TriangleAlert, frame: 'border-warning/60 bg-warning-soft', accent: 'text-warning' },
+  UNAVAILABLE: { icon: Unplug, frame: 'border-error/60 bg-error-soft', accent: 'text-error' },
+  OTHER: { icon: TriangleAlert, frame: 'border-error/60 bg-error-soft', accent: 'text-error' },
+  NOT_FOUND: { icon: SearchX, frame: 'border-line-strong bg-muted', accent: 'text-ink-2' },
+  NOT_SUPPORTED: { icon: CircleSlash, frame: 'border-line-strong bg-muted', accent: 'text-ink-2' },
+  INVALID_INPUT: { icon: CircleSlash, frame: 'border-line-strong bg-muted', accent: 'text-ink-2' },
+};
+
+/** A failed SAP call: what happened, what the user can do, and a reference to quote to support. */
+export function Notice({ data }: { data: Of<'notice'> }) {
+  const ask = useAsk();
+  const [copied, setCopied] = useState(false);
+  const { icon: Icon, frame, accent } = NOTICE[data.kind];
+  const copy = async () => {
+    await navigator.clipboard.writeText(data.reference ?? '').catch(() => undefined);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const button = 'inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-ink-2 transition-colors hover:border-brand/50 hover:text-brand';
+  return (
+    <section role="alert" aria-label={data.title} className={cx('flex gap-3 rounded-area border px-4 py-3', frame)}>
+      <span className={cx('mt-0.5 shrink-0', accent)} aria-hidden>
+        <Icon size={18} />
+      </span>
+      <div className="min-w-0 flex-1 text-sm">
+        <p className={cx('font-semibold', accent)}>{data.title}</p>
+        <p className="mt-0.5 text-ink">{data.message}</p>
+        {data.action && (
+          <p className="mt-2 text-ink-2">
+            <span className="font-semibold text-ink">What you can do: </span>
+            {data.action}
+          </p>
+        )}
+        {(data.reference || data.retryPrompt) && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {data.reference && (
+              <span className="text-xs text-ink-3">
+                Reference <span className="font-mono text-ink-2">{data.reference}</span>
+              </span>
+            )}
+            {data.reference && (
+              <button type="button" onClick={copy} className={button}>
+                {copied ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />} {copied ? 'Copied' : 'Copy reference'}
+              </button>
+            )}
+            {data.retryPrompt && (
+              <button type="button" onClick={() => ask(data.retryPrompt!)} className={button}>
+                Try again
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function Timeline({ data }: { data: Of<'timeline'> }) {
   const dot: Record<string, string> = { neutral: 'bg-line-strong', positive: 'bg-success', warning: 'bg-warning', critical: 'bg-error' };
   return (
@@ -616,7 +676,7 @@ export function Timeline({ data }: { data: Of<'timeline'> }) {
             <span aria-hidden className={cx('absolute -left-[5px] top-1.5 h-2.5 w-2.5 rounded-full ring-4 ring-surface', dot[e.tone ?? 'neutral'])} />
             <p className="text-xs text-ink-3">{formatDate(e.date)}</p>
             <p className="text-sm text-ink">{e.title}</p>
-            {e.detail && <p className="text-[13px] text-ink-2">{e.detail}</p>}
+            {e.detail && <p className="text-[12px] text-ink-2">{e.detail}</p>}
             {e.tone === 'critical' && <Badge tone="critical" className="mt-1">Critical</Badge>}
           </li>
         ))}
@@ -648,6 +708,8 @@ const REGISTRY: { [K in UIComponent['type']]: ComponentType<{ data: Of<K> }> } =
   business_object_table: BusinessObjectTable,
   kpi_block: KPIBlock,
   timeline: Timeline,
+  notice: Notice,
+  vendor_map: VendorMapCard,
 };
 
 export function SapComponent({ component }: { component: UIComponent }) {

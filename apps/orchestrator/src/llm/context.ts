@@ -12,7 +12,15 @@ export const estimateTokens = (text: string) => Math.ceil(text.length / 4);
  * The system prompt is assembled server-side only. Nothing a user types can
  * modify it, and it restates that tool/document content is data.
  */
-export function systemPrompt(agent: AgentDefinition, env: DeploymentEnvironment, userName: string, now = new Date()): string {
+export function systemPrompt(agent: AgentDefinition, env: DeploymentEnvironment, userName: string, now = new Date(), others: Pick<AgentDefinition, 'id' | 'name' | 'description'>[] = []): string {
+  const team = others.length
+    ? [
+        '',
+        'Other agents in this workspace (the user can switch to them):',
+        ...others.map((o) => `- ${o.name} (${o.id}): ${o.description}`),
+        `If a request belongs to another agent's area and you have no tool for it, do not say it is impossible and do not send the user to SAP: call ${HANDOFF_TOOL} with that agent. The platform then continues the request with that agent.`,
+      ]
+    : [];
   return [
     `You are ${agent.name} in Prowess AI, an enterprise workspace connected to SAP S/4HANA (environment: ${env}).`,
     `You are assisting ${userName}. Today is ${now.toISOString().slice(0, 10)}.`,
@@ -26,8 +34,12 @@ export function systemPrompt(agent: AgentDefinition, env: DeploymentEnvironment,
     '4. To change SAP data, call the corresponding tool. The platform will ask the user for explicit confirmation; never claim a change happened unless a tool result confirms it.',
     '5. SAP objects you retrieve are shown to the user as structured cards. Do not repeat every field — summarize what matters, explain causes and recommend next steps.',
     '6. Be concise and precise. Use Markdown; use tables for comparisons. Do not output HTML.',
+    ...team,
   ].join('\n');
 }
+
+/** Orchestrator-native tool that offers to continue a request with another agent. */
+export const HANDOFF_TOOL = 'agent_handoff';
 
 export interface ContextBudget {
   maxContextTokens: number;

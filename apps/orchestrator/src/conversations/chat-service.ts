@@ -18,13 +18,14 @@ import type { AuthContext } from '../auth/types.js';
 import type { AgentDefinition } from '../config/catalog.js';
 import type { OrchestratorConfig } from '../config/env.js';
 import { AppError, toAppError, toPublicError } from '../errors/app-error.js';
-import { buildContext, systemPrompt, updateSummary, withAttachments } from '../llm/context.js';
+import { buildContext, HANDOFF_TOOL, systemPrompt, updateSummary, withAttachments } from '../llm/context.js';
 import type { McpGateway, McpSession, McpToolInfo } from '../mcp/gateway.js';
 import type { ConversationRecord, MessageRecord, Owner, Store } from '../persistence/types.js';
 import type { ToolPolicy } from '../security/tool-policy.js';
 import { today, type QuotaService } from '../usage/limits.js';
 import { WORKFLOW_TOOL, type WorkflowService } from '../workflows/workflow-service.js';
 import { newId, titleFrom, toConfirmation } from './mappers.js';
+import { failureForModel, failureNotice, noticeKind } from './notice.js';
 import { preparePendingAction } from './pending-action.js';
 
 export interface ChatDeps {
@@ -56,7 +57,34 @@ export interface PreparedTurn {
 
 export type Emit = (event: StreamEvent) => void;
 
+/** Identity of a card showing one SAP business object, so the same object is shown once per answer. */
+function componentKey(c: UIComponent): string | undefined {
+  const data = c.data as { number?: unknown; materialDocument?: unknown };
+  const id = data.number ?? data.materialDocument;
+  return typeof id === 'string' && c.type !== 'workflow_run' ? `${c.type}:${id}` : undefined;
+}
+
+/** Tool spec of the hand-off: one of the other agents the user may use, and the request to pass on. */
+function handoffSpec(others: Pick<AgentDefinition, 'id' | 'name' | 'description'>[]): ToolSpec {
+  return {
+    name: HANDOFF_TOOL,
+    description:
+      'Hand the request over to another agent when it belongs to that agent\'s area and you have no tool for it. The platform continues the request with that agent. Agents: ' +
+      others.map((o) => `"${o.id}" (${o.name}) — ${o.description}`).join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', enum: others.map((o) => o.id) },
+        reason: { type: 'string', description: 'Why the request belongs to that agent, in a few words.' },
+      },
+      required: ['agent'],
+    },
+  };
+}
+
 const MAX_FOLLOW_UPS = 4;
+/** A request is handed over at most once per answer, so agents cannot pass it back and forth. */
+const MAX_HANDOFFS = 1;
 
 interface TurnState {
   text: string;
@@ -174,76 +202,97 @@ export class ChatService {
       } catch (err) {
         logger.warn('chat.tools_unavailable', { error: (err as Error).message });
       }
-      const agentTools = agents.toolsFor(turn.agent, allTools);
-      const toolSpecs: ToolSpec[] = agentTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
-      // Workflow runs execute SAP tools, so the entry point is only offered while those are reachable.
-      const workflowSpec = allTools.length ? workflows.toolSpec(turn.agent, turn.auth.user) : undefined;
-      if (workflowSpec) toolSpecs.push(workflowSpec);
       if (!allTools.length && turn.agent.allowedTools.length) {
         emit({ type: 'status', step: { id: 'tools', label: 'SAP tools are temporarily unavailable', state: 'skipped' } });
       }
 
-      const tier = router.tier(turn.tier)!;
-      const context = buildContext({
-        system: systemPrompt(turn.agent, config.environment, turn.auth.user.displayName),
-        conversation: turn.conversation,
-        history: turn.history,
-        userTurn: turn.userTurn,
-        budget: { maxContextTokens: tier.maxContextTokens, reservedOutputTokens: tier.maxOutputTokens },
-      });
-      const messages: LLMMessage[] = context.messages;
+      // The orchestrator routes the request: when the agent finds that it belongs to another agent's area,
+      // the turn continues with that agent, but only with one the user is entitled to and only once.
+      let handoffs = 0;
+      let overflow: MessageRecord[] = [];
+      turns: for (;;) {
+        const agentTools = agents.toolsFor(turn.agent, allTools);
+        const toolSpecs: ToolSpec[] = agentTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+        // Workflow runs execute SAP tools, so the entry point is only offered while those are reachable.
+        const workflowSpec = allTools.length ? workflows.toolSpec(turn.agent, turn.auth.user) : undefined;
+        if (workflowSpec) toolSpecs.push(workflowSpec);
+        const others = handoffs < MAX_HANDOFFS ? agents.forUser(turn.auth.user).filter((a) => a.id !== turn.agent.id) : [];
+        if (others.length) toolSpecs.push(handoffSpec(others));
 
-      session = mcp.session({
-        user: turn.auth.user,
-        agent: turn.agent.id,
-        environment: config.environment,
-        correlationId: turn.correlationId,
-        ...(turn.auth.token && { userToken: turn.auth.token }),
-      });
+        const tier = router.tier(turn.tier)!;
+        const context = buildContext({
+          system: systemPrompt(turn.agent, config.environment, turn.auth.user.displayName, new Date(), others),
+          conversation: turn.conversation,
+          history: turn.history,
+          userTurn: turn.userTurn,
+          budget: { maxContextTokens: tier.maxContextTokens, reservedOutputTokens: tier.maxOutputTokens },
+        });
+        overflow = context.overflow;
+        const messages: LLMMessage[] = context.messages;
 
-      const llmSignal = AbortSignal.any([signal, AbortSignal.timeout(config.llm.requestTimeoutMs)]);
-      for (let round = 0; round <= config.llm.maxToolRounds; round++) {
-        const offerTools = round < config.llm.maxToolRounds && toolSpecs.length ? toolSpecs : undefined;
-        const calls: ToolCall[] = [];
-        let roundText = '';
-        const stream = router.stream(
-          turn.tier,
-          { messages, ...(offerTools && { tools: offerTools }), signal: llmSignal, correlationId: turn.correlationId },
-          (selection) => {
-            state.selection = selection;
-            enrichContext({ provider: selection.provider });
-          },
-        );
-        for await (const chunk of stream) {
-          if (chunk.type === 'text') {
-            if (!roundText && state.text) {
-              state.text += '\n\n';
-              emit({ type: 'message.delta', text: '\n\n' });
+        // The SAP session carries the agent in its signed principal, so a hand-off opens a new one.
+        await session?.close();
+        session = mcp.session({
+          user: turn.auth.user,
+          agent: turn.agent.id,
+          environment: config.environment,
+          correlationId: turn.correlationId,
+          ...(turn.auth.token && { userToken: turn.auth.token }),
+        });
+
+        const llmSignal = AbortSignal.any([signal, AbortSignal.timeout(config.llm.requestTimeoutMs)]);
+        for (let round = 0; round <= config.llm.maxToolRounds; round++) {
+          const offerTools = round < config.llm.maxToolRounds && toolSpecs.length ? toolSpecs : undefined;
+          const calls: ToolCall[] = [];
+          let roundText = '';
+          const stream = router.stream(
+            turn.tier,
+            { messages, ...(offerTools && { tools: offerTools }), signal: llmSignal, correlationId: turn.correlationId },
+            (selection) => {
+              state.selection = selection;
+              enrichContext({ provider: selection.provider });
+            },
+          );
+          for await (const chunk of stream) {
+            if (chunk.type === 'text') {
+              if (!roundText && state.text) {
+                state.text += '\n\n';
+                emit({ type: 'message.delta', text: '\n\n' });
+              }
+              roundText += chunk.text;
+              state.text += chunk.text;
+              emit({ type: 'message.delta', text: chunk.text });
+            } else if (chunk.type === 'tool_call') {
+              calls.push(chunk.call);
+            } else if (chunk.type === 'usage') {
+              state.usage.inputTokens += chunk.usage.inputTokens;
+              state.usage.outputTokens += chunk.usage.outputTokens;
             }
-            roundText += chunk.text;
-            state.text += chunk.text;
-            emit({ type: 'message.delta', text: chunk.text });
-          } else if (chunk.type === 'tool_call') {
-            calls.push(chunk.call);
-          } else if (chunk.type === 'usage') {
-            state.usage.inputTokens += chunk.usage.inputTokens;
-            state.usage.outputTokens += chunk.usage.outputTokens;
           }
-        }
-        if (round === 0) emit({ type: 'status', step: { id: 'understand', label: 'Understanding request', state: 'done' } });
-        if (signal.aborted) {
-          status = 'stopped';
-          break;
-        }
-        if (!calls.length) break;
+          if (round === 0 && !handoffs) emit({ type: 'status', step: { id: 'understand', label: 'Understanding request', state: 'done' } });
+          if (signal.aborted) {
+            status = 'stopped';
+            break turns;
+          }
+          if (!calls.length) break turns;
 
-        messages.push({ role: 'assistant', content: roundText, toolCalls: calls });
-        for (const call of calls) {
-          if (signal.aborted) break;
-          const result = await this.runToolCall(turn, call, agentTools, allTools, session, state, emit, signal);
-          messages.push({ role: 'tool', toolCallId: call.id, name: call.name, content: result.content, ...(result.isError && { isError: true }) });
+          const handoff = calls.find((c) => c.name === HANDOFF_TOOL);
+          const target = handoff && others.find((a) => a.id === (handoff.arguments as { agent?: unknown }).agent);
+          if (target) {
+            await this.handOver(turn, target, handoffs, emit);
+            handoffs += 1;
+            continue turns;
+          }
+
+          messages.push({ role: 'assistant', content: roundText, toolCalls: calls });
+          for (const call of calls) {
+            if (signal.aborted) break;
+            const result = await this.runToolCall(turn, call, agentTools, allTools, session, state, emit, signal);
+            messages.push({ role: 'tool', toolCallId: call.id, name: call.name, content: result.content, ...(result.isError && { isError: true }) });
+          }
+          emit({ type: 'status', step: { id: `compose-${handoffs}-${round}`, label: 'Preparing response', state: 'running' } });
         }
-        emit({ type: 'status', step: { id: `compose-${round}`, label: 'Preparing response', state: 'running' } });
+        break;
       }
       if (signal.aborted) status = 'stopped';
 
@@ -275,7 +324,7 @@ export class ChatService {
       await store.conversations.update(turn.owner, turn.conversation.id, { updatedAt: new Date().toISOString(), agent: turn.agent.id, modelTier: turn.tier });
       emit({ type: 'message.complete', messageId: turn.assistantMessageId, status, actions: state.followUps, execution: this.publicExecution(turn, execution) });
 
-      void updateSummary({ store, router, tier: turn.tier, conversation: turn.conversation, overflow: context.overflow, logger });
+      void updateSummary({ store, router, tier: turn.tier, conversation: turn.conversation, overflow, logger });
     } catch (err) {
       const aborted = signal.aborted;
       const appError = aborted ? new AppError('STOPPED', 'Generation stopped.', 'VALIDATION') : toAppError(err);
@@ -306,6 +355,36 @@ export class ChatService {
     }
   }
 
+  /** Continues the turn with another agent: the user sees the hand-over and the new agent answers in the same message. */
+  private async handOver(turn: PreparedTurn, target: AgentDefinition, index: number, emit: Emit): Promise<void> {
+    const from = turn.agent;
+    let tier: string;
+    try {
+      tier = this.deps.agents.resolveTier(turn.auth.user, target, turn.tier);
+    } catch {
+      tier = this.deps.agents.resolveTier(turn.auth.user, target);
+    }
+    await this.deps.quota.assertWithinQuota(turn.auth.user.id, target.id);
+    turn.agent = target;
+    turn.tier = tier;
+    enrichContext({ agent: target.id });
+    this.deps.audit.record({ type: 'AGENT_INVOKED', ...turn.owner, agent: target.id, status: 'success', details: { conversationId: turn.conversation.id, modelTier: tier, handedOverFrom: from.id } });
+    emit({ type: 'status', step: { id: `handoff-${index}`, label: `${from.name} handed this over to ${target.name}`, state: 'done' } });
+    emit({ type: 'agent.handoff', from: from.id, agent: target.id, modelTier: tier });
+  }
+
+  /** Shows a failed SAP call to the user as a notice card. The same failure is shown once per answer. */
+  private notify(turn: PreparedTurn, state: TurnState, emit: Emit, code: string | undefined, message: string | undefined): void {
+    const component = failureNotice({ code, message, correlationId: turn.correlationId, retryPrompt: turn.userTurn });
+    // A workflow run card that already states the same reason is not repeated as a notice.
+    const shown = state.components.some(
+      (c) => (c.type === 'notice' && c.data.kind === component.data.kind && c.data.message === component.data.message) || (c.type === 'workflow_run' && c.data.reason === component.data.message),
+    );
+    if (shown) return;
+    state.components.push(component);
+    emit({ type: 'component', component });
+  }
+
   private async runToolCall(
     turn: PreparedTurn,
     call: ToolCall,
@@ -318,6 +397,8 @@ export class ChatService {
   ): Promise<{ content: string; isError?: boolean }> {
     const { audit, policy, config, logger } = this.deps;
     if (call.name === WORKFLOW_TOOL && this.deps.workflows.toolSpec(turn.agent, turn.auth.user)) return this.startWorkflow(turn, call, state, emit, signal);
+    // A hand-off the orchestrator did not act on: the agent named is not available to this user.
+    if (call.name === HANDOFF_TOOL) return { content: JSON.stringify({ error: 'That agent is not available to this user. Answer within your own area.' }), isError: true };
     const tool = agentTools.find((t) => t.name === call.name);
     const base = { ...turn.owner, agent: turn.agent.id, tool: call.name };
 
@@ -346,10 +427,11 @@ export class ChatService {
         signal,
       });
       if (!prepared.ok) {
-        const m: ToolExecutionMetadata = { ...meta, durationMs: prepared.durationMs, status: 'error', correlationId: turn.correlationId, mock: false };
+        const m: ToolExecutionMetadata = { ...meta, durationMs: prepared.durationMs, status: noticeKind(prepared.code) === 'NOT_AUTHORIZED' ? 'denied' : 'error', correlationId: turn.correlationId, mock: false };
         state.tools.push(m);
         emit({ type: 'tool.error', tool: m, message: prepared.message });
-        return { content: JSON.stringify({ error: prepared.message }), isError: true };
+        this.notify(turn, state, emit, prepared.code, prepared.message);
+        return { content: failureForModel(prepared.message), isError: true };
       }
       const confirmation = toConfirmation(prepared.action);
       state.confirmations.push(confirmation);
@@ -375,7 +457,7 @@ export class ChatService {
       followUps?: { label: string; prompt: string }[];
     };
     const mock = structured.source?.mock ?? false;
-    const m: ToolExecutionMetadata = { ...meta, durationMs: out.durationMs, status: out.ok ? 'success' : 'error', correlationId: turn.correlationId, mock };
+    const m: ToolExecutionMetadata = { ...meta, durationMs: out.durationMs, status: out.ok ? 'success' : noticeKind(out.errorCode) === 'NOT_AUTHORIZED' ? 'denied' : 'error', correlationId: turn.correlationId, mock };
     state.tools.push(m);
     M.toolCalls().inc({ tool: tool.name, outcome: out.ok ? 'success' : (out.errorCode ?? 'error'), side: 'client' });
 
@@ -394,7 +476,8 @@ export class ChatService {
 
     if (!out.ok) {
       emit({ type: 'tool.error', tool: m, message: out.errorMessage ?? 'The tool failed.' });
-      return { content: JSON.stringify({ error: out.errorMessage, code: out.errorCode }), isError: true };
+      this.notify(turn, state, emit, out.errorCode, out.errorMessage);
+      return { content: failureForModel(out.errorMessage), isError: true };
     }
 
     for (const candidate of structured.components ?? []) {
@@ -403,6 +486,8 @@ export class ChatService {
         logger.warn('chat.component_rejected', { tool: tool.name });
         continue;
       }
+      const key = componentKey(component);
+      if (key && state.components.some((c) => componentKey(c) === key)) continue;
       state.components.push(component);
       emit({ type: 'component', component });
     }

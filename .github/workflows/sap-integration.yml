@@ -1,0 +1,43 @@
+name: SAP integration
+
+# Runs order-to-cash against the real S/4HANA system through the deployed application, as the test user.
+# Every run posts real documents on the test data, so it only starts by hand. The `qa` environment holds the
+# test user's credentials; GitHub never passes them to pull requests from forks.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sap-integration
+  cancel-in-progress: false
+
+jobs:
+  order-to-cash:
+    name: Order-to-cash on S/4HANA
+    runs-on: ubuntu-latest
+    environment: qa
+    timeout-minutes: 30
+    env:
+      APP_URL: ${{ vars.APP_URL }}
+      XSUAA_URL: ${{ vars.XSUAA_URL }}
+      XSUAA_CLIENT_ID: ${{ vars.XSUAA_CLIENT_ID }}
+      XSUAA_CLIENT_SECRET: ${{ secrets.XSUAA_CLIENT_SECRET }}
+      IAS_ORIGIN: ${{ vars.IAS_ORIGIN }}
+      AIUSER_MAIL: ${{ vars.AIUSER_MAIL }}
+      AIUSER_PWD: ${{ secrets.AIUSER_PWD }}
+      SAP_TEST_CUSTOMER: ${{ vars.SAP_TEST_CUSTOMER }}
+      SAP_TEST_MATERIAL: ${{ vars.SAP_TEST_MATERIAL }}
+      SAP_TEST_QUANTITY: ${{ vars.SAP_TEST_QUANTITY }}
+      SAP_TEST_SALES_ORG: ${{ vars.SAP_TEST_SALES_ORG }}
+      SAP_TEST_DISTRIBUTION_CHANNEL: ${{ vars.SAP_TEST_DISTRIBUTION_CHANNEL }}
+      SAP_TEST_DIVISION: ${{ vars.SAP_TEST_DIVISION }}
+      SAP_TEST_COMPANY_CODE: ${{ vars.SAP_TEST_COMPANY_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - name: Order-to-cash against S/4HANA
+        run: npm run test:sap

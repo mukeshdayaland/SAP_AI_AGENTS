@@ -29,7 +29,7 @@ const riskTone = (r: string): Tone => (r === 'HIGH_IMPACT' ? 'critical' : r === 
 function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
   return (
     <div className="overflow-x-auto rounded-area border border-line bg-surface">
-      <table className="w-full text-left text-[13px]">
+      <table className="w-full text-left text-[12px]">
         <thead className="bg-muted text-ink-2">
           <tr>
             {head.map((h) => (
@@ -94,7 +94,7 @@ export function AdminConsole() {
             <ArrowLeft size={15} aria-hidden /> Workspace
           </a>
           <ProwessMark size={24} />
-          <h1 className="text-[15px] font-semibold text-ink">Administration</h1>
+          <h1 className="text-[14px] font-semibold text-ink">Administration</h1>
           <span className="ml-auto">
             <EnvironmentBadge env={config.environment} />
           </span>
@@ -115,7 +115,7 @@ export function AdminConsole() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6" role="tabpanel" aria-label={tab}>
-        <p className="rounded-lg border border-line bg-muted px-3 py-2 text-[13px] text-ink-2">
+        <p className="rounded-lg border border-line bg-muted px-3 py-2 text-[12px] text-ink-2">
           Configuration is read-only here and managed through version-controlled files and BTP bindings. Provider credentials are never displayed.
         </p>
 
@@ -196,7 +196,7 @@ export function AdminConsole() {
 
         {tab === 'Audit' && (
           <>
-            <p className="text-[13px] text-ink-3">Most recent events on this instance. The authoritative trail is the SAP Audit Log service.</p>
+            <p className="text-[12px] text-ink-3">Most recent events on this instance. The authoritative trail is the SAP Audit Log service.</p>
             <Table
               head={['Time', 'Event', 'User', 'Agent / tool', 'System', 'Status', 'Correlation']}
               rows={(audit ?? []).map((e) => [
@@ -206,7 +206,7 @@ export function AdminConsole() {
                 [e.agent, e.tool].filter(Boolean).join(' / '),
                 String(e.targetSystem ?? ''),
                 <Badge key="s" tone={e.status === 'success' ? 'success' : e.status === 'pending' ? 'warning' : 'critical'}>{String(e.status)}</Badge>,
-                <span key="c" className="font-mono text-[11px]">{String(e.correlationId)}</span>,
+                <span key="c" className="font-mono text-[10px]">{String(e.correlationId)}</span>,
               ])}
             />
           </>

@@ -41,6 +41,6 @@ walk(resources);
 const xsAppPath = join(approuter, 'xs-app.json');
 const xsApp = JSON.parse(readFileSync(xsAppPath, 'utf8'));
 const csp = xsApp.responseHeaders.find((h) => h.name === 'Content-Security-Policy');
-csp.value = csp.value.replace(/script-src [^;]*/, `script-src 'self' ${[...hashes].join(' ')}`.trim());
+csp.value = csp.value.replace("script-src 'self'", `script-src 'self' ${[...hashes].join(' ')}`.trim());
 writeFileSync(join(dist, 'xs-app.json'), `${JSON.stringify(xsApp, null, 2)}\n`);
 console.log(`approuter resources prepared (${hashes.size} inline script hashes pinned in CSP)`);

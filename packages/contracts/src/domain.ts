@@ -238,6 +238,40 @@ export interface WorkspaceConfig {
   uploads: { maxBytes: number; accept: string[] };
 }
 
+/** What one agent can do for the user, in business terms. */
+export interface HelpCapability {
+  title: string;
+  description: string;
+  risk: ToolRisk;
+  /** A change in SAP: the user confirms it before it is posted. */
+  needsConfirmation: boolean;
+}
+
+export interface HelpAgent {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  capabilities: HelpCapability[];
+}
+
+/** One of the user's own SAP reads, changes or process runs. */
+export interface ActivityEntry {
+  id: string;
+  timestamp: string;
+  type: string;
+  agent?: string;
+  action?: string;
+  object?: string;
+  system?: string;
+  status: 'success' | 'failure' | 'denied' | 'pending';
+}
+
+export interface HelpOverview {
+  agents: HelpAgent[];
+  activity: ActivityEntry[];
+}
+
 /* ------------------------------------------------------------------ */
 /* Errors                                                              */
 /* ------------------------------------------------------------------ */
@@ -299,3 +333,34 @@ export const ConfirmActionSchema = z.object({
   /** Explicit acknowledgement required for PROD writes. */
   acknowledgeEnvironment: z.enum(ENVIRONMENTS).optional(),
 });
+
+/* ------------------------------------------------------------------ */
+/* Vendor map                                                         */
+/* ------------------------------------------------------------------ */
+
+/** How exactly a vendor could be placed: at its street, at its city, or only by postal code or state. */
+export type LocationPrecision = 'street' | 'city' | 'approximate';
+
+export interface VendorLocation {
+  id: string;
+  name: string;
+  isCustomer: boolean;
+  /** The address as held in SAP, for display. */
+  address: string;
+  country: string;
+  lat: number;
+  lng: number;
+  precision: LocationPrecision;
+}
+
+export interface VendorMap {
+  vendors: VendorLocation[];
+  /** Suppliers read from SAP, including those that could not be placed. */
+  total: number;
+  /** Suppliers left off the map because their address is missing or could not be resolved. */
+  excluded: number;
+  system: string;
+  mock: boolean;
+  /** Browser key and map ID for the Maps JavaScript API. Absent when the map is not configured. */
+  maps?: { apiKey: string; mapId: string };
+}

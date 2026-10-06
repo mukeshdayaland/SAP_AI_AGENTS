@@ -1,13 +1,15 @@
 'use client';
 
 import type { AttachmentRef, ConversationSummary, PublicError, StarterAction, WorkspaceConfig } from '@prowess/contracts';
+import { Workflow, Wrench, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiError} from '@/lib/api';
 import { api } from '@/lib/api';
 import { prefs, type SendKey, type ThemePref } from '@/lib/prefs';
 import { useChat } from '@/lib/use-chat';
-import { AssistantMessage, UserMessage } from '../chat/Message';
+import { AssistantMessage, TechnicalDetailsList, UserMessage } from '../chat/Message';
 import { AskContext } from '../sap/card';
+import { SapComponent } from '../sap/cards';
 import { Button, ProwessMark, Spinner, cx } from '../ui/primitives';
 import { Composer, type ComposerHandle } from './Composer';
 import { Header } from './Header';
@@ -29,6 +31,19 @@ function writeConversationParam(id: string | null) {
   window.history.replaceState(null, '', url);
 }
 
+/** True on screens wide enough for the context panel next to the conversation. */
+function useWideScreen(): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 96rem)');
+    const update = () => setWide(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return wide;
+}
+
 export function Workspace() {
   const [config, setConfig] = useState<WorkspaceConfig | null>(null);
   const [bootError, setBootError] = useState<PublicError | null>(null);
@@ -41,6 +56,8 @@ export function Workspace() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [detailsId, setDetailsId] = useState<string | null>(null);
+  const wide = useWideScreen();
   const composer = useRef<ComposerHandle>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -92,6 +109,12 @@ export function Workspace() {
   );
 
   const ask = useCallback((prompt: string) => send(prompt), [send]);
+
+  // When the orchestrator hands a request over to another agent, the conversation continues with that agent.
+  const answeringAgent = chat.messages.findLast((m) => m.status === 'streaming')?.agent;
+  useEffect(() => {
+    if (answeringAgent && agentsById.has(answeringAgent)) setAgent(answeringAgent);
+  }, [answeringAgent, agentsById]);
 
   const startNew = () => {
     chat.reset();
@@ -152,6 +175,12 @@ export function Workspace() {
   const messages = showAll ? chat.messages : chat.messages.slice(-WINDOW);
   const hidden = chat.messages.length - messages.length;
   const lastAssistant = [...chat.messages].reverse().find((m) => m.role === 'assistant');
+  // The context panel: the latest workflow run of the conversation and, once asked for, the technical details of one answer.
+  const process = [...chat.messages]
+    .reverse()
+    .flatMap((m) => [...m.components].reverse())
+    .find((c) => c.type === 'workflow_run');
+  const detailsFor = chat.messages.find((m) => m.id === detailsId && m.execution);
   const agentName = (id?: string) => agentsById.get(id ?? agent)?.name ?? 'Prowess AI';
 
   return (
@@ -166,6 +195,7 @@ export function Workspace() {
           collapsed={collapsed}
           mobileOpen={mobileOpen}
           user={config.user}
+          showAdmin={config.features.admin || config.features.audit}
           onToggle={() => {
             prefs.setSidebarCollapsed(!collapsed);
             setCollapsed(!collapsed);
@@ -192,13 +222,10 @@ export function Workspace() {
             agent={agent}
             tier={tier}
             title={chat.title}
-            theme={theme}
             locked={chat.streaming}
             onAgent={setAgent}
             onTier={setTier}
-            onTheme={changeTheme}
             onOpenSidebar={() => setMobileOpen(true)}
-            onSettings={() => setSettingsOpen(true)}
           />
 
           <main
@@ -222,7 +249,7 @@ export function Workspace() {
             ) : chat.messages.length === 0 ? (
               <Landing config={config} onStarter={onStarter} />
             ) : (
-              <div className="mx-auto w-full max-w-3xl flex-1 space-y-7 px-4 py-8" aria-live="off">
+              <div className="mx-auto w-full max-w-[76rem] flex-1 space-y-7 px-4 py-8" aria-live="off">
                 {hidden > 0 && (
                   <div className="text-center">
                     <Button size="sm" variant="ghost" onClick={() => setShowAll(true)}>
@@ -250,6 +277,7 @@ export function Workspace() {
                       }}
                       onRate={(r) => chat.rate(m.id, r)}
                       onConfirmation={chat.resolveConfirmation}
+                      {...(wide && { onShowDetails: () => setDetailsId((id) => (id === m.id ? null : m.id)), detailsShown: m.id === detailsFor?.id })}
                     />
                   ),
                 )}
@@ -271,6 +299,31 @@ export function Workspace() {
             />
           </div>
         </div>
+
+        {wide && (process || (config.features.technicalPanel && detailsFor?.execution)) && (
+          <aside aria-label="Context" className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-surface">
+            {process && (
+              <section className="border-b border-line p-3">
+                <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-3">
+                  <Workflow size={13} aria-hidden /> Current process
+                </h2>
+                <SapComponent component={process} />
+              </section>
+            )}
+            {config.features.technicalPanel && detailsFor?.execution && (
+              <section className="p-3">
+                <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-3">
+                  <Wrench size={13} aria-hidden /> Technical details
+                  <button type="button" onClick={() => setDetailsId(null)} aria-label="Close technical details" className="ml-auto rounded p-0.5 text-ink-3 hover:bg-muted hover:text-ink">
+                    <X size={13} aria-hidden />
+                  </button>
+                </h2>
+                <p className="mb-2 text-[10px] text-ink-3">{detailsFor.id === lastAssistant?.id ? 'Latest answer' : `Answer of ${new Date(detailsFor.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</p>
+                <TechnicalDetailsList execution={detailsFor.execution} />
+              </section>
+            )}
+          </aside>
+        )}
       </div>
       <div aria-live="polite" className="sr-only">
         {chat.streaming ? 'Prowess AI is responding' : lastAssistant?.status === 'complete' ? 'Response complete' : ''}
@@ -278,7 +331,6 @@ export function Workspace() {
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        config={config}
         theme={theme}
         onTheme={changeTheme}
         sendKey={sendKey}

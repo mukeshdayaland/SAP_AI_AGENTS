@@ -31,8 +31,8 @@ export function SapCard({
         <div className="flex min-w-0 items-center gap-3">
           {icon && <IconCircle>{icon}</IconCircle>}
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-3">{kind}</p>
-            <p className="truncate font-mono text-[15px] font-semibold text-ink">{id}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-3">{kind}</p>
+            <p className="truncate font-mono text-[14px] font-semibold text-ink">{id}</p>
           </div>
         </div>
         {status && <Badge tone={status.tone}>{status.label}</Badge>}
@@ -75,7 +75,7 @@ export function IconCircle({ children, size = 'md' }: { children: ReactNode; siz
 export function SapArea({ label, children }: { label: string; children: ReactNode }) {
   return (
     <section aria-label={label} className="rounded-area border border-area-sap/60 bg-surface p-4 shadow-soft">
-      <h4 className="mb-3 text-[13px] font-bold text-ink">{label}</h4>
+      <h4 className="mb-3 text-[12px] font-bold text-ink">{label}</h4>
       {children}
     </section>
   );

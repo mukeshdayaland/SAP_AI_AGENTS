@@ -1,12 +1,14 @@
 import { z } from 'zod';
-import { SapError, type BillingDocument, type DocumentFlowStep, type OutboundDelivery, type SalesOrder } from '../sap/model.js';
+import { SapError, type BillingDocument, type DocumentFlowStep, type IncompletionEntry, type OutboundDelivery, type SalesOrder } from '../sap/model.js';
 import { defineTool, fmt, now, type ToolContext } from './types.js';
 
-const salesOrder = z.string().regex(/^\d{1,10}$/).describe('Sales order number, e.g. 648');
+export const salesOrder = z.string().regex(/^\d{1,10}$/).describe('Sales order number, e.g. 648');
+export const billingNumber = z.string().regex(/^\d{1,10}$/).describe('Billing document number, e.g. 90000181');
 const humanize = (s: string) => s.replaceAll('_', ' ').toLowerCase();
 
-function salesOrderComponent(o: SalesOrder) {
+export function salesOrderComponent(o: SalesOrder, missing: IncompletionEntry[] = []) {
   const blocks = [
+    ...(missing.some((e) => e.blocksDelivery) ? ['Incomplete: blocks delivery'] : missing.length ? ['Incomplete'] : []),
     ...(o.creditStatus === 'BLOCKED' ? ['Credit block'] : []),
     ...(o.deliveryBlock ? [`Delivery block ${o.deliveryBlock}`] : []),
     ...(o.billingBlock ? [`Billing block ${o.billingBlock}`] : []),
@@ -31,7 +33,7 @@ function salesOrderComponent(o: SalesOrder) {
   };
 }
 
-function deliveryComponent(d: OutboundDelivery) {
+export function deliveryComponent(d: OutboundDelivery) {
   return {
     type: 'outbound_delivery' as const,
     data: {
@@ -78,7 +80,7 @@ function salesOrderSummary(o: SalesOrder) {
 const orderSource = (ctx: ToolContext, number: string) => ({ system: ctx.gateway.systemId, objectType: 'SalesOrder', objectId: number, retrievedAt: now(), mock: ctx.gateway.mock });
 
 /** The delivery of a sales order that is ready for the next step, or a business-rule error that says why there is none. */
-async function findDelivery(ctx: ToolContext, salesOrder: string, ready: (d: OutboundDelivery) => boolean, none: string): Promise<OutboundDelivery> {
+export async function findDelivery(ctx: ToolContext, salesOrder: string, ready: (d: OutboundDelivery) => boolean, none: string): Promise<OutboundDelivery> {
   const flow = await ctx.gateway.getSalesOrderFlow(ctx.sap, salesOrder);
   for (const step of flow.filter((s) => s.category === 'DELIVERY')) {
     const delivery = await ctx.gateway.getDelivery(ctx.sap, step.document);
@@ -87,7 +89,66 @@ async function findDelivery(ctx: ToolContext, salesOrder: string, ready: (d: Out
   throw new SapError('BUSINESS_RULE', none);
 }
 
-const quantities = (items: { quantity: number; unit: string; description: string }[]) => items.map((i) => `${i.quantity} ${i.unit} ${i.description}`).join(', ');
+/** The incompletion log, or undefined where the system has no incompletion log service. */
+export const readIncompletion = (ctx: ToolContext, salesDocument: string) => ctx.gateway.getIncompletionLog(ctx.sap, salesDocument).catch(() => undefined);
+
+/** "item 10: Storage Location, Gross Weight; header: Purchase Order Number" */
+export function describeMissing(entries: IncompletionEntry[]): string {
+  const groups = new Map<string, string[]>();
+  for (const e of entries) {
+    const where = e.item ? `item ${e.item}` : 'header';
+    const field = e.partnerFunction ? `${e.field} (partner function ${e.partnerFunction})` : e.field;
+    groups.set(where, [...new Set([...(groups.get(where) ?? []), field])]);
+  }
+  return [...groups.entries()].map(([where, fields]) => `${where}: ${fields.join(', ')}`).join('; ');
+}
+
+/** Where each kind of missing data can be completed. */
+export function completionHint(entries: IncompletionEntry[]): string {
+  const names = new Set(entries.map((e) => e.fieldName));
+  const here = ['BSTKD', 'ZTERM', 'INCO1', 'INCO2', 'VSTEL', 'LGORT', 'VDATU', 'BRGEW', 'NTGEW', 'GEWEI'].filter((f) => names.has(f));
+  const other = entries.filter((e) => !here.includes(e.fieldName));
+  return [
+    ...(here.length ? ['The purchase order number, payment terms, Incoterms, delivery date, shipping point, storage location and item weights can be completed here.'] : []),
+    ...(other.length ? [`Complete ${[...new Set(other.map((e) => e.field))].join(', ')} in VA02 (Edit > Incompletion log).`] : []),
+  ].join(' ');
+}
+
+/** Order data that incompletion procedures usually require and that is empty on this order. */
+export function orderGaps(o: SalesOrder): string[] {
+  return [
+    ...(o.customerReference ? [] : ['customer purchase order number']),
+    ...(o.paymentTerms ? [] : ['payment terms']),
+    ...(o.incoterms ? [] : ['Incoterms']),
+    ...(o.requestedDeliveryDate ? [] : ['requested delivery date']),
+    ...o.items.flatMap((i) => [
+      ...(i.netValue.amount > 0 ? [] : [`price of item ${i.item}`]),
+      ...(i.plant ? [] : [`plant of item ${i.item}`]),
+      ...(i.shippingPoint ? [] : [`shipping point of item ${i.item}`]),
+    ]),
+  ];
+}
+
+/**
+ * SAP says only "order is incomplete". Adds what is missing from the incompletion log, or, where the
+ * log cannot be read, which of the usual fields are empty.
+ */
+async function explainIncomplete(ctx: ToolContext, salesOrder: string, err: unknown): Promise<unknown> {
+  if (!(err instanceof SapError) || !/incomplete/i.test(err.message)) return err;
+  const log = await readIncompletion(ctx, salesOrder);
+  if (log?.length) return new SapError(err.code, `${err.message}. Missing: ${describeMissing(log)}. ${completionHint(log)}`);
+  const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder).catch(() => undefined);
+  const gaps = o ? orderGaps(o) : [];
+  const where = 'The complete list is in the incompletion log of the order in SAP (VA02, Edit > Incompletion log).';
+  return new SapError(
+    err.code,
+    gaps.length
+      ? `${err.message}. Empty on the order and usually required: ${gaps.join(', ')}. ${where}`
+      : `${err.message}. None of the usual fields is empty. ${where}`,
+  );
+}
+
+export const quantities = (items: { quantity: number; unit: string; description: string }[]) => items.map((i) => `${i.quantity} ${i.unit} ${i.description}`).join(', ');
 
 const FLOW_LABEL: Record<DocumentFlowStep['category'], string> = {
   DELIVERY: 'Outbound delivery',
@@ -109,13 +170,14 @@ export const sdTools = [
     statusLabel: 'Retrieving sales order',
     input: { salesOrder },
     async run({ salesOrder }, ctx) {
-      const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder);
+      const [o, missing = []] = await Promise.all([ctx.gateway.getSalesOrder(ctx.sap, salesOrder), readIncompletion(ctx, salesOrder)]);
       return {
         data: {
-          salesOrder: { ...o, netValue: fmt(o.netValue), items: o.items.map((i) => `${i.item}: ${i.quantity} ${i.unit} ${i.description} = ${fmt(i.netValue)}`) },
+          salesOrder: { ...o, netValue: fmt(o.netValue), items: o.items.map((i) => `${i.item}: ${i.quantity} ${i.unit} of material ${i.material} (${i.description})${i.plant ? `, plant ${i.plant}` : ''}${i.weightUnit ? `, gross weight ${i.grossWeight} ${i.weightUnit}, net weight ${i.netWeight} ${i.weightUnit}` : ''} = ${fmt(i.netValue)}`) },
           summary: salesOrderSummary(o),
+          ...(missing.length && { incomplete: `${describeMissing(missing)}${missing.some((e) => e.blocksDelivery) ? ' (blocks the delivery)' : ''}` }),
         },
-        components: [salesOrderComponent(o)],
+        components: [salesOrderComponent(o, missing)],
         source: orderSource(ctx, o.number),
         followUps: [
           { label: 'Document flow', prompt: `Show the document flow of sales order ${o.number}.` },
@@ -263,7 +325,7 @@ export const sdTools = [
     risk: 'READ',
     operation: 'SAP_READ',
     statusLabel: 'Retrieving billing document',
-    input: { billingDocument: z.string().regex(/^\d{1,10}$/).describe('Billing document number, e.g. 90000181') },
+    input: { billingDocument: billingNumber },
     async run({ billingDocument }, ctx) {
       const b = await ctx.gateway.getBillingDocument(ctx.sap, billingDocument);
       return {
@@ -291,6 +353,53 @@ export const sdTools = [
   }),
 
   defineTool({
+    name: 'sd_getIncompletionLog',
+    domain: 'sd',
+    title: 'Get incompletion log',
+    description:
+      'List the data still missing in a sales order (VA02, Edit > Incompletion log) and whether it blocks the delivery or billing. Use it before creating a delivery and whenever SAP reports an order as incomplete.',
+    risk: 'READ',
+    operation: 'SAP_READ',
+    statusLabel: 'Checking order completeness',
+    input: { salesOrder },
+    async run({ salesOrder }, ctx) {
+      const log = await ctx.gateway.getIncompletionLog(ctx.sap, salesOrder);
+      const blocking = log.filter((e) => e.blocksDelivery);
+      return {
+        data: {
+          summary: log.length
+            ? `Sales order **${salesOrder}** is incomplete${blocking.length ? ' and **cannot be delivered** yet' : ''}. Missing: ${describeMissing(log)}. ${completionHint(log)}`
+            : `Sales order **${salesOrder}** is complete: nothing is missing for delivery or billing.`,
+          missing: log.map((e) => ({ item: e.item ?? 'header', field: e.field, sapField: `${e.table}-${e.fieldName}`, blocksDelivery: e.blocksDelivery, blocksBilling: e.blocksBilling })),
+        },
+        components: log.length
+          ? [
+              {
+                type: 'business_object_table' as const,
+                data: {
+                  title: `Incompletion log · sales order ${salesOrder}`,
+                  columns: [
+                    { key: 'item', label: 'Item' },
+                    { key: 'field', label: 'Missing data' },
+                    { key: 'blocks', label: 'Blocks' },
+                  ],
+                  rows: log.slice(0, 200).map((e) => ({
+                    item: e.item ?? 'Header',
+                    field: e.partnerFunction ? `${e.field} (${e.partnerFunction})` : e.field,
+                    blocks: [...(e.blocksDelivery ? ['Delivery'] : []), ...(e.blocksBilling ? ['Billing'] : [])].join(', ') || '—',
+                  })),
+                },
+              },
+            ]
+          : [],
+        source: orderSource(ctx, salesOrder),
+        followUps: blocking.length ? [] : [{ label: 'Create the delivery', prompt: `Create the outbound delivery for sales order ${salesOrder}.` }],
+        outputs: { complete: String(log.length === 0), blocksDelivery: String(blocking.length > 0) },
+      };
+    },
+  }),
+
+  defineTool({
     name: 'sd_createDelivery',
     domain: 'sd',
     title: 'Create outbound delivery',
@@ -300,7 +409,16 @@ export const sdTools = [
     statusLabel: 'Creating outbound delivery',
     input: { salesOrder },
     async preview({ salesOrder }, ctx) {
-      const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder);
+      const [o, missing = []] = await Promise.all([ctx.gateway.getSalesOrder(ctx.sap, salesOrder), readIncompletion(ctx, salesOrder)]);
+      const blocking = missing.filter((e) => e.blocksDelivery);
+      if (blocking.length) {
+        return {
+          action: 'Create outbound delivery',
+          businessObject: { type: 'Sales order', id: o.number },
+          proposedChange: `Sales order ${o.number} is incomplete, so SAP will reject this delivery. Missing: ${describeMissing(blocking)}.`,
+          impact: `Complete the order first. ${completionHint(blocking)}`,
+        };
+      }
       return {
         action: 'Create outbound delivery',
         businessObject: { type: 'Sales order', id: o.number },
@@ -309,7 +427,9 @@ export const sdTools = [
       };
     },
     async run({ salesOrder }, ctx) {
-      const d = await ctx.gateway.createDelivery(ctx.sap, salesOrder);
+      const d = await ctx.gateway.createDelivery(ctx.sap, salesOrder).catch(async (err: unknown) => {
+        throw await explainIncomplete(ctx, salesOrder, err);
+      });
       return {
         data: { summary: `Outbound delivery **${d.number}** was created for sales order **${salesOrder}**. Goods issue is still outstanding.`, delivery: d.number },
         components: [deliveryComponent(d)],
