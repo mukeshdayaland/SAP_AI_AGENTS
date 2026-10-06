@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.2",
+    "@fastify/rate-limit": "^11.2.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@prowess/contracts": "*",
     "@prowess/llm": "*",

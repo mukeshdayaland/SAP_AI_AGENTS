@@ -53,6 +53,9 @@ const USER_ACTIVITY: ReadonlySet<string> = new Set([
 const firstSentence = (text: string) => /^.*?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? text.trim();
 
 export function registerRoutes(app: FastifyInstance, s: Services): void {
+  // Several users can share one address (office network, proxy), so the per-address limit is a multiple of the per-user one.
+  const perAddress = { config: { rateLimit: { max: s.config.limits.requestsPerMinute * 10, timeWindow: '1 minute' } } };
+
   /* ---------------- health (unauthenticated, no data) ---------------- */
   const health = async () => ({ status: 'ok' });
   const readiness = async (_req: FastifyRequest, reply: FastifyReply) => {
@@ -171,14 +174,14 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   });
 
   /* ---------------- vendor map ---------------- */
-  app.get('/api/v1/vendors/locations', async (req): Promise<VendorMap> => {
+  app.get('/api/v1/vendors/locations', perAddress, async (req): Promise<VendorMap> => {
     const a = auth(req);
     s.rateLimiter.take(a.user.id);
     return s.vendorMap.locations(a);
   });
 
   /* ---------------- help: what the user's agents can do, and the user's own activity ---------------- */
-  app.get('/api/v1/help', async (req): Promise<HelpOverview> => {
+  app.get('/api/v1/help', perAddress, async (req): Promise<HelpOverview> => {
     const { user } = auth(req);
     s.rateLimiter.take(user.id);
     const tools = await s.mcp.listTools(s.config.environment).catch(() => []);

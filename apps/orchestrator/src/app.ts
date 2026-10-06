@@ -1,4 +1,5 @@
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 import { M, createContext, enrichContext, runWithContext } from '@prowess/observability';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerRoutes } from './api/routes.js';
@@ -21,6 +22,11 @@ export async function buildApp(s: Services): Promise<FastifyInstance> {
     return503OnClosing: true,
   });
   await app.register(multipart, { limits: { fileSize: s.config.uploads.maxBytes, files: 1 } });
+  // Per-address limit for the routes that ask for one (`config.rateLimit`), on top of the per-user limiter.
+  await app.register(rateLimit, {
+    global: false,
+    errorResponseBuilder: () => new AppError('RATE_LIMITED', 'You are sending requests too quickly. Please wait a moment.', 'RATE_LIMIT', true),
+  });
 
   // Correlation / trace context for every request.
   app.addHook('onRequest', (req, _reply, done) => {

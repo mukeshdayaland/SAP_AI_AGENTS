@@ -57,6 +57,22 @@ describe('vendor map API', () => {
     expect(geocoder.asked.length).toBe(before);
   });
 
+  it('limits requests per address as well as per user', async () => {
+    const limited = await startStack({ geocoder, env: { GEO_API: 'server-key', RATE_LIMIT_PER_MINUTE: '1' } });
+    try {
+      // One request a minute per user allows ten a minute per address. Two users use those up between them.
+      const statuses: number[] = [];
+      for (let i = 0; i < 12; i++) statuses.push((await limited.request('GET', '/api/v1/help', i % 2 ? USERS.alex : USERS.jordan)).status);
+      expect(statuses.slice(0, 2)).toEqual([200, 200]);
+      // A third user has made no request yet, so only the per-address limit can refuse this one.
+      const last = await limited.request('GET', '/api/v1/help', USERS.sam);
+      expect(last.status).toBe(429);
+      expect(last.json.error?.code).toBe('RATE_LIMITED');
+    } finally {
+      await limited.stop();
+    }
+  });
+
   it('reports a configuration error when no geocoding key is set', async () => {
     const res = await bare.request('GET', '/api/v1/vendors/locations');
     expect(res.status).toBe(503);
