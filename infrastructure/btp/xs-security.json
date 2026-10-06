@@ -19,11 +19,22 @@
     { "name": "Prowess_AI_User", "description": "Business users", "role-template-references": ["$XSAPPNAME.AI_User"] },
     { "name": "Prowess_AI_PowerUser", "description": "Analysts and key users", "role-template-references": ["$XSAPPNAME.AI_PowerUser"] },
     { "name": "Prowess_AI_Admin", "description": "Platform administrators", "role-template-references": ["$XSAPPNAME.AI_Admin"] },
-    { "name": "Prowess_AI_Auditor", "description": "Internal audit / compliance", "role-template-references": ["$XSAPPNAME.AI_Auditor"] }
+    { "name": "Prowess_AI_Auditor", "description": "Internal audit / compliance", "role-template-references": ["$XSAPPNAME.AI_Auditor"] },
+    {
+      "name": "Prowess_AI_FullAdmin",
+      "description": "Every Prowess AI role (user, power user, admin, auditor). For testing; do not map to all users in production.",
+      "role-template-references": ["$XSAPPNAME.AI_User", "$XSAPPNAME.AI_PowerUser", "$XSAPPNAME.AI_Admin", "$XSAPPNAME.AI_Auditor"]
+    }
   ],
   "oauth2-configuration": {
     "token-validity": 1800,
     "refresh-token-validity": 28800,
-    "redirect-uris": ["https://*.hana.ondemand.com/**", "https://*.cloud.sap/**"]
+    "redirect-uris": [
+      "https://*.hana.ondemand.com/**",
+      "https://*.cloud.sap/**",
+      "https://prowess.sapai.cloud/**",
+      "https://prowess-ai.pages.dev/**",
+      "https://*.prowess-ai.pages.dev/**"
+    ]
   }
 }

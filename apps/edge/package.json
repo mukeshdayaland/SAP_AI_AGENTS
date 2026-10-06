@@ -1,0 +1,16 @@
+{
+  "name": "@prowess/edge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Pages host for the Prowess AI web app: static export + BFF (XSUAA login, /api proxy to SAP BTP)",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "package": "npm run build -w @prowess/web --prefix ../.. && node ../../scripts/package-cloudflare.mjs",
+    "dev": "npx wrangler@4 pages dev",
+    "deploy": "npx wrangler@4 pages deploy --project-name prowess-ai"
+  },
+  "dependencies": {
+    "@prowess/contracts": "*"
+  }
+}

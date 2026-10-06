@@ -1,0 +1,16 @@
+# Cloudflare Pages project: static Prowess AI web app + BFF (functions/_middleware.ts).
+# Build:   npm run package -w @prowess/edge   (builds the web export, writes apps/edge/dist)
+# Deploy:  npm run deploy -w @prowess/edge
+# Secrets (once per project, never committed):
+#   npx wrangler pages secret put XSUAA_CLIENT_SECRET --project-name prowess-ai
+#   npx wrangler pages secret put SESSION_SECRET      --project-name prowess-ai
+name = "prowess-ai"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-09-01"
+
+[vars]
+# Orchestrator on SAP BTP Cloud Foundry (space SAP_AI_AGENT).
+ORCHESTRATOR_URL = "https://prowess-ai-orchestrator-sap-ai-agent.cfapps.eu10-005.hana.ondemand.com"
+# From the prowess-xsuaa service key (`url` and `clientid`). Not secret.
+XSUAA_URL = "https://joule-sbx.authentication.eu10.hana.ondemand.com"
+XSUAA_CLIENT_ID = "sb-prowess-ai-sap-ai-agent!t699998"
