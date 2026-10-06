@@ -88,6 +88,9 @@ describe('tool domains follow SAP modules', () => {
       'sd_postGoodsIssue',
       'sd_releaseCreditBlock',
       'sd_reverseGoodsIssue',
+      'sd_setItemPrice',
+      'sd_setItemWeight',
+      'sd_updateSalesOrder',
     ]);
   });
 

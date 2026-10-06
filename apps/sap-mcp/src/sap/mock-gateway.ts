@@ -59,6 +59,8 @@ import {
   type ReceivablesAging,
   type Reversal,
   type SalesOrder,
+  type SalesOrderChange,
+  type IncompletionEntry,
   type SalesOrderSimulation,
   type SapCallContext,
   type SapGateway,
@@ -703,6 +705,7 @@ export class MockSapGateway implements SapGateway {
     if (!order) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} was not found in SAP.`);
     if (order.creditStatus === 'BLOCKED') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is blocked by the credit check and cannot be delivered.`);
     if (order.deliveryStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is already completely delivered.`);
+    if (this.incompletion.get(salesOrder)?.some((e) => e.blocksDelivery)) throw new SapError('BUSINESS_RULE', `SAP rejected Outbound delivery for sales order ${salesOrder}: Order is incomplete - maintain the order`);
     for (const i of order.items) {
       const available = this.stock.filter((r) => r.material === i.material && (!i.plant || r.plant === i.plant)).reduce((sum, r) => sum + r.unrestricted, 0);
       if (available < i.quantity) {
@@ -1168,6 +1171,57 @@ export class MockSapGateway implements SapGateway {
     const credit = this.credit.find((c) => c.customer === created.soldTo);
     if (credit) credit.exposure = SAR(credit.exposure.amount + created.netValue.amount);
     return structuredClone(created);
+  }
+
+  async setSalesOrderItemPrice(_ctx: SapCallContext, salesOrder: string, item: string, price: number, currency: string, _conditionType?: string): Promise<SalesOrder> {
+    await this.latency();
+    const order = this.salesOrders.find((o) => o.number === salesOrder);
+    if (!order) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} was not found in SAP.`);
+    const line = order.items.find((i) => i.item.replace(/^0+/, '') === item.replace(/^0+/, ''));
+    if (!line) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} has no item ${item}.`);
+    if (order.billingStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is already billed; its prices can no longer be changed.`);
+    line.netValue = { amount: Math.round(price * line.quantity * 100) / 100, currency };
+    order.netValue = { amount: order.items.reduce((sum, i) => sum + i.netValue.amount, 0), currency };
+    return structuredClone(order);
+  }
+
+  /** Incompletion logs by sales document; empty unless a test fills them. */
+  readonly incompletion = new Map<string, IncompletionEntry[]>();
+
+  async getIncompletionLog(_ctx: SapCallContext, salesDocument: string): Promise<IncompletionEntry[]> {
+    await this.latency();
+    return structuredClone(this.incompletion.get(salesDocument) ?? []);
+  }
+
+  async setSalesOrderItemWeight(_ctx: SapCallContext, salesOrder: string, item: string, grossWeight: number, netWeight: number, weightUnit: string): Promise<SalesOrder> {
+    await this.latency();
+    const order = this.salesOrders.find((o) => o.number === salesOrder);
+    if (!order) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} was not found in SAP.`);
+    const line = order.items.find((i) => i.item.replace(/^0+/, '') === item.replace(/^0+/, ''));
+    if (!line) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} has no item ${item}.`);
+    if (order.deliveryStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is already delivered; its weights can no longer be changed.`);
+    if (netWeight > grossWeight) throw new SapError('BUSINESS_RULE', 'The net weight cannot be more than the gross weight.');
+    Object.assign(line, { grossWeight, netWeight, weightUnit });
+    const log = this.incompletion.get(salesOrder);
+    if (log) this.incompletion.set(salesOrder, log.filter((e) => !(['BRGEW', 'NTGEW', 'GEWEI'].includes(e.fieldName) && e.item === line.item.replace(/^0+/, ''))));
+    return structuredClone(order);
+  }
+
+  async updateSalesOrder(_ctx: SapCallContext, salesOrder: string, change: SalesOrderChange): Promise<SalesOrder> {
+    await this.latency();
+    const order = this.salesOrders.find((o) => o.number === salesOrder);
+    if (!order) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} was not found in SAP.`);
+    if (order.deliveryStatus === 'COMPLETE') throw new SapError('BUSINESS_RULE', `Sales order ${salesOrder} is already delivered; its header data can no longer be changed.`);
+    if (change.customerReference) order.customerReference = change.customerReference;
+    if (change.paymentTerms) order.paymentTerms = change.paymentTerms;
+    if (change.incoterms) order.incoterms = change.incoterms;
+    if (change.requestedDeliveryDate) order.requestedDeliveryDate = change.requestedDeliveryDate;
+    if (change.shippingPoint) for (const i of order.items) i.shippingPoint = change.shippingPoint;
+    if (change.storageLocation) for (const i of order.items) i.storageLocation = change.storageLocation;
+    const filled = new Set([...(change.customerReference ? ['BSTKD'] : []), ...(change.shippingPoint ? ['VSTEL'] : []), ...(change.storageLocation ? ['LGORT'] : [])]);
+    const log = this.incompletion.get(salesOrder);
+    if (log) this.incompletion.set(salesOrder, log.filter((e) => !filled.has(e.fieldName)));
+    return structuredClone(order);
   }
 
   async releaseCreditBlock(ctx: SapCallContext, salesOrder: string): Promise<SalesOrder> {

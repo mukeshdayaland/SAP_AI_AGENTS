@@ -179,6 +179,90 @@ describe('OData V2: sales order entry, reversals and G/L totals', () => {
     expect(sdk.sent[0]!.request.headers).toMatchObject({ 'if-match': '*' });
   });
 
+  it('changes the existing price condition of an order item, or adds one when there is none', async () => {
+    const order = { d: { SalesOrder: '658', SoldToParty: '7000000010', to_Item: { results: [] } } };
+    sdk.reply = (r) => {
+      if (r.url.endsWith('/to_PricingElement') && r.method === 'get') return { d: { results: [{ ConditionType: 'PPR0', PricingProcedureStep: '10', PricingProcedureCounter: '1' }] } };
+      if (r.url.includes('A_SalesOrder(')) return order;
+      return { d: { Customer: '7000000010', CustomerName: 'Local Customer-01' } };
+    };
+    await gateway.setSalesOrderItemPrice(ctx, '658', '10', 100, 'SAR');
+    const patch = sdk.sent.find((s) => (s.request.method as string) === 'patch')!.request;
+    expect(patch.url).toBe("/sap/opu/odata/sap/API_SALES_ORDER_SRV/A_SalesOrderItemPrElement(SalesOrder='658',SalesOrderItem='10',PricingProcedureStep='10',PricingProcedureCounter='1')");
+    expect(patch.data).toEqual({ ConditionRateValue: '100', ConditionCurrency: 'SAR' });
+    expect(patch.headers).toMatchObject({ 'if-match': '*', 'x-requested-with': 'XMLHttpRequest' });
+    expect(patch.params).toBeUndefined();
+
+    sdk.sent.length = 0;
+    sdk.reply = (r) => (r.url.endsWith('/to_PricingElement') && r.method === 'get' ? { d: { results: [] } } : r.url.includes('A_SalesOrder(') ? order : { d: {} });
+    await gateway.setSalesOrderItemPrice(ctx, '658', '10', 100, 'SAR', 'PPR0');
+    const post = sdk.sent.find((s) => s.request.method === 'post')!.request;
+    expect(post.url).toBe("/sap/opu/odata/sap/API_SALES_ORDER_SRV/A_SalesOrderItem(SalesOrder='658',SalesOrderItem='10')/to_PricingElement");
+    expect(post.data).toEqual({ ConditionType: 'PPR0', ConditionRateValue: '100', ConditionCurrency: 'SAR' });
+  });
+
+  it('changes order header data and the shipping point of every item', async () => {
+    const order = { d: { SalesOrder: '658', SoldToParty: '7000000010', to_Item: { results: [{ SalesOrderItem: '10' }, { SalesOrderItem: '20' }] } } };
+    sdk.reply = (r) => (r.url.includes('A_SalesOrder(') && r.method === 'get' ? order : { d: {} });
+    await gateway.updateSalesOrder(ctx, '658', { customerReference: 'PO-4711', incoterms: 'EXW', incotermsLocation: 'Riyadh', shippingPoint: '1030' });
+    const patches = sdk.sent.filter((s) => (s.request.method as string) === 'patch').map((s) => s.request);
+    expect(patches.map((p) => p.url)).toEqual([
+      "/sap/opu/odata/sap/API_SALES_ORDER_SRV/A_SalesOrder('658')",
+      "/sap/opu/odata/sap/API_SALES_ORDER_SRV/A_SalesOrderItem(SalesOrder='658',SalesOrderItem='10')",
+      "/sap/opu/odata/sap/API_SALES_ORDER_SRV/A_SalesOrderItem(SalesOrder='658',SalesOrderItem='20')",
+    ]);
+    expect(patches[0]!.data).toEqual({ PurchaseOrderByCustomer: 'PO-4711', IncotermsClassification: 'EXW', IncotermsLocation1: 'Riyadh', IncotermsTransferLocation: 'Riyadh' });
+    expect(patches[1]!.data).toEqual({ ShippingPoint: '1030' });
+    expect(patches[0]!.headers).toMatchObject({ 'if-match': '*', 'x-requested-with': 'XMLHttpRequest' });
+  });
+
+  it('sets item weights through the custom action', async () => {
+    sdk.reply = (r) => (r.url.includes('A_SalesOrder(') ? { d: { SalesOrder: '658', SoldToParty: '7000000010', to_Item: { results: [] } } } : {});
+    await gateway.setSalesOrderItemWeight(ctx, '658', '10', 30, 25, 'KG');
+    const post = sdk.sent.find((s) => s.request.method === 'post')!.request;
+    expect(post.url).toBe("/sap/opu/odata4/sap/zapi_sd_incompletionlog_o4/srvd/sap/zapi_sd_incompletionlog/0001/ItemWeight(SalesOrder='0000000658',SalesOrderItem='000010')/SAP__self.setWeight");
+    expect(post.data).toEqual({ GrossWeight: 30, NetWeight: 25, WeightUnit: 'KG' });
+  });
+
+  it('reads the incompletion log from the custom service', async () => {
+    sdk.reply = () => ({
+      value: [
+        { SalesDocument: '0000000658', SalesDocumentItem: '000010', TableName: 'VBAP', FieldName: 'LGORT', FieldLabel: 'Storage Location', PartnerFunction: '', BlocksDelivery: true, BlocksBilling: false },
+        { SalesDocument: '0000000658', SalesDocumentItem: '000000', TableName: 'VBKD', FieldName: 'BSTKD', FieldLabel: '', PartnerFunction: '', BlocksDelivery: false, BlocksBilling: true },
+      ],
+    });
+    expect(await gateway.getIncompletionLog(ctx, '658')).toEqual([
+      { item: '10', field: 'Storage Location', table: 'VBAP', fieldName: 'LGORT', blocksDelivery: true, blocksBilling: false },
+      { field: 'VBKD-BSTKD', table: 'VBKD', fieldName: 'BSTKD', blocksDelivery: false, blocksBilling: true },
+    ]);
+    const req = sdk.sent.at(-1)!.request;
+    expect(req.url).toBe('/sap/opu/odata4/sap/zapi_sd_incompletionlog_o4/srvd/sap/zapi_sd_incompletionlog/0001/IncompletionLog');
+    expect(req.params).toMatchObject({ $filter: "SalesDocument eq '0000000658'" });
+  });
+
+  it('falls back to PR00 when the pricing procedure has no PPR0, as in RVAA01', async () => {
+    const order = { d: { SalesOrder: '658', SoldToParty: '7000000010', to_Item: { results: [] } } };
+    sdk.reply = (r) => {
+      if (r.url.endsWith('/to_PricingElement') && r.method === 'get') return { d: { results: [] } };
+      if (r.method === 'post' && (r.data as { ConditionType: string }).ConditionType === 'PPR0') {
+        throw rejected(400, { error: { message: { value: 'Condition PPR0 is missing in pricing procedure A V RVAA01' } } });
+      }
+      return r.url.includes('A_SalesOrder(') ? order : { d: {} };
+    };
+    await gateway.setSalesOrderItemPrice(ctx, '658', '10', 100, 'SAR');
+    expect(sdk.sent.filter((s) => s.request.method === 'post').map((s) => (s.request.data as { ConditionType: string }).ConditionType)).toEqual(['PPR0', 'PR00']);
+
+    // Any other rejection is reported, not retried.
+    sdk.sent.length = 0;
+    sdk.reply = (r) => {
+      if (r.url.endsWith('/to_PricingElement') && r.method === 'get') return { d: { results: [] } };
+      if (r.method === 'post') throw rejected(400, { error: { message: { value: 'Item 10 is already billed' } } });
+      return order;
+    };
+    await expect(gateway.setSalesOrderItemPrice(ctx, '658', '10', 100, 'SAR')).rejects.toMatchObject({ code: 'BUSINESS_RULE', message: expect.stringMatching(/already billed/) });
+    expect(sdk.sent.filter((s) => s.request.method === 'post')).toHaveLength(1);
+  });
+
   it('says clearly what the released APIs cannot do', async () => {
     await expect(gateway.cancelBillingDocument()).rejects.toMatchObject({ code: 'NOT_SUPPORTED' });
     await expect(gateway.releaseCreditBlock()).rejects.toMatchObject({ code: 'NOT_SUPPORTED' });

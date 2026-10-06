@@ -14,9 +14,24 @@ interface Intent {
   pattern: RegExp;
   args: (m: RegExpMatchArray, text: string) => Record<string, unknown>;
   when?: RegExp;
+  /** Only when the offered tool accepts these arguments (e.g. the hand-off target is another agent). */
+  accepts?: (tool: ToolSpec) => boolean;
 }
 
 const INTENTS: Intent[] = [
+  {
+    tool: 'agent_handoff',
+    when: /\b(create|enter|make|raise|book)\b/i,
+    pattern: /\bsales order\b/i,
+    accepts: (tool) => ((tool.inputSchema as { properties?: { agent?: { enum?: string[] } } }).properties?.agent?.enum ?? []).includes('sd'),
+    args: () => ({ agent: 'sd', reason: 'Sales orders belong to SD.' }),
+  },
+  {
+    tool: 'createSalesOrder',
+    when: /\b(create|enter|make|raise|book)\b/i,
+    pattern: /\bcustomer\D{0,12}(\d{4,10})\b.*?\b(\d+)\s*(?:PC|pieces?|units?)\b.*?\bmaterial\D{0,12}([A-Z0-9-]{1,18})\b/i,
+    args: (m, t) => ({ customer: m[1], quantity: Number(m[2]), material: m[3], salesOrganization: companyCodeIn(t) }),
+  },
   { tool: 'clearOpenItems', when: /\bclear\b/i, pattern: /\bcustomer\D{0,12}(\d{4,10})\b/i, args: (m, t) => ({ accountType: 'CUSTOMER', partner: m[1], companyCode: companyCodeIn(t) }) },
   { tool: 'clearOpenItems', when: /\bclear\b/i, pattern: /\b(?:vendor|supplier)\D{0,12}(\d{4,10})\b/i, args: (m, t) => ({ accountType: 'SUPPLIER', partner: m[1], companyCode: companyCodeIn(t) }) },
   { tool: 'ar_proposeClearing', when: /\bclearing\b/i, pattern: /\b(customers?|receivables?)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },
@@ -182,6 +197,7 @@ export class MockProvider implements LLMProvider {
       const tool = findTool(req.tools, intent.tool);
       if (!tool) continue;
       if (intent.when && !intent.when.test(text)) continue;
+      if (intent.accepts && !intent.accepts(tool)) continue;
       const match = intent.pattern.exec(text);
       if (match) return { text: '', toolCalls: [{ name: tool.name, arguments: intent.args(match, text) }] };
     }

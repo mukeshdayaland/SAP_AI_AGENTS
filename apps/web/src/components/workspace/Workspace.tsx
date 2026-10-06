@@ -110,6 +110,12 @@ export function Workspace() {
 
   const ask = useCallback((prompt: string) => send(prompt), [send]);
 
+  // When the orchestrator hands a request over to another agent, the conversation continues with that agent.
+  const answeringAgent = chat.messages.findLast((m) => m.status === 'streaming')?.agent;
+  useEffect(() => {
+    if (answeringAgent && agentsById.has(answeringAgent)) setAgent(answeringAgent);
+  }, [answeringAgent, agentsById]);
+
   const startNew = () => {
     chat.reset();
     setMobileOpen(false);

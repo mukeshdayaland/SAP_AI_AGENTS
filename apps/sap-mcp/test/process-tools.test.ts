@@ -1,7 +1,7 @@
 import { UIComponentSchema } from '@prowess/contracts';
 import { describe, expect, it } from 'vitest';
 import { MockSapGateway } from '../src/sap/mock-gateway.js';
-import type { SapCallContext } from '../src/sap/model.js';
+import { SapError, type SapCallContext } from '../src/sap/model.js';
 import { buildRegistry } from '../src/tools/registry.js';
 import { BUSINESS_DOMAINS, type ToolResultPayload } from '../src/tools/types.js';
 
@@ -110,6 +110,77 @@ describe('sales order entry and credit', () => {
     expect(created).toMatchObject({ number: '651', creditStatus: 'APPROVED', deliveryStatus: 'NOT_STARTED', netValue: { amount: 5000 }, customerReference: 'PO-77' });
     expect((await s.getCreditProfile(jordan, '7000000010')).exposure.amount).toBe(20000);
     expect((await s.createDelivery(jordan, '651')).salesOrder).toBe('651');
+  });
+
+  it('changes header data of an order, and only what was asked', async () => {
+    const s = sap();
+    expect((await preview(s, jordan, 'sd_updateSalesOrder', { salesOrder: '649', customerReference: 'PO-4711', shippingPoint: '1030' })).proposedChange).toMatch(
+      /^Change sales order 649 of .+: customer purchase order number PO-4711, shipping point of all items 1030\.$/,
+    );
+    const r = await run(s, jordan, 'sd_updateSalesOrder', { salesOrder: '649', customerReference: 'PO-4711', shippingPoint: '1030' });
+    expect(r.data.summary).toBe('Sales order **649** was changed: customer purchase order number PO-4711, shipping point of all items 1030.');
+    const o = await s.getSalesOrder(jordan, '649');
+    expect(o.customerReference).toBe('PO-4711');
+    expect(o.items.every((i) => i.shippingPoint === '1030')).toBe(true);
+    await expect(run(s, jordan, 'sd_updateSalesOrder', { salesOrder: '649' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+
+  it('shows what is missing in an incomplete order before the delivery is confirmed', async () => {
+    const s = sap();
+    const missing = (fieldName: string, field: string) => ({ item: '10', field, table: 'VBAP', fieldName, blocksDelivery: true, blocksBilling: true });
+    s.incompletion.set('649', [missing('LGORT', 'Storage Location'), missing('BRGEW', 'Gross Weight'), missing('NTGEW', 'Net Weight')]);
+
+    const p = await preview(s, jordan, 'sd_createDelivery', { salesOrder: '649' });
+    expect(p.proposedChange).toBe('Sales order 649 is incomplete, so SAP will reject this delivery. Missing: item 10: Storage Location, Gross Weight, Net Weight.');
+    expect(p.impact).toBe('Complete the order first. The purchase order number, payment terms, Incoterms, delivery date, shipping point, storage location and item weights can be completed here.');
+
+    const log = await run(s, jordan, 'sd_getIncompletionLog', { salesOrder: '649' });
+    expect(log.data.summary).toMatch(/^Sales order \*\*649\*\* is incomplete and \*\*cannot be delivered\*\* yet\. Missing: item 10: Storage Location, Gross Weight, Net Weight\./);
+    expect(log.components?.[0]).toMatchObject({ type: 'business_object_table', data: { rows: [{ item: '10', field: 'Storage Location', blocks: 'Delivery, Billing' }, {}, {}] } });
+
+    const order = await run(s, jordan, 'sd_getSalesOrder', { salesOrder: '649' });
+    expect(order.data.incomplete).toBe('item 10: Storage Location, Gross Weight, Net Weight (blocks the delivery)');
+    expect(order.components?.[0]).toMatchObject({ data: { blocks: ['Incomplete: blocks delivery'] } });
+
+    // SAP's rejection names what is missing too.
+    await expect(run(s, jordan, 'sd_createDelivery', { salesOrder: '649' })).rejects.toThrow(/Order is incomplete - maintain the order\. Missing: item 10: Storage Location, Gross Weight, Net Weight\./);
+
+    // Filling the storage location leaves the weights.
+    await run(s, jordan, 'sd_updateSalesOrder', { salesOrder: '649', storageLocation: '101A' });
+    expect((await run(s, jordan, 'sd_getIncompletionLog', { salesOrder: '649' })).data.summary).toMatch(/Missing: item 10: Gross Weight, Net Weight\./);
+
+    // Then the weights; the order is complete and the delivery goes through.
+    expect((await preview(s, jordan, 'sd_setItemWeight', { salesOrder: '649', item: '10', grossWeight: 30, netWeight: 25, weightUnit: 'KG' })).proposedChange).toMatch(
+      /^Set the weight of item 10 \(.+\) to 30 KG gross and 25 KG net \(now: none\)\.$/,
+    );
+    expect((await preview(s, jordan, 'sd_setItemWeight', { salesOrder: '649', item: '10', grossWeight: 20, netWeight: 25, weightUnit: 'KG' })).proposedChange).toMatch(/SAP will reject this change/);
+    const w = await run(s, jordan, 'sd_setItemWeight', { salesOrder: '649', item: '10', grossWeight: 30, netWeight: 25, weightUnit: 'KG' });
+    expect(w.data.summary).toBe('Item 10 of sales order **649** now weighs **30 KG** gross and **25 KG** net.');
+    expect((await run(s, jordan, 'sd_getIncompletionLog', { salesOrder: '649' })).data.summary).toMatch(/is complete/);
+    expect((await run(s, jordan, 'sd_createDelivery', { salesOrder: '649' })).data.delivery).toBeTruthy();
+  });
+
+  it('says which order data is empty when SAP reports the order as incomplete', async () => {
+    const s = sap();
+    s.createDelivery = () => Promise.reject(new SapError('BUSINESS_RULE', 'SAP rejected Outbound delivery for sales order 649: Order is incomplete - maintain the order'));
+    await expect(run(s, jordan, 'sd_createDelivery', { salesOrder: '649' })).rejects.toMatchObject({
+      code: 'BUSINESS_RULE',
+      message: expect.stringMatching(/Order is incomplete - maintain the order\. Empty on the order and usually required: .*shipping point of item 10\. The complete list is in the incompletion log/),
+    });
+    // Other rejections are passed on unchanged.
+    s.createDelivery = () => Promise.reject(new SapError('BUSINESS_RULE', 'Only 2 PC are available'));
+    await expect(run(s, jordan, 'sd_createDelivery', { salesOrder: '649' })).rejects.toThrow(/^Only 2 PC are available$/);
+  });
+
+  it('sets the price of an order item', async () => {
+    const s = sap();
+    expect((await preview(s, jordan, 'sd_setItemPrice', { salesOrder: '649', item: '10', price: 100, currency: 'SAR' })).proposedChange).toBe(
+      'Set the price of item 10 (25 PC RAW MATERIAL:ACGC) to SAR 100 per PC: item value SAR 12,500 → SAR 2,500.',
+    );
+    const r = await run(s, jordan, 'sd_setItemPrice', { salesOrder: '649', item: '10', price: 100, currency: 'SAR' });
+    expect(r.data.summary).toBe('The price of item 10 of sales order **649** was set to **SAR 100**. The order is now worth **SAR 2,500**.');
+    await expect(s.setSalesOrderItemPrice(jordan, '648', '10', 100, 'SAR', 'PPR0')).rejects.toThrow(/already billed/);
+    await expect(s.setSalesOrderItemPrice(jordan, '649', '20', 100, 'SAR', 'PPR0')).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('releases a credit block only with SAP authorization', async () => {

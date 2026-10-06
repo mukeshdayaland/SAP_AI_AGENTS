@@ -133,6 +133,11 @@ export interface SalesOrderItem {
   unit: string;
   netValue: Amount;
   plant?: string;
+  shippingPoint?: string;
+  storageLocation?: string;
+  grossWeight?: number;
+  netWeight?: number;
+  weightUnit?: string;
 }
 
 export interface SalesOrder {
@@ -155,6 +160,30 @@ export interface SalesOrder {
   deliveryBlock?: string;
   billingBlock?: string;
   items: SalesOrderItem[];
+}
+
+/** Header data of a sales order that can be changed (VA02); the shipping point applies to every item. */
+export interface SalesOrderChange {
+  customerReference?: string;
+  paymentTerms?: string;
+  incoterms?: string;
+  incotermsLocation?: string;
+  requestedDeliveryDate?: string;
+  shippingPoint?: string;
+  storageLocation?: string;
+}
+
+/** Data still missing in a sales document: one line of its incompletion log (VA02, Edit > Incompletion log). */
+export interface IncompletionEntry {
+  /** Item number; absent for header data. */
+  item?: string;
+  /** Field label, e.g. "Storage Location". */
+  field: string;
+  table: string;
+  fieldName: string;
+  partnerFunction?: string;
+  blocksDelivery: boolean;
+  blocksBilling: boolean;
 }
 
 /** One document in the order-to-cash chain that follows a sales order. */
@@ -646,6 +675,17 @@ export interface SapGateway {
   simulateSalesOrder(ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrderSimulation>;
   createSalesOrder(ctx: SapCallContext, order: NewSalesOrder): Promise<SalesOrder>;
   releaseCreditBlock(ctx: SapCallContext, salesOrder: string): Promise<SalesOrder>;
+  /** Changes header data of a sales order (VA02), for example to complete it before delivery. */
+  updateSalesOrder(ctx: SapCallContext, salesOrder: string, change: SalesOrderChange): Promise<SalesOrder>;
+  /** Sets the gross and net weight of a sales order item (VA02, item, Shipping tab). */
+  setSalesOrderItemWeight(ctx: SapCallContext, salesOrder: string, item: string, grossWeight: number, netWeight: number, weightUnit: string): Promise<SalesOrder>;
+  /** The incompletion log of a sales document: data SAP still needs before delivery or billing. */
+  getIncompletionLog(ctx: SapCallContext, salesDocument: string): Promise<IncompletionEntry[]>;
+  /**
+   * Sets the price per unit of a sales order item through its price condition (VA02). Without a condition type,
+   * the price condition of the item's pricing procedure is used: PPR0 (S/4HANA) or PR00 (classic).
+   */
+  setSalesOrderItemPrice(ctx: SapCallContext, salesOrder: string, item: string, price: number, currency: string, conditionType?: string): Promise<SalesOrder>;
   createCreditMemoRequest(ctx: SapCallContext, billingDocument: string, reason: string): Promise<CreditMemoRequest>;
 
   reverseGoodsReceipt(ctx: SapCallContext, materialDocument: string, year: string): Promise<Reversal>;

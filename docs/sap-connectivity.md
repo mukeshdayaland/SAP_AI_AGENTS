@@ -58,7 +58,9 @@ S/4HANA Cloud: `Authentication=OAuth2SAMLBearerAssertion` with a communication a
 | accounting documents | `API_JOURNALENTRYITEMBASIC_SRV` (leading ledger `0L`) |
 | credit limit and risk class | `API_CRDTMBUSINESSPARTNER` |
 | payment requests (create, approve, reject, post) | Custom OData V4 service `ZAPI_FI_AGENTPAYMENT` (binding `ZAPI_FI_AGENTPAYMENT_O4`, entity `Payment`, bound actions `approve`, `reject`, `post`; path `/sap/opu/odata4/sap/zapi_fi_agentpayment_o4/`) |
-| sales order create | `API_SALES_ORDER_SRV` (`A_SalesOrder`) |
+| sales order create, change, item price | `API_SALES_ORDER_SRV` (`A_SalesOrder`, `A_SalesOrderItem`, `A_SalesOrderItemPrElement`; price condition PPR0 or PR00) |
+| sales order incompletion log | Custom read-only OData V4 service `ZAPI_SD_INCOMPLETIONLOG` (binding `ZAPI_SD_INCOMPLETIONLOG_O4`, entity `IncompletionLog` on view `ZC_SD_IncompletionLog`, which casts the partner function because OData allows no conversion exit (PARVW) in a key, over `ZI_SD_IncompletionLog` on VBUV; access control on V_VBAK_VKO / V_VBAK_AAT; path `/sap/opu/odata4/sap/zapi_sd_incompletionlog_o4/`) |
+| sales order item weight | Same service, entity `ItemWeight` (root view `ZR_SD_SalesOrderItemWeight` on VBAP), bound action `setWeight` (`GrossWeight`, `NetWeight`, `WeightUnit`). The unmanaged behavior `ZBP_R_SD_SALESORDERITEMWEIGHT` calls `BAPI_SALESORDER_CHANGE` in the action (not in simulation mode, which checks the order without its sales area); a rejection fails the action and RAP rolls back, otherwise RAP's commit writes the change; the weights are read-only in `API_SALES_ORDER_SRV` and `API_SALESORDER` |
 | sales order simulation | `API_SALES_ORDER_SIMULATION_SRV` (`A_SalesOrderSimulation`) |
 | credit memo request | `API_CREDIT_MEMO_REQUEST_SRV` (`A_CreditMemoRequest`), `API_BILLING_DOCUMENT_SRV` for the reference |
 | goods receipt reversal | `API_MATERIAL_DOCUMENT_SRV` (function `Cancel`) |

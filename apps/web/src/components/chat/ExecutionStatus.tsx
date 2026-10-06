@@ -48,7 +48,8 @@ export function ExecutionStatus({ steps, streaming, durationMs }: { steps: StepV
   const [open, setOpen] = useState(false);
   const visible = steps.filter((s) => s.id !== 'understand' || streaming);
   if (!visible.length && !streaming) return null;
-  const toolCount = steps.filter((s) => s.id !== 'understand' && !s.id.startsWith('compose')).length;
+  // Platform steps (understanding, composing, a hand-over between agents) are not SAP calls.
+  const toolCount = steps.filter((s) => s.id !== 'understand' && !s.id.startsWith('compose') && !s.id.startsWith('handoff')).length;
   const current = [...visible].reverse().find((s) => s.state === 'running');
   const failed = steps.filter((s) => s.state === 'error');
   const denied = failed.filter((s) => s.denied).length;

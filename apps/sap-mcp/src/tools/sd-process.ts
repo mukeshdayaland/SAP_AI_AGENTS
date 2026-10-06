@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { SapError, type NewSalesOrder } from '../sap/model.js';
+import { SapError, type NewSalesOrder, type SalesOrderChange } from '../sap/model.js';
 import { partnerNumber } from './line-items.js';
 import { billingNumber, deliveryComponent, findDelivery, quantities, salesOrder, salesOrderComponent } from './sd.js';
 import { defineTool, fmt, now } from './types.js';
 
 const orderInput = {
   customer: partnerNumber.describe('Sold-to customer number, e.g. 7000000010'),
-  material: z.string().regex(/^[A-Z0-9-]{1,40}$/i).describe('Material number, e.g. 5496'),
+  material: z.string().regex(/^[A-Z0-9-]{1,40}$/i).describe('Material number as in SAP (not its description), e.g. 5496. To copy an order, take it from that order\'s items.'),
   quantity: z.coerce.number().positive().max(1_000_000).describe('Order quantity in the sales unit'),
   salesOrganization: z.string().regex(/^[A-Z0-9]{4}$/).describe('Sales organization, e.g. 1030'),
   distributionChannel: z.string().regex(/^[A-Z0-9]{2}$/).default('10').describe('Distribution channel, e.g. 10'),
@@ -27,6 +27,27 @@ const toOrder = (a: OrderArgs): NewSalesOrder => ({
   ...(a.customerReference && { customerReference: a.customerReference }),
   ...(a.requestedDeliveryDate && { requestedDeliveryDate: a.requestedDeliveryDate }),
 });
+
+type ChangeArgs = { [K in keyof SalesOrderChange]?: string | undefined };
+
+function changeOf(a: ChangeArgs): SalesOrderChange {
+  const change = Object.fromEntries(Object.entries(a).filter(([, v]) => v)) as SalesOrderChange;
+  if (!Object.keys(change).length) throw new SapError('INVALID_INPUT', 'Say what to change on the sales order: purchase order number, payment terms, Incoterms, delivery date, shipping point or storage location.');
+  return change;
+}
+
+const CHANGE_LABEL: Record<keyof SalesOrderChange, string> = {
+  customerReference: 'customer purchase order number',
+  paymentTerms: 'payment terms',
+  incoterms: 'Incoterms',
+  incotermsLocation: 'Incoterms location',
+  requestedDeliveryDate: 'requested delivery date',
+  shippingPoint: 'shipping point of all items',
+  storageLocation: 'storage location of all items',
+};
+
+const describeChange = (c: SalesOrderChange) =>
+  (Object.entries(c) as [keyof SalesOrderChange, string][]).map(([k, v]) => `${CHANGE_LABEL[k]} ${v}`).join(', ');
 
 const CREDIT_TEXT = { APPROVED: 'the credit check is passed', BLOCKED: 'the order would be **blocked by the credit check**', NOT_CHECKED: 'no credit check applies' } as const;
 
@@ -141,6 +162,129 @@ export const sdProcessTools = [
         components: [salesOrderComponent(o)],
         source: { system: ctx.gateway.systemId, objectType: 'SalesOrder', objectId: o.number, retrievedAt: now(), mock: ctx.gateway.mock },
         outputs: { salesOrder: o.number, creditStatus: o.creditStatus },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'sd_setItemPrice',
+    domain: 'sd',
+    title: 'Set sales order item price',
+    description:
+      'Set the price per unit of a sales order item (transaction VA02), for example when the order is incomplete because SAP found no price. Changes the existing price condition or adds a manual one. Consequential: always requires explicit user confirmation.',
+    risk: 'BUSINESS_WRITE',
+    operation: 'SAP_WRITE',
+    statusLabel: 'Setting item price',
+    input: {
+      salesOrder,
+      item: z.string().regex(/^\d{1,6}$/).default('10').describe('Item number, e.g. 10'),
+      price: z.coerce.number().positive().max(1_000_000_000).describe('Price per unit, net'),
+      currency: z.string().regex(/^[A-Z]{3}$/).default('SAR'),
+      conditionType: z.string().regex(/^[A-Z0-9]{4}$/).optional().describe("Price condition type. Omit it: the item's own price condition (PPR0 or PR00) is found automatically."),
+    },
+    async preview({ salesOrder, item, price, currency }, ctx) {
+      const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder);
+      const line = o.items.find((i) => i.item.replace(/^0+/, '') === item.replace(/^0+/, ''));
+      if (!line) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} has no item ${item}.`);
+      const total = { amount: Math.round(price * line.quantity * 100) / 100, currency };
+      return {
+        action: 'Set item price',
+        businessObject: { type: 'Sales order', id: o.number },
+        proposedChange: `Set the price of item ${line.item} (${line.quantity} ${line.unit} ${line.description}) to ${fmt({ amount: price, currency })} per ${line.unit}: item value ${fmt(line.netValue)} → ${fmt(total)}.`,
+        impact: `The order value changes for ${o.soldToName} and is used for delivery, billing and the credit check.`,
+      };
+    },
+    async run({ salesOrder, item, price, currency, conditionType }, ctx) {
+      const o = await ctx.gateway.setSalesOrderItemPrice(ctx.sap, salesOrder, item, price, currency, conditionType);
+      return {
+        data: { summary: `The price of item ${item} of sales order **${o.number}** was set to **${fmt({ amount: price, currency })}**. The order is now worth **${fmt(o.netValue)}**.`, salesOrder: o.number },
+        components: [salesOrderComponent(o)],
+        source: { system: ctx.gateway.systemId, objectType: 'SalesOrder', objectId: o.number, retrievedAt: now(), mock: ctx.gateway.mock },
+        followUps: [{ label: 'Create the delivery', prompt: `Create the outbound delivery for sales order ${o.number}.` }],
+        outputs: { salesOrder: o.number },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'sd_updateSalesOrder',
+    domain: 'sd',
+    title: 'Change sales order',
+    description:
+      "Change the header data of a sales order (transaction VA02): the customer's purchase order number, payment terms, Incoterms, requested delivery date, or the shipping point or storage location of its items. Use it to complete an order that SAP reports as incomplete. Only pass the fields to change. Requires user confirmation.",
+    risk: 'BUSINESS_WRITE',
+    operation: 'SAP_WRITE',
+    statusLabel: 'Changing sales order',
+    input: {
+      salesOrder,
+      customerReference: z.string().trim().min(1).max(35).optional().describe("The customer's purchase order number"),
+      paymentTerms: z.string().regex(/^[A-Z0-9]{4}$/).optional().describe('Payment terms key, e.g. 0001'),
+      incoterms: z.string().regex(/^[A-Z]{3}$/).optional().describe('Incoterms, e.g. EXW, FOB or DAP'),
+      incotermsLocation: z.string().trim().min(1).max(70).optional().describe('Incoterms location, e.g. Riyadh'),
+      requestedDeliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Requested delivery date, YYYY-MM-DD'),
+      shippingPoint: z.string().regex(/^[A-Z0-9]{4}$/).optional().describe('Shipping point for all items, e.g. 1030'),
+      storageLocation: z.string().regex(/^[A-Z0-9]{4}$/).optional().describe('Storage location for all items, e.g. 101A'),
+    },
+    async preview({ salesOrder, ...change }, ctx) {
+      const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder);
+      return {
+        action: 'Change sales order',
+        businessObject: { type: 'Sales order', id: o.number },
+        proposedChange: `Change sales order ${o.number} of ${o.soldToName}: ${describeChange(changeOf(change))}.`,
+        impact: 'The order data is used for the delivery, the invoice and the payment due date.',
+      };
+    },
+    async run({ salesOrder, ...change }, ctx) {
+      const o = await ctx.gateway.updateSalesOrder(ctx.sap, salesOrder, changeOf(change));
+      return {
+        data: { summary: `Sales order **${o.number}** was changed: ${describeChange(changeOf(change))}.`, salesOrder: o.number },
+        components: [salesOrderComponent(o)],
+        source: { system: ctx.gateway.systemId, objectType: 'SalesOrder', objectId: o.number, retrievedAt: now(), mock: ctx.gateway.mock },
+        followUps: [{ label: 'Create the delivery', prompt: `Create the outbound delivery for sales order ${o.number}.` }],
+        outputs: { salesOrder: o.number },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'sd_setItemWeight',
+    domain: 'sd',
+    title: 'Set sales order item weight',
+    description:
+      "Set the gross and net weight of a sales order item (VA02, item, Shipping tab), for example when the order is incomplete because the weight is missing. Weights from a later material master change do not reach existing orders, so they are set here. Requires user confirmation.",
+    risk: 'BUSINESS_WRITE',
+    operation: 'SAP_WRITE',
+    statusLabel: 'Setting item weight',
+    input: {
+      salesOrder,
+      item: z.string().regex(/^\d{1,6}$/).default('10').describe('Item number, e.g. 10'),
+      grossWeight: z.coerce.number().positive().max(1_000_000_000).describe('Gross weight of the whole item quantity'),
+      netWeight: z.coerce.number().positive().max(1_000_000_000).describe('Net weight of the whole item quantity; not more than the gross weight'),
+      weightUnit: z.string().regex(/^[A-Z0-9]{1,3}$/).default('KG').describe('Weight unit, e.g. KG'),
+    },
+    async preview({ salesOrder, item, grossWeight, netWeight, weightUnit }, ctx) {
+      const o = await ctx.gateway.getSalesOrder(ctx.sap, salesOrder);
+      const line = o.items.find((i) => i.item.replace(/^0+/, '') === item.replace(/^0+/, ''));
+      if (!line) throw new SapError('NOT_FOUND', `Sales order ${salesOrder} has no item ${item}.`);
+      const now = line.weightUnit && line.grossWeight ? `${line.grossWeight} / ${line.netWeight} ${line.weightUnit}` : 'none';
+      return {
+        action: 'Set item weight',
+        businessObject: { type: 'Sales order', id: o.number },
+        proposedChange:
+          netWeight > grossWeight
+            ? 'The net weight is more than the gross weight — SAP will reject this change.'
+            : `Set the weight of item ${line.item} (${line.quantity} ${line.unit} ${line.description}) to ${grossWeight} ${weightUnit} gross and ${netWeight} ${weightUnit} net (now: ${now}).`,
+        impact: 'The weights go to the delivery, shipping documents and freight calculation.',
+      };
+    },
+    async run({ salesOrder, item, grossWeight, netWeight, weightUnit }, ctx) {
+      const o = await ctx.gateway.setSalesOrderItemWeight(ctx.sap, salesOrder, item, grossWeight, netWeight, weightUnit);
+      return {
+        data: { summary: `Item ${item} of sales order **${o.number}** now weighs **${grossWeight} ${weightUnit}** gross and **${netWeight} ${weightUnit}** net.`, salesOrder: o.number },
+        components: [salesOrderComponent(o)],
+        source: { system: ctx.gateway.systemId, objectType: 'SalesOrder', objectId: o.number, retrievedAt: now(), mock: ctx.gateway.mock },
+        followUps: [{ label: 'Check what is missing', prompt: `What is still missing on sales order ${o.number}?` }],
+        outputs: { salesOrder: o.number },
       };
     },
   }),

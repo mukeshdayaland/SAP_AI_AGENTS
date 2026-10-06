@@ -272,6 +272,25 @@ describe('agents by SAP area', () => {
     expect(ofType(events, 'tool.start')).toHaveLength(0);
   });
 
+  it('routes a request to the agent that owns it and carries it out in the same answer', async () => {
+    const message = 'Create a sales order for customer 7000000010 with 10 PC of material 5496 in company code 1030.';
+    const { events } = await stack.chat(USERS.jordan, { message, agent: 'fico' });
+
+    expect(ofType(events, 'agent.handoff')).toEqual([{ type: 'agent.handoff', from: 'fico', agent: 'sd', modelTier: 'standard' }]);
+    expect(ofType(events, 'status').map((s) => s.step.label)).toContain('FICO handed this over to SD');
+    expect(ofType(events, 'tool.start').map((t) => `${t.tool.agent}/${t.tool.tool}`)).toEqual(['sd/sd_createSalesOrder']);
+    expect(ofType(events, 'confirmation.required')[0]!.confirmation).toMatchObject({ action: 'Create sales order', risk: 'HIGH_IMPACT' });
+
+    // The answer and the conversation now belong to SD.
+    const conversation = await stack.request('GET', `/api/v1/conversations/${ofType(events, 'message.start')[0]!.conversationId}`, USERS.jordan);
+    expect((conversation.json as { agent: string; messages: { role: string; agent?: string }[] }).messages.at(-1)).toMatchObject({ role: 'assistant', agent: 'sd' });
+
+    // The owning agent does not hand over to itself.
+    const sd = await stack.chat(USERS.jordan, { message, agent: 'sd' });
+    expect(ofType(sd.events, 'agent.handoff')).toEqual([]);
+    expect(ofType(sd.events, 'tool.start').map((t) => t.tool.tool)).toEqual(['sd_createSalesOrder']);
+  });
+
   it('covers financial controls with the FICO agent', async () => {
     const overdue = await stack.chat(USERS.jordan, { message: 'Which receivables are overdue in company code 1030?', agent: 'fico' });
     expect(ofType(overdue.events, 'tool.start')[0]!.tool.tool).toBe('ar_listOverdueReceivables');

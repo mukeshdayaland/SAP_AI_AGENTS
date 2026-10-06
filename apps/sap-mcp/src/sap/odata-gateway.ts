@@ -45,6 +45,8 @@ import {
   type ReceivablesAging,
   type Reversal,
   type SalesOrder,
+  type SalesOrderChange,
+  type IncompletionEntry,
   type SalesOrderSimulation,
   type SapCallContext,
   type SapGateway,
@@ -101,6 +103,8 @@ const SERVICES = {
   billingV4: '/sap/opu/odata4/sap/api_billingdocument/srvd/sap/api_billingdocument/0001',
   // Custom RAP service ZAPI_FI_AGENTPAYMENT (package ZODATA): payment requests with second-person approval.
   payment: '/sap/opu/odata4/sap/zapi_fi_agentpayment_o4/srvd/sap/zapi_fi_agentpayment/0001',
+  // Custom read-only service on the incompletion log (VBUV); not in the released sales order API.
+  incompletion: '/sap/opu/odata4/sap/zapi_sd_incompletionlog_o4/srvd/sap/zapi_sd_incompletionlog/0001',
   salesSimulation: '/sap/opu/odata/sap/API_SALES_ORDER_SIMULATION_SRV',
   // Finance analysis: Fiori application services, verified on this S/4HANA 2023 system.
   glBalance: '/sap/opu/odata/sap/FAC_GL_ACCOUNT_BALANCE_SRV',
@@ -115,6 +119,9 @@ const SERVICES = {
   assetValues: '/sap/opu/odata/sap/FAA_ASSET_VALUES_OVERVIEW_SRV',
   creditMemo: '/sap/opu/odata/sap/API_CREDIT_MEMO_REQUEST_SRV',
 } as const;
+
+/** Price condition types: PPR0 in S/4HANA pricing procedures, PR00 in classic ones such as RVAA01. */
+const PRICE_CONDITIONS = ['PPR0', 'PR00'];
 
 const PAYMENT_STATUS: Record<string, PaymentStatus> = { N: 'NEW', A: 'APPROVED', P: 'POSTED', R: 'REJECTED' };
 const PAYMENT_STATUS_CODE: Record<PaymentStatus, string> = { NEW: 'N', APPROVED: 'A', POSTED: 'P', REJECTED: 'R' };
@@ -215,6 +222,17 @@ function sapMessageOf(err: unknown): string | undefined {
   return undefined;
 }
 
+/** SAP's error body (message ID, details, inner error), shortened for the log. */
+function sapErrorBodyOf(err: unknown): string | undefined {
+  let e: unknown = err;
+  for (let i = 0; i < 6 && e; i++) {
+    const body = (e as { response?: { data?: { error?: unknown } } }).response?.data?.error;
+    if (body) return JSON.stringify(body).slice(0, 2000);
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 type ODataEntity = Record<string, unknown>;
 
 export class ODataSapGateway implements SapGateway {
@@ -237,7 +255,7 @@ export class ODataSapGateway implements SapGateway {
   private async request(
     ctx: SapCallContext,
     what: string,
-    method: 'get' | 'post',
+    method: 'get' | 'post' | 'patch',
     url: string,
     params?: Record<string, string>,
     write?: { body?: unknown; headers?: Record<string, string> },
@@ -261,7 +279,7 @@ export class ODataSapGateway implements SapGateway {
   private async send(
     ctx: SapCallContext,
     what: string,
-    method: 'get' | 'post',
+    method: 'get' | 'post' | 'patch',
     url: string,
     params?: Record<string, string>,
     write?: { body?: unknown; headers?: Record<string, string> },
@@ -287,8 +305,9 @@ export class ODataSapGateway implements SapGateway {
       if (err instanceof SapError) throw err;
       const status = statusOf(err);
       const sapMessage = sapMessageOf(err);
-      // SAP's own message is logged so a rejected posting can be diagnosed from the logs.
-      this.cfg.logger.warn('sap.request_failed', { what, method, status, error: (err as Error).message, ...(sapMessage && { sapMessage }) });
+      const sapError = sapErrorBodyOf(err);
+      // SAP's own message and error body are logged so a rejected posting can be diagnosed from the logs.
+      this.cfg.logger.warn('sap.request_failed', { what, method, status, error: (err as Error).message, ...(sapMessage && { sapMessage }), ...(sapError && { sapError }) });
       if (status === 404) throw new SapError('NOT_FOUND', `${what} was not found in SAP.`);
       if (status === 401 || status === 403) throw new SapError('NOT_AUTHORIZED', `SAP denied access to ${what}.`);
       // A rejected posting is a business outcome the user must be able to act on, so SAP's reason is passed on.
@@ -558,6 +577,9 @@ export class ODataSapGateway implements SapGateway {
         unit: str(i.RequestedQuantityUnit),
         netValue: { amount: num(i.NetAmount), currency: str(i.TransactionCurrency) || currency },
         ...(str(i.ProductionPlant) && { plant: str(i.ProductionPlant) }),
+        ...(str(i.ShippingPoint) && { shippingPoint: str(i.ShippingPoint) }),
+        ...(str(i.StorageLocation) && { storageLocation: str(i.StorageLocation) }),
+        ...(str(i.ItemWeightUnit) && { grossWeight: num(i.ItemGrossWeight), netWeight: num(i.ItemNetWeight), weightUnit: str(i.ItemWeightUnit) }),
       })),
     };
   }
@@ -1435,6 +1457,92 @@ export class ODataSapGateway implements SapGateway {
       body: { ...this.salesOrderBody(order), to_Item: { results: [{ Material: order.material, RequestedQuantity: String(order.quantity) }] } },
     })) as ODataEntity;
     return this.getSalesOrder(ctx, str(created.SalesOrder));
+  }
+
+  /**
+   * Price of a sales order item: the existing price condition is changed, or a manual one is added
+   * when the item has none (which is what leaves an order incomplete).
+   */
+  async setSalesOrderItemPrice(ctx: SapCallContext, salesOrder: string, item: string, price: number, currency: string, conditionType?: string): Promise<SalesOrder> {
+    const what = `Price of sales order ${salesOrder} item ${item}`;
+    const itemKey = `SalesOrder=${lit(salesOrder)},SalesOrderItem=${lit(item)}`;
+    const candidates = conditionType ? [conditionType] : PRICE_CONDITIONS;
+    const conditions = results(await this.request(ctx, what, 'get', `${SERVICES.salesOrder}/A_SalesOrderItem(${itemKey})/to_PricingElement`, { $top: '100' }));
+    const body = { ConditionRateValue: String(price), ConditionCurrency: currency };
+    const existing = conditions.find((c) => candidates.includes(str(c.ConditionType)));
+    if (existing) {
+      const key = `${itemKey},PricingProcedureStep=${lit(str(existing.PricingProcedureStep))},PricingProcedureCounter=${lit(str(existing.PricingProcedureCounter))}`;
+      await this.request(ctx, what, 'patch', `${SERVICES.salesOrder}/A_SalesOrderItemPrElement(${key})`, undefined, { body, headers: { 'if-match': '*' } });
+      return this.getSalesOrder(ctx, salesOrder);
+    }
+    // No price condition yet: add the one the item's pricing procedure contains, trying them in order.
+    for (const [index, type] of candidates.entries()) {
+      try {
+        await this.request(ctx, what, 'post', `${SERVICES.salesOrder}/A_SalesOrderItem(${itemKey})/to_PricingElement`, undefined, { body: { ConditionType: type, ...body } });
+        return this.getSalesOrder(ctx, salesOrder);
+      } catch (err) {
+        const notInProcedure = err instanceof SapError && /missing in pricing procedure/i.test(err.message);
+        if (!notInProcedure || index === candidates.length - 1) throw err;
+      }
+    }
+    return this.getSalesOrder(ctx, salesOrder);
+  }
+
+  async updateSalesOrder(ctx: SapCallContext, salesOrder: string, change: SalesOrderChange): Promise<SalesOrder> {
+    const what = `Change of sales order ${salesOrder}`;
+    const header = {
+      ...(change.customerReference && { PurchaseOrderByCustomer: change.customerReference }),
+      ...(change.paymentTerms && { CustomerPaymentTerms: change.paymentTerms }),
+      ...(change.incoterms && { IncotermsClassification: change.incoterms }),
+      ...(change.incotermsLocation && { IncotermsLocation1: change.incotermsLocation, IncotermsTransferLocation: change.incotermsLocation }),
+      ...(change.requestedDeliveryDate && { RequestedDeliveryDate: toODataDate(change.requestedDeliveryDate) }),
+    };
+    if (Object.keys(header).length) {
+      await this.request(ctx, what, 'patch', `${SERVICES.salesOrder}/A_SalesOrder(${lit(salesOrder)})`, undefined, { body: header, headers: { 'if-match': '*' } });
+    }
+    const item = {
+      ...(change.shippingPoint && { ShippingPoint: change.shippingPoint }),
+      ...(change.storageLocation && { StorageLocation: change.storageLocation }),
+    };
+    if (Object.keys(item).length) {
+      const order = await this.getSalesOrder(ctx, salesOrder);
+      for (const i of order.items) {
+        await this.request(ctx, what, 'patch', `${SERVICES.salesOrder}/A_SalesOrderItem(SalesOrder=${lit(salesOrder)},SalesOrderItem=${lit(i.item)})`, undefined, {
+          body: item,
+          headers: { 'if-match': '*' },
+        });
+      }
+    }
+    return this.getSalesOrder(ctx, salesOrder);
+  }
+
+  /** Item weights are read-only in the released sales order APIs; the custom action uses BAPI_SALESORDER_CHANGE. */
+  async setSalesOrderItemWeight(ctx: SapCallContext, salesOrder: string, item: string, grossWeight: number, netWeight: number, weightUnit: string): Promise<SalesOrder> {
+    const key = `SalesOrder=${lit(salesOrder.padStart(10, '0'))},SalesOrderItem=${lit(item.padStart(6, '0'))}`;
+    await this.requestV4(ctx, `Weight of sales order ${salesOrder} item ${item}`, 'post', `${SERVICES.incompletion}/ItemWeight(${key})/SAP__self.setWeight`, {
+      body: { GrossWeight: grossWeight, NetWeight: netWeight, WeightUnit: weightUnit },
+    });
+    return this.getSalesOrder(ctx, salesOrder);
+  }
+
+  async getIncompletionLog(ctx: SapCallContext, salesDocument: string): Promise<IncompletionEntry[]> {
+    const res = (await this.requestV4(ctx, `Incompletion log of sales document ${salesDocument}`, 'get', `${SERVICES.incompletion}/IncompletionLog`, {
+      params: { $filter: `SalesDocument eq ${lit(salesDocument.padStart(10, '0'))}`, $top: '200' },
+    })) as { value?: ODataEntity[] };
+    const flag = (v: unknown) => v === true || v === 'X';
+    return (res.value ?? []).map((e) => {
+      const item = str(e.SalesDocumentItem).replace(/^0+/, '');
+      const partner = str(e.PartnerFunction);
+      return {
+        ...(item && { item }),
+        field: str(e.FieldLabel) || `${str(e.TableName)}-${str(e.FieldName)}`,
+        table: str(e.TableName),
+        fieldName: str(e.FieldName),
+        ...(partner && { partnerFunction: partner }),
+        blocksDelivery: flag(e.BlocksDelivery),
+        blocksBilling: flag(e.BlocksBilling),
+      };
+    });
   }
 
   async releaseCreditBlock(): Promise<SalesOrder> {
