@@ -595,3 +595,33 @@ describe('OData V2: delivery and goods issue', () => {
     expect(sdk.sent).toHaveLength(0);
   });
 });
+
+describe('vendor addresses', () => {
+  const partner = (n: number, address: Record<string, string> = {}) => ({
+    BusinessPartner: String(n),
+    BusinessPartnerFullName: `Vendor ${n}`,
+    Customer: n === 2 ? '2' : '',
+    Supplier: n === 3 ? 'VENDMAH3' : String(n),
+    to_BusinessPartnerAddress: { results: [{ StreetName: '', HouseNumber: '', CityName: '', PostalCode: '', Region: '', Country: 'IN', ...address }] },
+  });
+
+  it('reads suppliers page by page until SAP has no more', async () => {
+    const pages = [
+      { d: { results: [partner(1, { StreetName: ' LBS NAGAR ', CityName: 'BANGALORE', PostalCode: '560075', Region: '10' }), partner(2)], __next: 'more' } },
+      { d: { results: [partner(3, { CityName: 'Nashik' })] } },
+    ];
+    sdk.reply = () => pages.shift();
+    const vendors = await gateway.listVendorAddresses(ctx);
+
+    expect(sdk.sent).toHaveLength(2);
+    expect(sdk.sent[0]!.request.url).toBe('/sap/opu/odata/sap/API_BUSINESS_PARTNER/A_BusinessPartner');
+    expect(sdk.sent[0]!.request.params).toMatchObject({ $filter: "Supplier ne ''", $expand: 'to_BusinessPartnerAddress', $skip: '0' });
+    expect(sdk.sent[1]!.request.params).toMatchObject({ $skip: '2' });
+    expect(vendors).toEqual([
+      { id: '1', businessPartner: '1', name: 'Vendor 1', isCustomer: false, street: 'LBS NAGAR', city: 'BANGALORE', postalCode: '560075', region: '10', country: 'IN' },
+      // Empty address fields are left out, and a supplier number need not be numeric.
+      { id: '2', businessPartner: '2', name: 'Vendor 2', isCustomer: true, country: 'IN' },
+      { id: 'VENDMAH3', businessPartner: '3', name: 'Vendor 3', isCustomer: false, city: 'Nashik', country: 'IN' },
+    ]);
+  });
+});

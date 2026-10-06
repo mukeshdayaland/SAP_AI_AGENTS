@@ -67,6 +67,7 @@ import {
   type SearchHit,
   type SystemInfo,
   type Vendor,
+  type VendorAddress,
   type WorkOrder,
 } from './model.js';
 
@@ -107,6 +108,17 @@ const VENDORS: Vendor[] = [
     riskRating: 'LOW',
   },
   ...SCENARIO_VENDORS,
+];
+
+/** Street addresses for the vendor map; suppliers without an entry here have only the city of their master record. */
+const VENDOR_STREETS: Record<string, Pick<VendorAddress, 'street' | 'houseNumber' | 'postalCode'>> = {
+  '1000123': { street: 'King Fahd Road', houseNumber: '7', postalCode: '12271' },
+  '1000456': { street: 'Sheikh Zayed Road', houseNumber: '44' },
+};
+
+/** Suppliers with unusable addresses, as found in real master data. */
+const VENDORS_WITHOUT_LOCATION: VendorAddress[] = [
+  { id: 'VENDTEST', businessPartner: '1000990', name: 'Test vendor without address', isCustomer: false, country: 'SA' },
 ];
 
 const PURCHASE_ORDERS: PurchaseOrder[] = [
@@ -379,6 +391,14 @@ export class MockSapGateway implements SapGateway {
   async getVendor(ctx: SapCallContext, id: string): Promise<Vendor> {
     await this.latency();
     return this.find(VENDORS, (v) => v.id === id.replace(/^V/i, ''), 'Supplier', id);
+  }
+
+  async listVendorAddresses(_ctx: SapCallContext): Promise<VendorAddress[]> {
+    await this.latency();
+    return [
+      ...VENDORS.map((v) => ({ id: v.id, businessPartner: v.id, name: v.name, isCustomer: false, ...VENDOR_STREETS[v.id], ...(v.city && { city: v.city }), country: v.country })),
+      ...VENDORS_WITHOUT_LOCATION,
+    ];
   }
 
   async getGLBalance(ctx: SapCallContext, account: string, companyCode: string, fiscalYear: string, period?: string): Promise<GLBalance> {

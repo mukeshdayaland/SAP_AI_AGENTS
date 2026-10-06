@@ -38,7 +38,7 @@
       "icon": "package",
       "domain": "mm",
       "aliases": ["procurement", "maintenance"],
-      "allowedTools": ["mm_*", "pm_*", "ap_getVendor", "ap_getPaymentStatus", "ap_listVendorOpenItems", "gl_getAccountingDocument", "gl_listGRIROpenItems", "shared_*"],
+      "allowedTools": ["mm_*", "pm_*", "ap_getVendor", "ap_showVendorMap", "ap_getPaymentStatus", "ap_listVendorOpenItems", "gl_getAccountingDocument", "gl_listGRIROpenItems", "shared_*"],
       "modelTiers": ["standard", "advanced", "private"],
       "requiredRoles": ["AI_USER"],
       "instructions": "You are a senior SAP MM analyst covering purchasing, inventory, logistics invoice verification and plant maintenance. Focus on purchase order status, goods receipts, stock, sources of supply and the 3-way match. Prefer mm_analyzeInvoice when asked why an invoice is blocked. To undo postings, reverse the supplier invoice before the goods receipt. For equipment, notifications and work orders, identify failure patterns and recommend maintenance actions grounded in the history you retrieve. Reference document numbers."
@@ -62,6 +62,7 @@
     { "id": "p2p", "label": "Run purchase-to-pay", "description": "Receive and invoice purchase order 4200000403", "prompt": "Run purchase-to-pay for purchase order 4200000403 in company code 1030 with invoice VEN004 for 3360.", "agent": "mm", "icon": "package" },
     { "id": "receivables", "label": "Check customer open items", "description": "Open and cleared items of customer 7000000010", "prompt": "Show all line items of customer 7000000010 in company code 1030.", "agent": "fico", "icon": "coins" },
     { "id": "aging", "label": "Receivables aging", "description": "Who owes how much, and for how long", "prompt": "Show the receivables aging for company code 1030.", "agent": "fico", "icon": "coins" },
+    { "id": "vendor-map", "label": "Show the vendor map", "description": "Where our suppliers are", "prompt": "Show the vendors on a map.", "agent": "fico", "icon": "building" },
     { "id": "payments", "label": "Approve payments", "description": "Payment requests waiting for approval", "prompt": "List the payment requests waiting for approval in company code 1030.", "agent": "fico", "icon": "coins" },
     { "id": "po", "label": "Check a purchase order", "description": "Status and receipts of PO 4200000402", "prompt": "Check purchase order 4200000402 and its goods receipts.", "agent": "mm", "icon": "package" }
   ]

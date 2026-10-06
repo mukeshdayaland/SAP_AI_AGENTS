@@ -12,6 +12,7 @@ import { RingBufferAuditSink } from '../src/audit/audit.js';
 import { loadConfig } from '../src/config/env.js';
 import { MemoryStore } from '../src/persistence/memory.js';
 import { createServices } from '../src/services.js';
+import type { Geocoder } from '../src/vendors/geocoder.js';
 
 export const SECRET = 'integration-test-secret'.padEnd(48, '-');
 export const USERS = {
@@ -23,7 +24,7 @@ export const USERS = {
 
 const silent = createLogger({ service: 'test', level: 'error', sink: () => {} });
 
-export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider> } = {}) {
+export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider>; geocoder?: Geocoder; env?: Record<string, string> } = {}) {
   const mcpServer = createMcpHttpServer(
     {
       port: 0,
@@ -47,6 +48,7 @@ export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider
     LOG_LEVEL: 'error',
     UPLOAD_DIR: join(tmpdir(), `prowess-test-${process.pid}`),
     RATE_LIMIT_PER_MINUTE: '1000',
+    ...opts.env,
   });
   const auditBuffer = new RingBufferAuditSink();
   const services = await createServices(config, {}, {
@@ -54,6 +56,7 @@ export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider
     providers: opts.providers ?? new Map<ProviderId, LLMProvider>([['mock', new MockProvider()]]),
     logger: silent,
     auditSinks: [auditBuffer],
+    ...(opts.geocoder && { geocoder: opts.geocoder }),
   });
   const app = await buildApp(services);
   await app.listen({ port: 0, host: '127.0.0.1' });

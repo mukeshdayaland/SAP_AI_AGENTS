@@ -370,6 +370,18 @@ export const TimelineComponent = z.object({
   }),
 });
 
+/** A map of vendors. Carries only the filter: the page loads the vendors itself, as the signed-in user. */
+export const VendorMapComponent = z.object({
+  type: z.literal('vendor_map'),
+  data: z.object({
+    title: text(120),
+    /** Vendors SAP holds for this filter, before any are dropped for lack of an address. */
+    vendors: z.number().int().nonnegative(),
+    country: z.string().regex(/^[A-Z]{2}$/).optional(),
+    city: text(60).optional(),
+  }),
+});
+
 export const UIComponentSchema = z.discriminatedUnion('type', [
   InvoiceComponent,
   PurchaseOrderComponent,
@@ -390,6 +402,7 @@ export const UIComponentSchema = z.discriminatedUnion('type', [
   KPIBlockComponent,
   TimelineComponent,
   NoticeComponent,
+  VendorMapComponent,
 ]);
 
 export type UIComponent = z.infer<typeof UIComponentSchema>;

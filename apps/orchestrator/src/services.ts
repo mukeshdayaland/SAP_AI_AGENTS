@@ -18,6 +18,8 @@ import { PostgresStore } from './persistence/postgres.js';
 import type { Store } from './persistence/types.js';
 import { ToolPolicy } from './security/tool-policy.js';
 import { ConcurrencyGuard, QuotaService, RateLimiter } from './usage/limits.js';
+import { CachingGeocoder, GoogleGeocoder, type Geocoder } from './vendors/geocoder.js';
+import { VendorMapService } from './vendors/vendor-map-service.js';
 import { WorkflowService } from './workflows/workflow-service.js';
 
 /** Composition root: every dependency is constructed here and injected. */
@@ -38,6 +40,7 @@ export interface Services {
   actions: ActionService;
   workflows: WorkflowService;
   files: FileService;
+  vendorMap: VendorMapService;
   rateLimiter: RateLimiter;
   streams: ConcurrencyGuard;
 }
@@ -50,6 +53,8 @@ export interface ServiceOverrides {
   logger?: Logger;
   scanner?: MalwareScanner;
   auditSinks?: AuditSink[];
+  /** Replaces the Google geocoder; results are not written to the cache file. */
+  geocoder?: Geocoder;
 }
 
 export async function createServices(config: OrchestratorConfig, env = process.env, overrides: ServiceOverrides = {}): Promise<Services> {
@@ -104,6 +109,12 @@ export async function createServices(config: OrchestratorConfig, env = process.e
   const workflows = new WorkflowService({ store, mcp, agents, policy, audit, logger, config, catalog: catalogs.workflows ?? { workflows: [] } });
   const chat = new ChatService({ store, router, mcp, agents, policy, audit, quota, workflows, logger, config });
 
+  const geocoder = overrides.geocoder
+    ? new CachingGeocoder(overrides.geocoder, logger)
+    : config.maps.geocodingKey
+      ? new CachingGeocoder(new GoogleGeocoder(config.maps.geocodingKey), logger, config.maps.geocodeCacheFile)
+      : undefined;
+
   return {
     config,
     logger,
@@ -121,6 +132,7 @@ export async function createServices(config: OrchestratorConfig, env = process.e
     actions: new ActionService({ store, mcp, agents, audit, workflows, logger, config }),
     workflows,
     files: new FileService({ store, scanner, audit, logger, config: config.uploads }),
+    vendorMap: new VendorMapService({ mcp, audit, logger, config, ...(geocoder && { geocoder }) }),
     rateLimiter: new RateLimiter(config.limits.requestsPerMinute),
     streams: new ConcurrencyGuard(config.limits.maxConcurrentStreamsPerUser),
   };

@@ -4,7 +4,7 @@
   "sessionTimeout": 30,
   "logout": { "logoutEndpoint": "/logout", "logoutPage": "/logged-out.html" },
   "responseHeaders": [
-    { "name": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
+    { "name": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://maps.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://*.googleapis.com https://*.gstatic.com https://*.google.com https://*.ggpht.com; connect-src 'self' https://*.googleapis.com https://*.gstatic.com; font-src 'self' https://fonts.gstatic.com; worker-src blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
     { "name": "X-Content-Type-Options", "value": "nosniff" },
     { "name": "Referrer-Policy", "value": "no-referrer" },
     { "name": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },

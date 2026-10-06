@@ -1,7 +1,7 @@
 'use client';
 
 import type { AttachmentRef, ConversationSummary, PublicError, StarterAction, WorkspaceConfig } from '@prowess/contracts';
-import { Workflow, Wrench } from 'lucide-react';
+import { Workflow, Wrench, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiError} from '@/lib/api';
 import { api } from '@/lib/api';
@@ -175,12 +175,12 @@ export function Workspace() {
   const messages = showAll ? chat.messages : chat.messages.slice(-WINDOW);
   const hidden = chat.messages.length - messages.length;
   const lastAssistant = [...chat.messages].reverse().find((m) => m.role === 'assistant');
-  // The context panel: the latest workflow run of the conversation and the technical details of one answer.
+  // The context panel: the latest workflow run of the conversation and, once asked for, the technical details of one answer.
   const process = [...chat.messages]
     .reverse()
     .flatMap((m) => [...m.components].reverse())
     .find((c) => c.type === 'workflow_run');
-  const detailsFor = chat.messages.find((m) => m.id === detailsId && m.execution) ?? [...chat.messages].reverse().find((m) => m.role === 'assistant' && m.execution);
+  const detailsFor = chat.messages.find((m) => m.id === detailsId && m.execution);
   const agentName = (id?: string) => agentsById.get(id ?? agent)?.name ?? 'Prowess AI';
 
   return (
@@ -277,7 +277,7 @@ export function Workspace() {
                       }}
                       onRate={(r) => chat.rate(m.id, r)}
                       onConfirmation={chat.resolveConfirmation}
-                      {...(wide && { onShowDetails: () => setDetailsId(m.id), detailsShown: m.id === detailsFor?.id })}
+                      {...(wide && { onShowDetails: () => setDetailsId((id) => (id === m.id ? null : m.id)), detailsShown: m.id === detailsFor?.id })}
                     />
                   ),
                 )}
@@ -314,6 +314,9 @@ export function Workspace() {
               <section className="p-3">
                 <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-3">
                   <Wrench size={13} aria-hidden /> Technical details
+                  <button type="button" onClick={() => setDetailsId(null)} aria-label="Close technical details" className="ml-auto rounded p-0.5 text-ink-3 hover:bg-muted hover:text-ink">
+                    <X size={13} aria-hidden />
+                  </button>
                 </h2>
                 <p className="mb-2 text-[10px] text-ink-3">{detailsFor.id === lastAssistant?.id ? 'Latest answer' : `Answer of ${new Date(detailsFor.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</p>
                 <TechnicalDetailsList execution={detailsFor.execution} />

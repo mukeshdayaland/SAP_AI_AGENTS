@@ -32,6 +32,7 @@ const INTENTS: Intent[] = [
     pattern: /\bcustomer\D{0,12}(\d{4,10})\b.*?\b(\d+)\s*(?:PC|pieces?|units?)\b.*?\bmaterial\D{0,12}([A-Z0-9-]{1,18})\b/i,
     args: (m, t) => ({ customer: m[1], quantity: Number(m[2]), material: m[3], salesOrganization: companyCodeIn(t) }),
   },
+  { tool: 'showVendorMap', when: /\bmap\b/i, pattern: /\b(vendors?|suppliers?)\b/i, args: (_m, t) => ({ ...(/\bin ([A-Z]{2})\b/.exec(t) && { country: /\bin ([A-Z]{2})\b/.exec(t)![1] }) }) },
   { tool: 'clearOpenItems', when: /\bclear\b/i, pattern: /\bcustomer\D{0,12}(\d{4,10})\b/i, args: (m, t) => ({ accountType: 'CUSTOMER', partner: m[1], companyCode: companyCodeIn(t) }) },
   { tool: 'clearOpenItems', when: /\bclear\b/i, pattern: /\b(?:vendor|supplier)\D{0,12}(\d{4,10})\b/i, args: (m, t) => ({ accountType: 'SUPPLIER', partner: m[1], companyCode: companyCodeIn(t) }) },
   { tool: 'ar_proposeClearing', when: /\bclearing\b/i, pattern: /\b(customers?|receivables?)\b/i, args: (_m, t) => ({ companyCode: companyCodeIn(t) }) },

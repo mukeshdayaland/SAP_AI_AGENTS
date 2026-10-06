@@ -333,3 +333,34 @@ export const ConfirmActionSchema = z.object({
   /** Explicit acknowledgement required for PROD writes. */
   acknowledgeEnvironment: z.enum(ENVIRONMENTS).optional(),
 });
+
+/* ------------------------------------------------------------------ */
+/* Vendor map                                                         */
+/* ------------------------------------------------------------------ */
+
+/** How exactly a vendor could be placed: at its street, at its city, or only by postal code or state. */
+export type LocationPrecision = 'street' | 'city' | 'approximate';
+
+export interface VendorLocation {
+  id: string;
+  name: string;
+  isCustomer: boolean;
+  /** The address as held in SAP, for display. */
+  address: string;
+  country: string;
+  lat: number;
+  lng: number;
+  precision: LocationPrecision;
+}
+
+export interface VendorMap {
+  vendors: VendorLocation[];
+  /** Suppliers read from SAP, including those that could not be placed. */
+  total: number;
+  /** Suppliers left off the map because their address is missing or could not be resolved. */
+  excluded: number;
+  system: string;
+  mock: boolean;
+  /** Browser key and map ID for the Maps JavaScript API. Absent when the map is not configured. */
+  maps?: { apiKey: string; mapId: string };
+}

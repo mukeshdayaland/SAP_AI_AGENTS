@@ -5,6 +5,7 @@ import { BookOpen, Building2, Check, CircleDashed, CircleSlash, Copy, Lock, Sear
 import { useState, type ComponentType } from 'react';
 import { formatDate, formatMoney, humanize } from '@/lib/format';
 import { Badge, cx, type Tone } from '../ui/primitives';
+import { VendorMapCard } from '../vendors/VendorMap';
 import { Field, Fields, SapArea, SapCard, toneText, useAsk } from './card';
 
 type Of<T extends UIComponent['type']> = Extract<UIComponent, { type: T }>['data'];
@@ -708,6 +709,7 @@ const REGISTRY: { [K in UIComponent['type']]: ComponentType<{ data: Of<K> }> } =
   kpi_block: KPIBlock,
   timeline: Timeline,
   notice: Notice,
+  vendor_map: VendorMapCard,
 };
 
 export function SapComponent({ component }: { component: UIComponent }) {

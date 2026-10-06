@@ -53,6 +53,7 @@ import {
   type SearchHit,
   type SystemInfo,
   type Vendor,
+  type VendorAddress,
   type WorkOrder,
 } from './model.js';
 
@@ -164,6 +165,11 @@ const processStatus = (v: unknown): ProcessStatus => (v === 'C' ? 'COMPLETE' : v
 
 /** Follow-on document categories in the SD document flow. */
 const FLOW_CATEGORY: Record<string, DocumentFlowStep['category']> = { J: 'DELIVERY', T: 'DELIVERY', R: 'GOODS_ISSUE', M: 'BILLING', N: 'BILLING', O: 'BILLING', P: 'BILLING' };
+
+/** Suppliers are read in pages; the page limit caps one map load at 10,000 suppliers. */
+const VENDOR_PAGE_SIZE = 500;
+const VENDOR_MAX_PAGES = 20;
+const VENDOR_ADDRESS_FIELDS = ['StreetName', 'HouseNumber', 'CityName', 'PostalCode', 'Region', 'Country'];
 
 const results = (v: unknown) => ((v as { results?: ODataEntity[] } | undefined)?.results ?? []) as ODataEntity[];
 const str = (v: unknown) => String(v ?? '').trim();
@@ -374,6 +380,39 @@ export class ODataSapGateway implements SapGateway {
       postingBlocked: e.PostingIsBlocked === true,
       paymentBlocked: e.PaymentIsBlockedForSupplier === true,
     };
+  }
+
+  async listVendorAddresses(ctx: SapCallContext): Promise<VendorAddress[]> {
+    const vendors: VendorAddress[] = [];
+    for (let page = 0; page < VENDOR_MAX_PAGES; page++) {
+      const d = (await this.request(ctx, 'Suppliers', 'get', `${SERVICES.bp}/A_BusinessPartner`, {
+        $filter: "Supplier ne ''",
+        $expand: 'to_BusinessPartnerAddress',
+        $select: `BusinessPartner,BusinessPartnerFullName,Customer,Supplier,${VENDOR_ADDRESS_FIELDS.map((f) => `to_BusinessPartnerAddress/${f}`).join(',')}`,
+        $orderby: 'BusinessPartner',
+        $top: String(VENDOR_PAGE_SIZE),
+        $skip: String(vendors.length),
+      })) as { results?: ODataEntity[]; __next?: string };
+      const rows = d.results ?? [];
+      for (const e of rows) {
+        const a = results(e.to_BusinessPartnerAddress)[0] ?? {};
+        vendors.push({
+          id: str(e.Supplier),
+          businessPartner: str(e.BusinessPartner),
+          name: str(e.BusinessPartnerFullName) || str(e.Supplier),
+          isCustomer: str(e.Customer) !== '',
+          ...(str(a.StreetName) && { street: str(a.StreetName) }),
+          ...(str(a.HouseNumber) && { houseNumber: str(a.HouseNumber) }),
+          ...(str(a.CityName) && { city: str(a.CityName) }),
+          ...(str(a.PostalCode) && { postalCode: str(a.PostalCode) }),
+          ...(str(a.Region) && { region: str(a.Region) }),
+          country: str(a.Country),
+        });
+      }
+      // SAP may return fewer rows than asked for and point to the rest with __next.
+      if (!rows.length || (rows.length < VENDOR_PAGE_SIZE && !d.__next)) break;
+    }
+    return vendors;
   }
 
   /**

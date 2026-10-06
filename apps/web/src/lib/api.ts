@@ -7,13 +7,15 @@ import type {
   MessageDTO,
   PublicError,
   StreamEvent,
+  VendorMap,
   WorkspaceConfig,
 } from '@prowess/contracts';
 import { prefs } from './prefs';
 
 /**
- * Browser API client. Talks only to same-origin `/api/v1/*` (the approuter
- * in production, the dev proxy locally) — never to SAP, MCP or model providers.
+ * Browser API client. Talks only to same-origin `/api/v1/*` (the Cloudflare
+ * BFF or the SAP approuter in production, the dev proxy locally) — never to
+ * SAP, MCP or model providers.
  */
 
 const BASE = '/api/v1';
@@ -75,6 +77,7 @@ export const api = {
     request<{ confirmation: ConfirmationRequest; message: MessageDTO; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/confirm`, acknowledgeEnvironment ? { acknowledgeEnvironment } : {}),
   cancel: (id: string) => request<{ confirmation: ConfirmationRequest; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/cancel`, {}),
   help: () => request<HelpOverview>('GET', '/help'),
+  vendorLocations: () => request<VendorMap>('GET', '/vendors/locations'),
   adminOverview: () => request<Record<string, unknown>>('GET', '/admin/overview'),
   audit: () => request<{ events: Record<string, unknown>[] }>('GET', '/admin/audit'),
 

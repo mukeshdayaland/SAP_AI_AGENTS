@@ -40,6 +40,22 @@ export interface Vendor {
   riskRating?: 'LOW' | 'MEDIUM' | 'HIGH';
 }
 
+/** A supplier with the address SAP holds for it; the address fields are free text and often incomplete. */
+export interface VendorAddress {
+  /** Supplier number. Not always numeric. */
+  id: string;
+  businessPartner: string;
+  name: string;
+  /** The same business partner is also a customer. */
+  isCustomer: boolean;
+  street?: string;
+  houseNumber?: string;
+  city?: string;
+  postalCode?: string;
+  region?: string;
+  country: string;
+}
+
 export interface PurchaseOrderItem {
   item: string;
   material: string;
@@ -610,6 +626,8 @@ export interface SapGateway {
 
   getInvoice(ctx: SapCallContext, number: string, fiscalYear?: string): Promise<Invoice>;
   getVendor(ctx: SapCallContext, id: string): Promise<Vendor>;
+  /** All suppliers the user may see, each with its first address. */
+  listVendorAddresses(ctx: SapCallContext): Promise<VendorAddress[]>;
   getGLBalance(ctx: SapCallContext, account: string, companyCode: string, fiscalYear: string, period?: string): Promise<GLBalance>;
   getPurchaseOrder(ctx: SapCallContext, number: string): Promise<PurchaseOrder>;
   getPurchaseRequisition(ctx: SapCallContext, number: string): Promise<PurchaseRequisition>;

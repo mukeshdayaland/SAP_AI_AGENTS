@@ -1,7 +1,7 @@
 'use client';
 
 import type { ConversationSummary, UserProfile } from '@prowess/contracts';
-import { ChevronsUpDown, CircleHelp, LayoutDashboard, LogOut, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
+import { ChevronsUpDown, CircleHelp, LayoutDashboard, LogOut, MapPin, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { groupConversations } from '@/lib/format';
 import { IconButton, Menu, MenuItem, ProwessMark, cx } from '../ui/primitives';
@@ -197,6 +197,9 @@ export function Sidebar(p: Props) {
                     }}
                   >
                     <Settings size={15} /> Settings
+                  </MenuItem>
+                  <MenuItem href="/vendors/">
+                    <MapPin size={15} /> Vendor map
                   </MenuItem>
                   <MenuItem href="/help/">
                     <CircleHelp size={15} /> Help and my activity

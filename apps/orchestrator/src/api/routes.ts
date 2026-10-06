@@ -5,6 +5,7 @@ import {
   RenameConversationSchema,
   StartRunSchema,
   type HelpOverview,
+  type VendorMap,
   type WorkspaceConfig,
 } from '@prowess/contracts';
 import { metrics } from '@prowess/observability';
@@ -167,6 +168,13 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   app.delete('/api/v1/files/:id', async (req, reply) => {
     await s.files.delete(auth(req), parse(IdParam, req.params).id);
     return reply.code(204).send();
+  });
+
+  /* ---------------- vendor map ---------------- */
+  app.get('/api/v1/vendors/locations', async (req): Promise<VendorMap> => {
+    const a = auth(req);
+    s.rateLimiter.take(a.user.id);
+    return s.vendorMap.locations(a);
   });
 
   /* ---------------- help: what the user's agents can do, and the user's own activity ---------------- */

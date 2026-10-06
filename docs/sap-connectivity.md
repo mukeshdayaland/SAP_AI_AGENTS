@@ -44,6 +44,7 @@ S/4HANA Cloud: `Authentication=OAuth2SAMLBearerAssertion` with a communication a
 | --- | --- |
 | invoices, release | `API_SUPPLIERINVOICE_PROCESS_SRV` (`A_SupplierInvoice`, function `Release`) |
 | vendors | `API_BUSINESS_PARTNER` (`A_Supplier`) |
+| vendor addresses for the map | `API_BUSINESS_PARTNER` (`A_BusinessPartner` with `Supplier ne ''`, expanded with `to_BusinessPartnerAddress`, read in pages of 500) |
 | purchase orders (read, create) | `API_PURCHASEORDER_PROCESS_SRV` (`A_PurchaseOrder`) |
 | requisitions (read, create) | `API_PURCHASEREQ_PROCESS_SRV` (`A_PurchaseRequisitionHeader`) |
 | goods receipts (read, post) | `API_MATERIAL_DOCUMENT_SRV` (`A_MaterialDocumentHeader`, goods movement code `01`, movement type `101`) |
