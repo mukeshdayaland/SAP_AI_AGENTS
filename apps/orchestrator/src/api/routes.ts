@@ -172,6 +172,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   /* ---------------- help: what the user's agents can do, and the user's own activity ---------------- */
   app.get('/api/v1/help', async (req): Promise<HelpOverview> => {
     const { user } = auth(req);
+    s.rateLimiter.take(user.id);
     const tools = await s.mcp.listTools(s.config.environment).catch(() => []);
     const titles = new Map(tools.map((t) => [t.name, t.title]));
     const names = new Map(s.agents.all().map((a) => [a.id, a.name]));
