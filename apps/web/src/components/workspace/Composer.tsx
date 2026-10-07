@@ -7,6 +7,7 @@ import type { ApiError} from '@/lib/api';
 import { api } from '@/lib/api';
 import type { SendKey } from '@/lib/prefs';
 import { Spinner, cx } from '../ui/primitives';
+import { brand } from '@/lib/brand';
 
 export interface ComposerHandle {
   focus(): void;
@@ -120,7 +121,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
             resize();
           }}
           onKeyDown={onKeyDown}
-          placeholder="Ask Prowess AI…"
+          placeholder={`Ask ${brand.name}…`}
           aria-describedby="prowess-prompt-hint"
           className="focus-bare block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[14px] leading-relaxed text-ink placeholder:text-ink-3"
         />

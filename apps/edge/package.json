@@ -8,7 +8,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "package": "npm run build -w @prowess/web --prefix ../.. && node ../../scripts/package-cloudflare.mjs",
     "dev": "npx wrangler@4 pages dev",
-    "deploy": "npx wrangler@4 pages deploy --project-name prowess-ai"
+    "deploy": "npx wrangler@4 pages deploy --project-name prowess-ai",
+    "package:wtco": "node ../../scripts/package-brand.mjs wtco",
+    "deploy:wtco": "npm run package:wtco && npx wrangler@4 pages deploy --project-name wtco-ai"
   },
   "dependencies": {
     "@prowess/contracts": "*"

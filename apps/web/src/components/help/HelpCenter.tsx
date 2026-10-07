@@ -7,6 +7,7 @@ import type { ApiError } from '@/lib/api';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { Badge, EnvironmentBadge, ProwessMark, Spinner, cx, type Tone } from '../ui/primitives';
+import { brand } from '@/lib/brand';
 
 const TABS = ['Agents', 'Tools', 'My activity'] as const;
 type Tab = (typeof TABS)[number];
@@ -114,7 +115,7 @@ export function HelpCenter() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <header className="sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
+      <header className="brand-bar sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
           <a href="/" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-ink-2 hover:bg-muted hover:text-ink">
             <ArrowLeft size={15} aria-hidden /> Workspace
@@ -211,7 +212,7 @@ export function HelpCenter() {
 
         {tab === 'My activity' && (
           <>
-            <p className="text-sm text-ink-2">Your most recent SAP reads, changes and process runs through Prowess AI. Only you see this list; it covers recent activity and is not the permanent audit record.</p>
+            <p className="text-sm text-ink-2">Your most recent SAP reads, changes and process runs through {brand.name}. Only you see this list; it covers recent activity and is not the permanent audit record.</p>
             <Table
               head={['Time', 'Event', 'Action', 'Object', 'Agent', 'System', 'Status']}
               empty="You have no SAP activity yet."

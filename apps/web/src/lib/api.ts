@@ -11,6 +11,7 @@ import type {
   WorkspaceConfig,
 } from '@prowess/contracts';
 import { prefs } from './prefs';
+import { brand } from './brand';
 
 /**
  * Browser API client. Talks only to same-origin `/api/v1/*` (the Cloudflare
@@ -40,7 +41,7 @@ function headers(json: boolean): HeadersInit {
 
 const fallbackError = (status: number): PublicError => ({
   code: status === 401 ? 'UNAUTHENTICATED' : 'NETWORK',
-  message: status === 401 ? 'Your session has expired. Please reload the page to sign in again.' : 'Prowess AI could not be reached. Check your connection and try again.',
+  message: status === 401 ? 'Your session has expired. Please reload the page to sign in again.' : `${brand.name} could not be reached. Check your connection and try again.`,
   correlationId: '',
   reference: '',
   retryable: status !== 401,

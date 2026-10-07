@@ -3,6 +3,7 @@
 import type { WorkspaceConfig } from '@prowess/contracts';
 import { ChevronDown, Menu as MenuIcon } from 'lucide-react';
 import { EnvironmentBadge, IconButton } from '../ui/primitives';
+import { brand } from '@/lib/brand';
 
 interface Props {
   config: WorkspaceConfig;
@@ -41,13 +42,13 @@ function Select({ id, label, value, options, onChange, disabled }: { id: string;
 
 export function Header({ config, agent, tier, title, locked, onAgent, onTier, onOpenSidebar }: Props) {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/80 px-3 backdrop-blur md:px-5">
+    <header className="brand-bar flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/80 px-3 backdrop-blur md:px-5">
       <span className="md:hidden">
         <IconButton label="Open conversations" onClick={onOpenSidebar}>
           <MenuIcon size={18} />
         </IconButton>
       </span>
-      <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-ink-2">{title ?? <span className="sr-only">Prowess AI</span>}</h1>
+      <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-ink-2">{title ?? <span className="sr-only">{brand.name}</span>}</h1>
 
       <div className="flex items-center gap-2">
         <Select

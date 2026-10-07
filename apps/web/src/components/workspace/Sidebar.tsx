@@ -5,6 +5,7 @@ import { ChevronsUpDown, CircleHelp, LayoutDashboard, LogOut, MapPin, MoreHorizo
 import { useMemo, useState } from 'react';
 import { groupConversations } from '@/lib/format';
 import { IconButton, Menu, MenuItem, ProwessMark, cx } from '../ui/primitives';
+import { brand } from '@/lib/brand';
 
 interface Props {
   conversations: ConversationSummary[];
@@ -56,7 +57,7 @@ export function Sidebar(p: Props) {
           {!collapsed && (
             <div className="flex items-center gap-2.5">
               <ProwessMark size={26} />
-              <span className="text-[14px] font-semibold tracking-tight text-ink">Prowess AI</span>
+              <span className="text-[14px] font-semibold tracking-tight text-ink">{brand.name}</span>
             </div>
           )}
           <span className="hidden md:inline-flex">

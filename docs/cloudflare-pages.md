@@ -55,4 +55,27 @@ npm run deploy -w @prowess/edge
 Then attach the custom domain in the Cloudflare dashboard (Workers & Pages → prowess-ai → Custom domains). With the
 zone on Cloudflare, DNS and the certificate are created automatically.
 
+## A second front end: WTCO
+
+The same code base is published a second time under another brand. `NEXT_PUBLIC_BRAND=wtco` selects the WTCO name,
+mark and color tokens at build time (`apps/web/src/lib/brand.ts`, `:root[data-brand='wtco']` in `globals.css`); the
+result is its own Pages project, `wtco-ai`, on its own domain. Both sites use the same BFF code, orchestrator, SAP MCP
+and XSUAA instance, so roles, agents and data are identical.
+
+```bash
+npm run deploy:wtco -w @prowess/edge    # builds the WTCO export, then deploys it to the wtco-ai project
+```
+
+One-time setup for the new project:
+
+- Create the Pages project `wtco-ai` and set its own `XSUAA_CLIENT_SECRET` and `SESSION_SECRET`
+  (`npx wrangler pages secret put … --project-name wtco-ai`). Use a different `SESSION_SECRET` than `prowess-ai`.
+- Add `https://<wtco-domain>/**` to `oauth2-configuration.redirect-uris` and update the XSUAA service.
+- Attach the custom domain to `wtco-ai`.
+
+Every brand builds into `apps/web/out` and `apps/edge/dist`. After a WTCO deploy, run `npm run package -w @prowess/edge`
+again before `npm run deploy -w @prowess/edge`, or the Prowess site receives the WTCO build.
+
+Locally, `npm run dev:wtco` starts the stack with the WTCO front end on http://localhost:3000.
+
 The BTP approuter (`prowess-ai-web`) keeps working in parallel and can be removed once the Cloudflare site is verified.

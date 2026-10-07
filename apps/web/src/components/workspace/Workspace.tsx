@@ -16,6 +16,8 @@ import { Header } from './Header';
 import { Landing } from './Landing';
 import { SettingsDialog } from './SettingsDialog';
 import { Sidebar } from './Sidebar';
+import { brand } from '@/lib/brand';
+import { Backdrop } from './Backdrop';
 
 const WINDOW = 60;
 
@@ -167,7 +169,7 @@ export function Workspace() {
     return (
       <main className="flex min-h-full items-center justify-center" aria-busy="true">
         <Spinner className="h-6 w-6 text-brand" />
-        <span className="sr-only">Loading Prowess AI</span>
+        <span className="sr-only">Loading {brand.name}</span>
       </main>
     );
   }
@@ -181,7 +183,7 @@ export function Workspace() {
     .flatMap((m) => [...m.components].reverse())
     .find((c) => c.type === 'workflow_run');
   const detailsFor = chat.messages.find((m) => m.id === detailsId && m.execution);
-  const agentName = (id?: string) => agentsById.get(id ?? agent)?.name ?? 'Prowess AI';
+  const agentName = (id?: string) => agentsById.get(id ?? agent)?.name ?? brand.name;
 
   return (
     <AskContext.Provider value={ask}>
@@ -216,7 +218,8 @@ export function Workspace() {
           onSettings={() => setSettingsOpen(true)}
         />
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="relative isolate flex min-w-0 flex-1 flex-col">
+          <Backdrop />
           <Header
             config={config}
             agent={agent}
@@ -286,7 +289,7 @@ export function Workspace() {
             )}
           </main>
 
-          <div className="shrink-0 bg-gradient-to-t from-bg via-bg to-transparent px-3 pb-3 pt-2 md:px-6">
+          <div className="brand-clear shrink-0 bg-gradient-to-t from-bg via-bg to-transparent px-3 pb-3 pt-2 md:px-6">
             <Composer
               ref={composer}
               streaming={chat.streaming}
@@ -326,7 +329,7 @@ export function Workspace() {
         )}
       </div>
       <div aria-live="polite" className="sr-only">
-        {chat.streaming ? 'Prowess AI is responding' : lastAssistant?.status === 'complete' ? 'Response complete' : ''}
+        {chat.streaming ? `${brand.name} is responding` : lastAssistant?.status === 'complete' ? 'Response complete' : ''}
       </div>
       <SettingsDialog
         open={settingsOpen}

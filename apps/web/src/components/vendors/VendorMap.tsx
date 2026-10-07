@@ -236,7 +236,7 @@ export function VendorMap() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
+      <header className="brand-bar flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
         <a href="/" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-ink-2 hover:bg-muted hover:text-ink">
           <ArrowLeft size={15} aria-hidden /> Workspace
         </a>

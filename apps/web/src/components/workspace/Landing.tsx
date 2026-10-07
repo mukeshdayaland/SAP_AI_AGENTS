@@ -3,6 +3,7 @@
 import type { StarterAction, WorkspaceConfig } from '@prowess/contracts';
 import { Activity, BookOpen, Building2, Coins, FileText, Package, ShieldCheck, Sparkles, Truck, Wrench, type LucideIcon } from 'lucide-react';
 import { ProwessMark } from '../ui/primitives';
+import { brand } from '@/lib/brand';
 
 const ICONS: Record<string, LucideIcon> = {
   receipt: FileText,
@@ -26,9 +27,13 @@ export function Landing({ config, onStarter }: { config: WorkspaceConfig; onStar
   const first = config.user.displayName.split(' ')[0];
   return (
     <div className="mx-auto my-auto flex w-full max-w-3xl flex-col items-center px-4 py-10 text-center">
-      <ProwessMark size={52} />
-      <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.18em] text-brand">{config.product.name}</p>
-      <p className="mt-1 text-sm text-ink-3">{config.product.subtitle}</p>
+      {brand.logo ? (
+        <img src={brand.logo} alt="" className="h-20 w-auto" />
+      ) : (
+        <ProwessMark size={52} />
+      )}
+      <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.18em] text-brand">{brand.name}</p>
+      <p className="mt-1 text-sm text-ink-3">{brand.subtitle}</p>
       <h2 className="mt-6 text-2xl font-bold tracking-tight text-ink sm:text-3xl">
         {greeting()}, {first}. How can I help you today?
       </h2>

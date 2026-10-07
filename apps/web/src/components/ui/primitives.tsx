@@ -2,14 +2,25 @@
 
 import type { DeploymentEnvironment } from '@prowess/contracts';
 import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { brand } from '@/lib/brand';
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 export { cx };
 
 /* ------------------------------ Logo ------------------------------ */
 
-/** Prowess mark: an ascending facet "P" with a spark — original artwork. */
+/**
+ * Brand mark. Prowess: an ascending facet "P" with a spark — original artwork.
+ * A brand with its own logo shows the organization's symbol on its color tile.
+ */
 export function ProwessMark({ size = 28, className }: { size?: number; className?: string }) {
+  if (brand.logo) {
+    return (
+      <span aria-hidden="true" className={cx('inline-flex items-center justify-center', className)} style={{ width: size, height: size, borderRadius: size * 0.28, background: '#fff', boxShadow: '0 0 0 1px var(--border)' }}>
+        <img src={brand.logo} alt="" style={{ width: '82%', height: 'auto' }} />
+      </span>
+    );
+  }
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className={className}>
       <rect x="0.5" y="0.5" width="31" height="31" rx="9" fill="var(--brand-primary)" />

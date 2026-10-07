@@ -88,7 +88,7 @@ export function AdminConsole() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <header className="sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
+      <header className="brand-bar sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
           <a href="/" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-ink-2 hover:bg-muted hover:text-ink">
             <ArrowLeft size={15} aria-hidden /> Workspace
