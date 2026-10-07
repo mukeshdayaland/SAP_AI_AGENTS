@@ -13,7 +13,7 @@ import {
 } from '@prowess/security';
 import { z } from 'zod';
 import { SapError, type SapGateway } from './sap/model.js';
-import type { ToolDefinition, ToolResultPayload } from './tools/types.js';
+import type { SfBackend, ToolDefinition, ToolResultPayload } from './tools/types.js';
 
 export interface CallerIdentity {
   principal: PrincipalAssertion;
@@ -24,6 +24,7 @@ export interface CallerIdentity {
 export interface ServerDeps {
   registry: Map<string, ToolDefinition>;
   gateway: SapGateway;
+  sf: SfBackend;
   secret: string;
   logger: Logger;
   toolTimeoutMs: number;
@@ -84,6 +85,7 @@ export function buildMcpServer(deps: ServerDeps, caller: CallerIdentity): McpSer
   const server = new McpServer({ name: 'prowess-sap-mcp', version: '0.1.0' }, { capabilities: { tools: {} } });
 
   for (const tool of deps.registry.values()) {
+    const system = tool.domain === 'sf' ? deps.sf.gateway.systemId : deps.gateway.systemId;
     server.registerTool(
       tool.name,
       {
@@ -101,7 +103,7 @@ export function buildMcpServer(deps: ServerDeps, caller: CallerIdentity): McpSer
         _meta: {
           [MCP_META.risk]: tool.risk,
           [MCP_META.domain]: tool.domain,
-          [MCP_META.targetSystem]: deps.gateway.systemId,
+          [MCP_META.targetSystem]: system,
           [MCP_META.operation]: tool.operation,
           [MCP_META.statusLabel]: tool.statusLabel,
           'prowess/internal': tool.internal ?? false,
@@ -121,6 +123,7 @@ export function buildMcpServer(deps: ServerDeps, caller: CallerIdentity): McpSer
           const payload = await withTimeout(
             tool.run(args as never, {
               gateway: deps.gateway,
+              sf: deps.sf,
               sap: { principal: caller.principal, correlationId: caller.principal.cid, ...(caller.userJwt && { userJwt: caller.userJwt }) },
             }),
             deps.toolTimeoutMs,
@@ -143,7 +146,7 @@ export function buildMcpServer(deps: ServerDeps, caller: CallerIdentity): McpSer
           const durationMs = Date.now() - started;
           M.toolCalls().inc({ tool: tool.name, outcome });
           M.toolDuration().observe({ tool: tool.name }, durationMs);
-          log.info('mcp.tool_call', { outcome, durationMs, system: deps.gateway.systemId, operation: tool.operation });
+          log.info('mcp.tool_call', { outcome, durationMs, system, operation: tool.operation });
         }
       },
     );

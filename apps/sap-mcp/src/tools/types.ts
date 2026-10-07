@@ -1,9 +1,11 @@
 import type { ToolRisk, UIComponent } from '@prowess/contracts';
 import type { z } from 'zod';
 import type { Amount, SapCallContext, SapGateway } from '../sap/model.js';
+import type { SfGateway } from '../sf/model.js';
+import type { EntityPolicy } from '../sf/policy.js';
 
 /** Tool domains follow SAP modules, so each module can be deployed as its own MCP service. */
-export const BUSINESS_DOMAINS = ['sd', 'credit', 'ar', 'ap', 'gl', 'mm', 'pm', 'shared'] as const;
+export const BUSINESS_DOMAINS = ['sd', 'credit', 'ar', 'ap', 'gl', 'mm', 'pm', 'sf', 'shared'] as const;
 export type Domain = (typeof BUSINESS_DOMAINS)[number] | 'system';
 
 /** What a tool returns. The orchestrator separates model-facing data from UI-facing parts. */
@@ -30,6 +32,13 @@ export interface ActionPreview {
 export interface ToolContext {
   sap: SapCallContext;
   gateway: SapGateway;
+  /** SuccessFactors, used by the `sf` domain. */
+  sf: SfBackend;
+}
+
+export interface SfBackend {
+  gateway: SfGateway;
+  policy: EntityPolicy;
 }
 
 export interface ToolDefinition<S extends z.ZodRawShape = z.ZodRawShape> {

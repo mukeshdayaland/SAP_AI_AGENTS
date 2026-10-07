@@ -8,6 +8,10 @@ import { MockSapGateway } from './sap/mock-gateway.js';
 import type { SapGateway } from './sap/model.js';
 import { ODataSapGateway } from './sap/odata-gateway.js';
 import { authenticateCaller, buildMcpServer, type ServerDeps } from './server.js';
+import { MockSfGateway } from './sf/mock-gateway.js';
+import type { SfGateway } from './sf/model.js';
+import { SfODataGateway } from './sf/odata-gateway.js';
+import { EntityPolicy } from './sf/policy.js';
 import { buildRegistry } from './tools/registry.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -38,11 +42,18 @@ export function createGateway(cfg: McpConfig, logger: Logger): SapGateway {
     : new MockSapGateway(cfg.sap.mockLatencyMs);
 }
 
-export function createMcpHttpServer(cfg: McpConfig, overrides: { gateway?: SapGateway; logger?: Logger } = {}): Server {
+export function createSfGateway(cfg: McpConfig, logger: Logger): SfGateway {
+  return cfg.sf.mode === 'odata'
+    ? new SfODataGateway({ destinationName: cfg.sf.destinationName, systemId: cfg.sf.systemId, userMapping: cfg.sf.userMapping, logger })
+    : new MockSfGateway(cfg.sap.mockLatencyMs);
+}
+
+export function createMcpHttpServer(cfg: McpConfig, overrides: { gateway?: SapGateway; sfGateway?: SfGateway; logger?: Logger } = {}): Server {
   const logger = overrides.logger ?? createLogger({ service: 'prowess-sap-mcp', level: cfg.logLevel });
   const deps: ServerDeps = {
     registry: buildRegistry(cfg.domains),
     gateway: overrides.gateway ?? createGateway(cfg, logger),
+    sf: { gateway: overrides.sfGateway ?? createSfGateway(cfg, logger), policy: EntityPolicy.fromJson(cfg.sf.allowlistJson) },
     secret: cfg.assertionSecret,
     logger,
     toolTimeoutMs: cfg.toolTimeoutMs,
@@ -59,7 +70,13 @@ export function createMcpHttpServer(cfg: McpConfig, overrides: { gateway?: SapGa
       try {
         if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { status: 'ok' });
         if (req.method === 'GET' && url.pathname === '/readiness') {
-          return send(res, 200, { status: 'ready', system: deps.gateway.systemId, mock: deps.gateway.mock, tools: deps.registry.size });
+          return send(res, 200, {
+            status: 'ready',
+            system: deps.gateway.systemId,
+            mock: deps.gateway.mock,
+            ...(cfg.domains.has('sf') && { successFactors: { system: deps.sf.gateway.systemId, mock: deps.sf.gateway.mock } }),
+            tools: deps.registry.size,
+          });
         }
         if (req.method === 'GET' && url.pathname === '/metrics') return send(res, 200, metrics.render(), 'text/plain; version=0.0.4');
         if (url.pathname !== '/mcp') return send(res, 404, { error: 'not_found' });

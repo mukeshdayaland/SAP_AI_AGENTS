@@ -1,7 +1,7 @@
 'use client';
 
 import type { ActivityEntry, HelpCapability, HelpOverview, PublicError, WorkspaceConfig } from '@prowess/contracts';
-import { ArrowLeft, Coins, Package, Sparkles, Truck, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Coins, Package, Sparkles, Truck, Users, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ApiError } from '@/lib/api';
 import { api } from '@/lib/api';
@@ -12,7 +12,7 @@ import { brand } from '@/lib/brand';
 const TABS = ['Agents', 'Tools', 'My activity'] as const;
 type Tab = (typeof TABS)[number];
 
-const ICONS: Record<string, LucideIcon> = { coins: Coins, package: Package, truck: Truck };
+const ICONS: Record<string, LucideIcon> = { coins: Coins, package: Package, truck: Truck, users: Users };
 
 const KIND: Record<HelpCapability['risk'], { label: string; tone: Tone }> = {
   READ: { label: 'Reads data', tone: 'success' },

@@ -210,6 +210,39 @@ export function EquipmentCard({ data }: { data: Of<'equipment'> }) {
   );
 }
 
+export function EmployeeCard({ data }: { data: Of<'employee'> }) {
+  return (
+    <SapCard
+      kind="Employee"
+      id={data.userId}
+      icon={<UserRound size={18} />}
+      status={{ label: humanize(data.status), tone: data.status === 'ACTIVE' ? 'success' : 'neutral' }}
+      actions={[
+        { label: 'Reporting line', prompt: `Show the reporting line of employee ${data.userId}.` },
+        { label: 'Direct reports', prompt: `Who reports to employee ${data.userId}?` },
+        { label: 'Job history', prompt: `Show the job history of employee ${data.userId}.` },
+      ]}
+    >
+      <p className="mb-3 text-sm font-medium text-ink">
+        {data.displayName}
+        {data.jobTitle && <span className="font-normal text-ink-2"> · {data.jobTitle}</span>}
+      </p>
+      <Fields>
+        {data.department && <Field label="Department">{data.department}</Field>}
+        {data.division && <Field label="Division">{data.division}</Field>}
+        {data.location && <Field label="Location">{data.location}</Field>}
+        {data.managerName && (
+          <Field label="Manager">
+            {data.managerName} {data.managerId && <span className="text-ink-3">· {data.managerId}</span>}
+          </Field>
+        )}
+        {data.email && <Field label="E-mail">{data.email}</Field>}
+        {data.hireDate && <Field label="Hire date">{formatDate(data.hireDate)}</Field>}
+      </Fields>
+    </SapCard>
+  );
+}
+
 export function GoodsReceiptCard({ data }: { data: Of<'goods_receipt'> }) {
   return (
     <SapCard kind="Goods receipt" id={`${data.materialDocument}/${data.year}`} icon={<PackageCheck size={18} />}>
@@ -697,6 +730,7 @@ const REGISTRY: { [K in UIComponent['type']]: ComponentType<{ data: Of<K> }> } =
   gl_balance: GLBalanceCard,
   work_order: WorkOrderCard,
   equipment: EquipmentCard,
+  employee: EmployeeCard,
   goods_receipt: GoodsReceiptCard,
   sales_order: SalesOrderCard,
   outbound_delivery: OutboundDeliveryCard,

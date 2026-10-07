@@ -61,7 +61,7 @@ modules:
       LLM_ALLOW_MOCK: false
       DEFAULT_LLM_PROVIDER: sap-ai-core
       UPLOADS_ENABLED: false # enable once MALWARE_SCANNER is configured
-      SAP_MCP_URL: ~{prowess-sap-mcp-api/url}/mcp
+      MCP_SERVERS: '[{"id":"sap","url":"~{prowess-sap-mcp-api/url}/mcp"},{"id":"sf","url":"~{prowess-sf-mcp-api/url}/mcp"}]'
       NODE_ENV: production
     requires:
       - name: prowess-xsuaa
@@ -71,6 +71,7 @@ modules:
       - name: prowess-logging
       - name: prowess-secrets
       - name: prowess-sap-mcp-api
+      - name: prowess-sf-mcp-api
     provides:
       - name: prowess-orchestrator-api
         properties:
@@ -109,6 +110,38 @@ modules:
         properties:
           url: ${default-url}
 
+  # MCP tool layer for SAP SuccessFactors: the same service, serving only the sf domain.
+  - name: prowess-sf-mcp
+    type: nodejs
+    path: apps/sap-mcp
+    build-parameters:
+      builder: custom
+      commands: []
+      build-result: dist
+    parameters:
+      memory: 256M
+      disk-quota: 1024M
+      command: node --enable-source-maps server.mjs
+      health-check-type: http
+      health-check-http-endpoint: /health
+    properties:
+      PROWESS_ENV: ${env}
+      MCP_DOMAINS: sf
+      SF_MODE: odata
+      SF_DESTINATION: SF_ODATA
+      SF_SYSTEM_ID: SF-${env}
+      SF_USER_MAPPING: email
+      SAP_MODE: odata # no S/4HANA tool is served here; mock mode is refused in PROD
+      NODE_ENV: production
+    requires:
+      - name: prowess-xsuaa # user token exchange for the destination lookup
+      - name: prowess-destination
+      - name: prowess-logging
+      - name: prowess-secrets
+    provides:
+      - name: prowess-sf-mcp-api
+        properties:
+          url: ${default-url}
 resources:
   - name: prowess-xsuaa
     type: org.cloudfoundry.managed-service

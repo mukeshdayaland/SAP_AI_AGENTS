@@ -238,6 +238,30 @@ describe('file uploads', () => {
 });
 
 describe('agents by SAP area', () => {
+  it('offers the SuccessFactors agent only to HR users', async () => {
+    const agents = async (user: string) => ((await stack.request('GET', '/api/v1/workspace', user)).json.agents as { id: string }[]).map((a) => a.id);
+    expect(await agents(USERS.alex)).toEqual(['fico', 'mm', 'sd', 'hcm']);
+    expect(await agents(USERS.jordan)).not.toContain('hcm');
+    expect((await stack.chat(USERS.jordan, { message: 'Who are my direct reports?', agent: 'hcm' })).status).toBe(403);
+  });
+
+  it('reads the team from SuccessFactors with the HCM agent', async () => {
+    const { events } = await stack.chat(USERS.alex, { message: 'Who are my direct reports?', agent: 'hcm' });
+    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('sf_getDirectReports');
+    expect(ofType(events, 'component').map((c) => c.component.type)).toEqual(['business_object_table']);
+    expect(ofType(events, 'source')[0]!.source).toMatchObject({ system: 'SF-MOCK', objectType: 'Team', objectId: '100101', mock: true });
+    const done = ofType(events, 'message.complete')[0]!;
+    expect(done.execution.tools[0]).toMatchObject({ tool: 'sf_getDirectReports', status: 'success', system: 'SF-MOCK' });
+
+    const profile = await stack.chat(USERS.alex, { message: 'Show employee 100102.', agent: 'hcm' });
+    expect(ofType(profile.events, 'component')[0]!.component).toMatchObject({ type: 'employee', data: { userId: '100102', displayName: 'Jordan Lee', managerName: 'Alex Morgan' } });
+  });
+
+  it('lets SuccessFactors permissions deny what the HCM agent may otherwise read', async () => {
+    const { events } = await stack.chat(USERS.alex, { message: 'Show the job history of employee 100010.', agent: 'hcm' });
+    expect(ofType(events, 'tool.start')[0]!.tool.tool).toBe('sf_getJobHistory');
+    expect(ofType(events, 'component')[0]!.component).toMatchObject({ type: 'notice', data: { kind: 'NOT_AUTHORIZED' } });
+  });
   it('offers FICO, MM and SD', async () => {
     const workspace = await stack.request('GET', '/api/v1/workspace', USERS.jordan);
     const ids = (workspace.json.agents as { id: string }[]).map((a) => a.id);

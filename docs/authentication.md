@@ -43,6 +43,7 @@ Defined in `infrastructure/btp/xs-security.json` and assigned through role colle
 | `Prowess_AI_PowerUser` | `AI_USER`, `AI_POWER_USER` | + Advanced tier, technical execution details (provider/model/tokens) |
 | `Prowess_AI_Admin` | `AI_USER`, `AI_ADMIN` | + administration console |
 | `Prowess_AI_Auditor` | `AI_AUDITOR` | audit view only (no chat) |
+| `Prowess_AI_HRUser` | `AI_USER`, `AI_HR_USER` | + the HCM (SuccessFactors) agent |
 
 **These roles never grant SAP authorization.** An `AI_USER` who opens the FI-AP agent still sees only the invoices
 their SAP user may display, and can release a payment block only if SAP authorizes them (for example
@@ -63,9 +64,13 @@ their SAP user may display, and can release a payment block only if SAP authoriz
 
 | User | Roles | Mock SAP authorizations |
 | --- | --- | --- |
-| Alex Morgan | AI_USER, AI_POWER_USER | CC 1000/2000, may release invoices |
+| Alex Morgan | AI_USER, AI_POWER_USER, AI_HR_USER | CC 1000/2000, may release invoices |
 | Jordan Lee | AI_USER | CC 1000/2000, may **not** release invoices |
-| Sam Rivera | AI_USER, AI_POWER_USER, AI_ADMIN | CC 1000/2000 |
+| Sam Rivera | AI_USER, AI_POWER_USER, AI_ADMIN, AI_HR_USER | CC 1000/2000 |
 | Casey Kim | AI_AUDITOR | none |
 
 Invoice `5100099999` belongs to company code 3000, so every user gets an SAP authorization denial for it.
+
+The mock SuccessFactors simulates role-based permissions too: everyone sees the directory, job history only for
+oneself and one's own reporting line, and HR (*Sam Rivera*) sees everyone. *Alex Morgan* is refused the job history of
+his manager, employee `100010`. *Jordan Lee* lacks `AI_HR_USER` and is not offered the HCM agent at all.

@@ -129,6 +129,24 @@ export const EquipmentComponent = z.object({
   }),
 });
 
+/** A SuccessFactors employee profile. */
+export const EmployeeComponent = z.object({
+  type: z.literal('employee'),
+  data: z.object({
+    userId: text(100),
+    displayName: text(),
+    email: text(254).optional(),
+    jobTitle: text().optional(),
+    department: text().optional(),
+    division: text().optional(),
+    location: text().optional(),
+    managerId: text(100).optional(),
+    managerName: text().optional(),
+    hireDate: text(20).optional(),
+    status: z.enum(['ACTIVE', 'INACTIVE']),
+  }),
+});
+
 export const GoodsReceiptComponent = z.object({
   type: z.literal('goods_receipt'),
   data: z.object({
@@ -390,6 +408,7 @@ export const UIComponentSchema = z.discriminatedUnion('type', [
   GLBalanceComponent,
   WorkOrderComponent,
   EquipmentComponent,
+  EmployeeComponent,
   GoodsReceiptComponent,
   SalesOrderComponent,
   OutboundDeliveryComponent,

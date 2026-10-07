@@ -6,20 +6,23 @@
     { "name": "$XSAPPNAME.AI_USER", "description": "Use Prowess AI agents" },
     { "name": "$XSAPPNAME.AI_POWER_USER", "description": "Advanced model tier and technical execution details" },
     { "name": "$XSAPPNAME.AI_ADMIN", "description": "Administer models, agents, tools and view usage" },
-    { "name": "$XSAPPNAME.AI_AUDITOR", "description": "Read the audit trail" }
+    { "name": "$XSAPPNAME.AI_AUDITOR", "description": "Read the audit trail" },
+    { "name": "$XSAPPNAME.AI_HR_USER", "description": "Use the SuccessFactors (HCM) agent" }
   ],
   "attributes": [],
   "role-templates": [
     { "name": "AI_User", "description": "Prowess AI user", "scope-references": ["$XSAPPNAME.AI_USER"] },
     { "name": "AI_PowerUser", "description": "Prowess AI power user", "scope-references": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_POWER_USER"] },
     { "name": "AI_Admin", "description": "Prowess AI administrator", "scope-references": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_ADMIN"] },
-    { "name": "AI_Auditor", "description": "Prowess AI auditor (read-only audit access)", "scope-references": ["$XSAPPNAME.AI_AUDITOR"] }
+    { "name": "AI_Auditor", "description": "Prowess AI auditor (read-only audit access)", "scope-references": ["$XSAPPNAME.AI_AUDITOR"] },
+    { "name": "AI_HRUser", "description": "Prowess AI user of the SuccessFactors (HCM) agent", "scope-references": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_HR_USER"] }
   ],
   "role-collections": [
     { "name": "Prowess_AI_User", "description": "Business users", "role-template-references": ["$XSAPPNAME.AI_User"] },
     { "name": "Prowess_AI_PowerUser", "description": "Analysts and key users", "role-template-references": ["$XSAPPNAME.AI_PowerUser"] },
     { "name": "Prowess_AI_Admin", "description": "Platform administrators", "role-template-references": ["$XSAPPNAME.AI_Admin"] },
     { "name": "Prowess_AI_Auditor", "description": "Internal audit / compliance", "role-template-references": ["$XSAPPNAME.AI_Auditor"] },
+    { "name": "Prowess_AI_HRUser", "description": "Users of the SuccessFactors (HCM) agent", "role-template-references": ["$XSAPPNAME.AI_HRUser"] },
     {
       "name": "Prowess_AI_FullAdmin",
       "description": "Every Prowess AI role (user, power user, admin, auditor). For testing; do not map to all users in production.",

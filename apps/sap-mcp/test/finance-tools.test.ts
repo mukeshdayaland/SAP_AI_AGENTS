@@ -1,6 +1,8 @@
 import { UIComponentSchema } from '@prowess/contracts';
 import { describe, expect, it } from 'vitest';
 import { MockSapGateway } from '../src/sap/mock-gateway.js';
+import { MockSfGateway } from '../src/sf/mock-gateway.js';
+import { EntityPolicy } from '../src/sf/policy.js';
 import type { SapCallContext } from '../src/sap/model.js';
 import { buildRegistry } from '../src/tools/registry.js';
 import { BUSINESS_DOMAINS, type ToolResultPayload } from '../src/tools/types.js';
@@ -10,13 +12,14 @@ const jordan = as('jordan.lee@prowess.example');
 const alex = as('alex.morgan@prowess.example');
 const sap = () => new MockSapGateway(0);
 const registry = buildRegistry(new Set(BUSINESS_DOMAINS));
+const sf = { gateway: new MockSfGateway(0), policy: new EntityPolicy() };
 
 async function run(gateway: MockSapGateway, ctx: SapCallContext, name: string, args: Record<string, unknown>): Promise<ToolResultPayload> {
-  const result = await registry.get(name)!.run(args as never, { sap: ctx, gateway });
+  const result = await registry.get(name)!.run(args as never, { sap: ctx, gateway, sf });
   for (const c of result.components ?? []) expect(UIComponentSchema.safeParse(c).error?.issues, `${name} component ${c.type}`).toBeUndefined();
   return result;
 }
-const preview = (gateway: MockSapGateway, ctx: SapCallContext, name: string, args: Record<string, unknown>) => registry.get(name)!.preview!(args as never, { sap: ctx, gateway });
+const preview = (gateway: MockSapGateway, ctx: SapCallContext, name: string, args: Record<string, unknown>) => registry.get(name)!.preview!(args as never, { sap: ctx, gateway, sf });
 const rows = (r: ToolResultPayload, index = 0) => (r.components![index]!.data as { rows: Record<string, unknown>[] }).rows;
 
 describe('finance analysis tools', () => {

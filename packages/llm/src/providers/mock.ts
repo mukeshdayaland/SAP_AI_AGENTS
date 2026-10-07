@@ -138,6 +138,16 @@ const INTENTS: Intent[] = [
       fiscalYear: /\b(20\d{2})\b/.exec(t)?.[1] ?? String(new Date().getFullYear()),
     }),
   },
+  { tool: 'getDirectReports', pattern: /\b(?:reports? to|team of|direct reports of)\s+(?:employee\s+)?(\d{4,10})\b/i, args: (m) => ({ userId: m[1] }) },
+  { tool: 'getDirectReports', pattern: /\b(my (direct )?reports|my team|reports? to me)\b/i, args: () => ({}) },
+  { tool: 'getReportingLine', when: /\b(reporting line|reports? to|manager|chain of command)\b/i, pattern: /\bemployee\D{0,12}(\d{4,10})\b/i, args: (m) => ({ userId: m[1] }) },
+  { tool: 'getReportingLine', pattern: /\b(my (reporting line|manager)|who do I report to)\b/i, args: () => ({}) },
+  { tool: 'getJobHistory', when: /\b(job|career|employment) history\b/i, pattern: /\bemployee\D{0,12}(\d{4,10})\b/i, args: (m) => ({ userId: m[1] }) },
+  { tool: 'getJobHistory', pattern: /\bmy (job|career|employment) history\b/i, args: () => ({}) },
+  { tool: 'getMyProfile', pattern: /\b(my (profile|details|job)|who am I)\b/i, args: () => ({}) },
+  { tool: 'listEntities', when: /\bsuccessfactors|query\b/i, pattern: /\bentities\b/i, args: () => ({}) },
+  { tool: 'getEmployee', pattern: /\bemployee\D{0,12}(\d{4,10})\b/i, args: (m) => ({ userId: m[1] }) },
+  { tool: 'searchEmployees', when: /\b(find|search|look up|who is)\b/i, pattern: /\b(?:employees?|colleagues?|people|person)\s+(?:named|called|with the name)?\s*([A-Za-z][A-Za-z .'-]{1,40})$/i, args: (m) => ({ query: m[1]!.trim() }) },
   { tool: 'searchBusinessObject', when: /\b(find|search|look up)\b/i, pattern: /(?:for|find|search)\s+(.{3,60})$/i, args: (m) => ({ query: m[1]!.trim() }) },
 ];
 

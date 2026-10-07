@@ -6,6 +6,7 @@ import { MockProvider, type LLMProvider, type ProviderId } from '@prowess/llm';
 import { createLogger } from '@prowess/observability';
 import { createMcpHttpServer } from '../../sap-mcp/src/app.js';
 import { MockSapGateway } from '../../sap-mcp/src/sap/mock-gateway.js';
+import { MockSfGateway } from '../../sap-mcp/src/sf/mock-gateway.js';
 import { BUSINESS_DOMAINS } from '../../sap-mcp/src/tools/types.js';
 import { buildApp } from '../src/app.js';
 import { RingBufferAuditSink } from '../src/audit/audit.js';
@@ -32,10 +33,11 @@ export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider
       assertionSecret: SECRET,
       domains: new Set(BUSINESS_DOMAINS),
       sap: { mode: 'mock', destinationName: 'S4', systemId: 'S4-MOCK', allowTechnicalUser: false, mockLatencyMs: 0 },
+      sf: { mode: 'mock', destinationName: 'SF_ODATA', systemId: 'SF-MOCK', userMapping: 'email' },
       toolTimeoutMs: 5_000,
       logLevel: 'error',
     },
-    { gateway: new MockSapGateway(0), logger: silent },
+    { gateway: new MockSapGateway(0), sfGateway: new MockSfGateway(0), logger: silent },
   );
   await new Promise<void>((r) => mcpServer.listen(0, r));
   const mcpUrl = `http://127.0.0.1:${(mcpServer.address() as AddressInfo).port}/mcp`;

@@ -44,7 +44,7 @@ To use a real model, copy `.env.example` to `.env` and configure one or more pro
 apps/
   web/            Next.js + Tailwind UI (static export, served by the approuter)
   orchestrator/   Fastify API: chat/SSE, agents, model routing, MCP client, persistence, audit
-  sap-mcp/        MCP server: SD / Credit / AR / AP / GL / MM / PM / Shared tools, mock + OData S/4HANA gateways
+  sap-mcp/        MCP server: SD / Credit / AR / AP / GL / MM / PM / Shared tools on S/4HANA and SF tools on SuccessFactors, mock + OData gateways
 packages/
   contracts/      Shared types & zod schemas (UI components, SSE events, errors)
   llm/            Provider abstraction, adapters, resilient HTTP, model router

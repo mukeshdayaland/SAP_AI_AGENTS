@@ -11,6 +11,7 @@ import { paymentTools } from './payments.js';
 import { pmTools } from './pm.js';
 import { sdProcessTools } from './sd-process.js';
 import { sdTools } from './sd.js';
+import { sfTools } from './sf.js';
 import { sharedTools } from './shared.js';
 import { defineTool, type Domain, type ToolDefinition } from './types.js';
 
@@ -32,6 +33,7 @@ const ALL: ToolDefinition[] = [
   ...paymentTools,
   ...financeTools,
   ...pmTools,
+  ...sfTools,
   ...sharedTools,
 ] as unknown as ToolDefinition[];
 

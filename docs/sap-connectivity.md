@@ -102,6 +102,63 @@ not cleared against invoices by the payment service. Clear it with `gl_clearOpen
 Field mappings follow the published API definitions on the SAP Business Accelerator Hub. **Validate them against
 your S/4HANA release** in DEV (fields such as status texts vary between releases).
 
+## SuccessFactors
+
+The `sf` tool domain has its own gateway port, `SfGateway` (`apps/sap-mcp/src/sf`):
+
+| Mode | Class | Use |
+| --- | --- | --- |
+| `SF_MODE=mock` | `MockSfGateway` | Local/CI. Fictitious employees, simulated role-based permissions. Refused in PROD. |
+| `SF_MODE=odata` | `SfODataGateway` | SuccessFactors HCM OData V2 through a BTP destination |
+
+### Destination `SF_ODATA`
+
+| Property | Value |
+| --- | --- |
+| Type | HTTP |
+| ProxyType | Internet |
+| Authentication | OAuth2SAMLBearerAssertion |
+| URL | `https://<api-host>/odata/v2` |
+| tokenServiceURL | `https://<api-host>/oauth/token` |
+| clientKey | API key of the OAuth client registered in SuccessFactors |
+
+Take the remaining SAML properties (audience, company id, name ID format) from the destination that already works
+for this tenant. `infrastructure/btp/sf-odata-destination.json` is the template; it carries no host and no key.
+
+The destination must live in the subaccount whose XSUAA issued the user's token, and the OAuth client in
+SuccessFactors must trust that subaccount's signing certificate. The SAP Cloud SDK exchanges the user's JWT for a
+SuccessFactors token and caches it, so the service stores no tokens.
+
+### Identity
+
+- Every call runs **as the end user**, so SuccessFactors role-based permissions decide what comes back. There is no
+  technical-user mode: a call without a user token is refused.
+- `SF_USER_MAPPING` says how the login is matched to a SuccessFactors user: `email` (default) and `username` look
+  the user up once in `User` and remember the user id for ten minutes; `userId` takes the login name as the user id.
+  No match, or more than one, is an error. The gateway does not guess.
+
+### Entities used
+
+| Tool(s) | Entity |
+| --- | --- |
+| profile, search, direct reports, reporting line | `User` (expanded with `manager`) |
+| job history | `EmpJob` (`fromDate=1900-01-01`, `toDate=9999-12-31`) |
+| `sf_queryEntity` | whatever the entity allow-list names |
+
+### Entity allow-list
+
+`sf_queryEntity` reads only the entities and fields on the allow-list (`apps/sap-mcp/src/sf/policy.ts`): `User`,
+`EmpJob`, `EmpEmployment`, `Position` and the foundation objects `FOCompany`, `FODepartment`, `FODivision`,
+`FOLocation`, `FOJobCode`. Personal data and compensation entities are left out on purpose.
+
+- Fields listed under `sensitiveFields` come back as `[REDACTED]` and cannot be used to filter or sort.
+- A query without a filter returns at most 50 records; with a filter at most 200.
+- `SF_ENTITY_ALLOWLIST_JSON` replaces the bundled list: `{ "<Entity>": { "operations": ["read"], "fields": [...],
+  "sensitiveFields": [...], "keyFields": [...] } }`. Invalid JSON, a wildcard entry or an entry without `fields`
+  fails startup, so a bad change cannot widen access.
+
+Entity and field names follow the standard data model. **Validate them against the tenant's `$metadata`** before
+going live; `scripts/validate_allowlist.py` of the `SAP_SF_MCP_V4` repository checks a list against tenant metadata.
 ## Identity
 
 - User token present → the SDK exchanges it and S/4HANA executes **as the user**, so SAP authorizations apply.

@@ -189,7 +189,7 @@ function odataDate(v: unknown): string | undefined {
 const toODataDate = (isoDate: string) => `/Date(${Date.parse(`${isoDate}T00:00:00Z`)})/`;
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
-const encodeParameterValues = (params: Record<string, unknown>) => Object.fromEntries(Object.entries(params).map(([key, value]) => [key, encodeURIComponent(String(value))]));
+export const encodeParameterValues = (params: Record<string, unknown>) => Object.fromEntries(Object.entries(params).map(([key, value]) => [key, encodeURIComponent(String(value))]));
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 const isTrue = (v: unknown) => v === true || v === 'true' || v === 'X';
@@ -202,7 +202,7 @@ const MAX_ASSETS = 20;
 
 const num = (v: unknown) => (typeof v === 'number' ? v : Number.parseFloat(String(v ?? '0')) || 0);
 
-function statusOf(err: unknown): number | undefined {
+export function statusOf(err: unknown): number | undefined {
   let e: unknown = err;
   for (let i = 0; i < 6 && e; i++) {
     const status = (e as { response?: { status?: number } }).response?.status ?? (e as { status?: number }).status;

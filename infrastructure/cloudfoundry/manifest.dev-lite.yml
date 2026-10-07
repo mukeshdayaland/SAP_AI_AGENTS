@@ -30,6 +30,29 @@ applications:
       NODE_ENV: production
     services: [prowess-xsuaa, prowess-destination, prowess-connectivity, prowess-logging, prowess-secrets]
 
+  # Optional: SuccessFactors through the SF_ODATA destination (docs/sap-connectivity.md). Push it by name,
+  #   cf push -f infrastructure/cloudfoundry/manifest.dev-lite.yml prowess-sf-mcp --var env=… --var domain=…
+  # keep sf out of the MCP_DOMAINS of prowess-sap-mcp, and name both services to the orchestrator:
+  #   cf set-env prowess-ai-orchestrator MCP_SERVERS '[{"id":"sap","url":"https://prowess-sap-mcp-<env>.<domain>/mcp"},{"id":"sf","url":"https://prowess-sf-mcp-<env>.<domain>/mcp"}]'
+  - name: prowess-sf-mcp
+    path: ../../apps/sap-mcp/dist
+    memory: 256M
+    instances: 1
+    buildpacks: [nodejs_buildpack]
+    command: node --enable-source-maps server.mjs
+    health-check-type: http
+    health-check-http-endpoint: /health
+    routes:
+      - route: prowess-sf-mcp-((env)).((domain))
+    env:
+      PROWESS_ENV: DEV
+      MCP_DOMAINS: sf
+      SF_MODE: odata
+      SF_DESTINATION: SF_ODATA
+      SF_SYSTEM_ID: SF-DEV
+      SF_USER_MAPPING: email
+      NODE_ENV: production
+    services: [prowess-xsuaa, prowess-destination, prowess-logging, prowess-secrets]
   - name: prowess-ai-orchestrator
     path: ../../apps/orchestrator/dist
     memory: 512M

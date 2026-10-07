@@ -10,7 +10,7 @@ import type { UIComponent, WorkflowRunComponent } from './components.js';
  * They NEVER grant SAP business authorization — S/4HANA evaluates its own
  * authorizations for every call made on the user's behalf.
  */
-export const APP_ROLES = ['AI_USER', 'AI_POWER_USER', 'AI_ADMIN', 'AI_AUDITOR'] as const;
+export const APP_ROLES = ['AI_USER', 'AI_POWER_USER', 'AI_ADMIN', 'AI_AUDITOR', 'AI_HR_USER'] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
 export const ENVIRONMENTS = ['DEV', 'QA', 'PROD'] as const;

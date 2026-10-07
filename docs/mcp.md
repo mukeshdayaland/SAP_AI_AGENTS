@@ -69,6 +69,11 @@ authorizes them, and the MCP server executes them against SAP.
 | MM | `mm_addInvoiceNote` | LOW_RISK_WRITE | Confirmation required |
 | MM | `mm_releaseInvoicePaymentBlock` | HIGH_IMPACT | Confirmation required; SAP release authorization |
 | PM | `pm_getEquipment`, `pm_getNotification`, `pm_getWorkOrder`, `pm_getMaintenanceHistory` | READ | |
+| SF | `sf_getMyProfile`, `sf_getEmployee` | READ | SuccessFactors employee profile. The e-mail address is shown on the card and not sent to the model |
+| SF | `sf_searchEmployees` | READ | Employees by a part of their name |
+| SF | `sf_getDirectReports`, `sf_getReportingLine` | READ | Team of a manager; chain of managers above an employee. Default: the current user |
+| SF | `sf_getJobHistory` | READ | Effective-dated job information (EmpJob) |
+| SF | `sf_listEntities`, `sf_queryEntity` | READ | Governed generic read: allow-listed entities and fields only, protected fields redacted |
 | Shared | `shared_getUserContext`, `shared_getSystemInformation`, `shared_searchBusinessObject` | READ | |
 | System | `system_previewAction` | READ (internal) | Hidden from models; builds the confirmation card |
 
@@ -110,7 +115,7 @@ sequenceDiagram
 
 ## Splitting domains into services
 
-Tool domains follow SAP modules: `sd`, `credit`, `ar`, `ap`, `gl`, `mm`, `pm` and `shared`. The domain modules are
+Tool domains follow SAP modules: `sd`, `credit`, `ar`, `ap`, `gl`, `mm`, `pm`, `sf` and `shared`. The domain modules are
 independent. To extract accounts payable:
 
 1. Deploy `apps/sap-mcp` a second time as `prowess-mcp-ap` with `MCP_DOMAINS=ap` (and remove `ap` from the original).
@@ -120,4 +125,12 @@ independent. To extract accounts payable:
 The former `fico` domain is still accepted in `MCP_DOMAINS` and expands to `ar,ap,gl,credit`.
 
 No other code changes are needed. Tool names are unique across servers (duplicates are rejected at discovery).
-The same pattern adds `prowess-mcp-hcm`, Ariba or SuccessFactors servers.
+
+## SuccessFactors
+
+The `sf` domain reads SAP SuccessFactors through its own gateway (`apps/sap-mcp/src/sf`), with the same tool
+contract, caller authentication and metadata as the S/4HANA domains. Deploy it as its own service
+(`MCP_DOMAINS=sf`, `SF_MODE=odata`) and add it to `MCP_SERVERS`; see [sap-connectivity.md](sap-connectivity.md#successfactors).
+The domain is read-only. In PROD it is never served from the mock.
+
+The same pattern adds Ariba or other servers.

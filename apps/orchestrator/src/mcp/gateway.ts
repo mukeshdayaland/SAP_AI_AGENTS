@@ -126,11 +126,13 @@ export class McpGateway {
         return;
       }
       for (const t of r.value) {
-        if (seen.has(t.name)) {
+        // Every server has its own internal tools (the write preview); only tools offered to agents must be unique.
+        const key = t.internal ? `${t.serverId}:${t.name}` : t.name;
+        if (seen.has(key)) {
           this.logger.error('mcp.duplicate_tool', { tool: t.name, server: t.serverId });
           continue;
         }
-        seen.add(t.name);
+        seen.add(key);
         tools.push(t);
       }
     });

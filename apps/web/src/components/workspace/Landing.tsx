@@ -1,7 +1,7 @@
 'use client';
 
 import type { StarterAction, WorkspaceConfig } from '@prowess/contracts';
-import { Activity, BookOpen, Building2, Coins, FileText, Package, ShieldCheck, Sparkles, Truck, Wrench, type LucideIcon } from 'lucide-react';
+import { Activity, BookOpen, Building2, Coins, FileText, Package, ShieldCheck, Sparkles, Truck, Users, Wrench, type LucideIcon } from 'lucide-react';
 import { ProwessMark } from '../ui/primitives';
 import { brand } from '@/lib/brand';
 
@@ -15,6 +15,7 @@ const ICONS: Record<string, LucideIcon> = {
   coins: Coins,
   book: BookOpen,
   activity: Activity,
+  users: Users,
 };
 
 function greeting(now = new Date()) {

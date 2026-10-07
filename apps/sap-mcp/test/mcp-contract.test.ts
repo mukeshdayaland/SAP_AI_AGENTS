@@ -24,6 +24,7 @@ const cfg: McpConfig = {
   assertionSecret: SECRET,
   domains: new Set(BUSINESS_DOMAINS),
   sap: { mode: 'mock', destinationName: 'S4', systemId: 'S4-MOCK', allowTechnicalUser: false, mockLatencyMs: 0 },
+  sf: { mode: 'mock', destinationName: 'SF_ODATA', systemId: 'SF-MOCK', userMapping: 'email' },
   toolTimeoutMs: 5_000,
   logLevel: 'error',
 };

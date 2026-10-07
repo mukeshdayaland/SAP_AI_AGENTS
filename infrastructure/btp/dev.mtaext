@@ -11,3 +11,6 @@ modules:
   - name: prowess-sap-mcp
     properties:
       PROWESS_ENV: DEV
+  - name: prowess-sf-mcp
+    properties:
+      PROWESS_ENV: DEV

@@ -1,0 +1,12 @@
+{
+  "Name": "SF_ODATA",
+  "Type": "HTTP",
+  "ProxyType": "Internet",
+  "URL": "https://REPLACE-WITH-SF-API-HOST/odata/v2",
+  "Authentication": "OAuth2SAMLBearerAssertion",
+  "tokenServiceURL": "https://REPLACE-WITH-SF-API-HOST/oauth/token",
+  "audience": "https://REPLACE-WITH-SF-API-HOST/oauth/token",
+  "authnContextClassRef": "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport",
+  "clientKey": "REPLACE_ME",
+  "Description": "SuccessFactors OData V2 for the Prowess AI sf tool domain (template: set host and clientKey)"
+}
