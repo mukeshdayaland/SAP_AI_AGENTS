@@ -43,7 +43,8 @@ signing. This keeps the orchestrator small and gives uniform behaviour for timeo
 ```json
 { "id": "advanced", "label": "Advanced", "requiredRoles": ["AI_POWER_USER"], "fallback": true,
   "targets": [
-    { "provider": "sap-ai-core",      "model": "anthropic--claude-4-sonnet" },
+    { "provider": "sap-ai-core",      "model": "gemini-3.8-flash" },
+    { "provider": "sap-ai-core",      "model": "gpt-5.5" },
     { "provider": "aws-bedrock",      "model": "eu.anthropic.claude-sonnet-4-20250514-v1:0" },
     { "provider": "azure-ai-foundry", "model": "gpt-4.1" },
     { "provider": "gcp-vertex",       "model": "gemini-2.5-pro" } ] }
@@ -53,7 +54,7 @@ signing. This keeps the orchestrator small and gives uniform behaviour for timeo
 - `DEFAULT_LLM_PROVIDER` moves that provider's targets to the front of every tier.
 - **Fallback happens only when the tier allows it, the error is retryable, and nothing has been streamed yet.**
   A partially streamed answer is never silently replaced.
-- `privateOnly: true` (the *Private* tier) restricts routing to providers flagged `private` (SAP AI Core) and
+- `privateOnly: true` on a tier restricts routing to providers flagged `private` (SAP AI Core) and
   **never falls back to public cloud**.
 - Standard users see only tier labels. Power users and admins see the resolved provider and model in technical details.
 

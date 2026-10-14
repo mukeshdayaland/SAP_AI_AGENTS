@@ -2,7 +2,7 @@
 
 A conversational workspace where AI agents work with SAP S/4HANA through MCP tools, running on SAP BTP Cloud Foundry.
 Inference is provider-independent: the same agents run on **SAP AI Core** (generative AI hub), **Azure AI Foundry**,
-**AWS Bedrock** or **Google Vertex AI**. Business users pick *Standard / Advanced / Private*. Administrators map
+**AWS Bedrock** or **Google Vertex AI**. Business users pick *Standard / Advanced*. Administrators map
 those tiers to concrete deployments.
 
 ```mermaid

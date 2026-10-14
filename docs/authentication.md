@@ -39,7 +39,7 @@ Defined in `infrastructure/btp/xs-security.json` and assigned through role colle
 
 | Role collection | Scopes | Grants |
 | --- | --- | --- |
-| `Prowess_AI_User` | `AI_USER` | Standard and Private tiers, all agents requiring `AI_USER` |
+| `Prowess_AI_User` | `AI_USER` | Standard tier, all agents requiring `AI_USER` |
 | `Prowess_AI_PowerUser` | `AI_USER`, `AI_POWER_USER` | + Advanced tier, technical execution details (provider/model/tokens) |
 | `Prowess_AI_Admin` | `AI_USER`, `AI_ADMIN` | + administration console |
 | `Prowess_AI_Auditor` | `AI_AUDITOR` | audit view only (no chat) |

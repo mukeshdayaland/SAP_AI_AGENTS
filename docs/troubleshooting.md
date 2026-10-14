@@ -7,7 +7,7 @@
 | `No LLM provider is configured` | Configure at least one provider, or keep `LLM_ALLOW_MOCK=true` in DEV. |
 | Chat says *running with the offline mock model* | No real provider is enabled for the chosen tier. Check the `orchestrator.config` startup log. |
 | A tier is missing from the model selector | The user lacks the tier's role, the agent doesn't list the tier, or no provider for it is configured. |
-| `LLM_NOT_CONFIGURED` for *Private* | Private tiers only route to SAP AI Core (`privateOnly`). Configure AI Core. |
+| `LLM_NOT_CONFIGURED` for a `privateOnly` tier | Such tiers only route to SAP AI Core. Configure AI Core. |
 | SAP AI Core 404 on `/v2/completion` | Wrong `AICORE_ORCHESTRATION_DEPLOYMENT_ID` or resource group. The deployment must be `RUNNING`. |
 | SAP AI Core 400 *model not found* | Model name in `models.json` isn't available in your region/hub. Check the generative AI hub model list. |
 | Azure 401/403 | Missing role assignment (*Cognitive Services OpenAI User*), wrong scope, or a key for another resource. |

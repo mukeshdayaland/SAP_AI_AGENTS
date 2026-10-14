@@ -36,7 +36,7 @@ describe('workspace configuration', () => {
   it('exposes business tiers but hides provider details from standard users', async () => {
     const standard = await stack.request('GET', '/api/v1/workspace', USERS.jordan);
     const tiers = standard.json.modelTiers as { id: string; technical?: unknown }[];
-    expect(tiers.map((t) => t.id)).toEqual(['standard', 'private']);
+    expect(tiers.map((t) => t.id)).toEqual(['standard']);
     expect(tiers.every((t) => t.technical === undefined)).toBe(true);
 
     const power = await stack.request('GET', '/api/v1/workspace', USERS.alex);

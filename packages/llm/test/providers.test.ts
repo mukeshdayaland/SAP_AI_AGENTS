@@ -62,6 +62,25 @@ describe('SAP AI Core', () => {
     expect(body.config.modules.prompt_templating.prompt.template[0]!.content).not.toContain('{{?');
   });
 
+  it('sends tool-call turns with string content and the original call id in orchestration mode', () => {
+    const provider = new SapAiCoreProvider({ ...base, mode: 'orchestration', orchestrationDeploymentId: 'd123' });
+    // Gemini via orchestration carries its thought signature inside the call id, so the id must round-trip unchanged.
+    const id = `vertex_tool_${'s'.repeat(380)}`;
+    const { body } = provider.buildRequest({
+      model: 'gemini-3.8-flash',
+      messages: [
+        { role: 'user', content: 'Why is invoice 5100012345 blocked?' },
+        { role: 'assistant', content: '', toolCalls: [{ id, name: 'mm_analyzeInvoice', arguments: { invoiceNumber: '5100012345' } }] },
+        { role: 'tool', toolCallId: id, name: 'mm_analyzeInvoice', content: '{"blocked":true}' },
+      ],
+      tools,
+    });
+    const template = (body as { config: { modules: { prompt_templating: { prompt: { template: { content: unknown; tool_calls?: { id: string }[] }[] } } } } })
+      .config.modules.prompt_templating.prompt.template;
+    expect(template[1]!.content).toBe('');
+    expect(template[1]!.tool_calls![0]!.id).toBe(id);
+  });
+
   it('calls a foundation-model deployment in foundation mode', async () => {
     const { impl, calls } = stubFetch(() => sseResponse(openAIToolStream(), { done: true }));
     const provider = new SapAiCoreProvider({ ...base, apiUrl: `${base.apiUrl}/v2`, mode: 'foundation', fetchImpl: impl });
