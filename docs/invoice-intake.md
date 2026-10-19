@@ -106,6 +106,19 @@ Choose the starter **Post invoices from my mail**. The offline mock model reads 
 the check. Then ask *"Post invoice GIS-2026-0815 for 190400 against purchase order 4500012410, dated 2026-10-14."* and
 confirm.
 
+## Test invoices
+
+`test-data/invoices/` has invoices to mail to a clerk's Outlook inbox (Graph mode) for testing:
+
+| File | Read by | With mock PO 4500012410 |
+| --- | --- | --- |
+| `GIS-2026-0815.pdf` | text layer | READY: 40 EA × 4,250 + 12 % VAT = SAR 190,400 |
+| `GIS-2026-0815-scan.png`, `GIS-2026-0815-scan.pdf` | SAP Document AI | Same invoice as a scan (no text layer) |
+| `GIS-2026-0816.pdf` | text layer | REVIEW: unit price 4,462.50, 5 % above the order |
+
+`scripts/make-test-invoice.py` makes the same files for a purchase order in your own S/4HANA system
+(`pip install reportlab pillow`; see the script header for the options).
+
 ## Limits
 
 - Document AI is used for scans only; a text PDF with a broken text layer is read as it is.
