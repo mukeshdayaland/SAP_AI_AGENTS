@@ -1,6 +1,6 @@
 import { SapError, type SapCallContext } from '../sap/model.js';
-import type { Employee, EntityQueryResult, JobHistoryEntry, SfGateway } from './model.js';
-import type { EntityQuery, QueryFilter } from './query-builder.js';
+import type { Absence, ApprovalRequest, Employee, EmployeePlace, EntityField, EntityQueryResult, EntityRead, NewTimeOff, TimeType, JobHistoryEntry, OpenPosition, SfGateway, TimeOffBalance } from './model.js';
+import { filterFields, type EntityQuery, type QueryFilter } from './query-builder.js';
 
 /**
  * Mock SuccessFactors for local development and CI. All people are fictitious.
@@ -70,6 +70,26 @@ const DEPARTMENTS = ['Executive Office', 'Finance', 'Accounts Payable', 'Interna
   status: 'A',
 }));
 
+const OPEN_POSITIONS: (OpenPosition & { managerId: string })[] = [
+  { managerId: '100101', code: 'P2041', title: 'Accounts Payable Accountant', department: 'Accounts Payable', location: 'Riyadh' },
+  { managerId: '100020', code: 'P3007', title: 'Talent Acquisition Lead', department: 'Human Resources', location: 'Riyadh' },
+];
+
+const TIME_TYPES: TimeType[] = [
+  { code: 'ANNUAL', name: 'Annual leave' },
+  { code: 'SICK', name: 'Sick leave' },
+  { code: 'UNPAID', name: 'Unpaid leave' },
+];
+
+interface MockApproval extends ApprovalRequest {
+  approverId: string;
+  /** The absence a leave request decides. */
+  absence?: Absence;
+}
+
+/** A date `offset` days from today, as YYYY-MM-DD. */
+const isoDay = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+
 function matches(record: Record<string, unknown>, filter: QueryFilter): boolean {
   if ('and' in filter) return filter.and.every((f) => matches(record, f));
   if ('or' in filter) return filter.or.some((f) => matches(record, f));
@@ -103,7 +123,32 @@ export class MockSfGateway implements SfGateway {
   readonly systemId = 'SF-MOCK';
   readonly mock = true;
 
-  constructor(private readonly latencyMs = 150) {}
+  // Absences are dated from today, so "who is out" always has an answer. Decisions change them.
+  private readonly absences: Absence[];
+  private readonly approvals: MockApproval[];
+
+  constructor(private readonly latencyMs = 150) {
+    const pendingLeave: Absence = { userId: '100102', timeType: 'Annual leave', startDate: isoDay(12), endDate: isoDay(16), days: 5, status: 'PENDING' };
+    this.absences = [
+      { userId: '100102', timeType: 'Annual leave', startDate: isoDay(0), endDate: isoDay(1), days: 2, status: 'APPROVED' },
+      pendingLeave,
+      { userId: '100103', timeType: 'Annual leave', startDate: isoDay(20), endDate: isoDay(24), days: 5, status: 'APPROVED' },
+      { userId: '100101', timeType: 'Annual leave', startDate: isoDay(30), endDate: isoDay(34), days: 5, status: 'APPROVED' },
+    ];
+    this.approvals = [
+      {
+        id: '4001',
+        approverId: '100101',
+        subjectUserId: '100102',
+        subjectName: 'Jordan Lee',
+        title: 'Annual leave',
+        detail: `${pendingLeave.startDate} to ${pendingLeave.endDate}, 5 days`,
+        requestedOn: isoDay(-2),
+        absence: pendingLeave,
+      },
+      { id: '4002', approverId: '100101', subjectUserId: '100103', subjectName: 'Mei Tanaka', title: 'Job change', detail: 'Promotion to Accounts Payable Team Lead', requestedOn: isoDay(-1) },
+    ];
+  }
 
   private async latency() {
     if (this.latencyMs) await new Promise((r) => setTimeout(r, this.latencyMs * (0.6 + Math.random() * 0.8)));
@@ -174,23 +219,158 @@ export class MockSfGateway implements SfGateway {
     return JOBS.filter((j) => j.userId === userId).map(({ userId: _userId, ...entry }) => entry);
   }
 
-  async queryEntity(ctx: SapCallContext, query: EntityQuery): Promise<EntityQueryResult> {
+  async listEmployeePlaces(ctx: SapCallContext): Promise<EmployeePlace[]> {
     await this.latency();
     this.caller(ctx);
-    // SuccessFactors leaves out the records a user may not see; it does not report an error.
-    const tables: Record<string, Record<string, unknown>[]> = {
+    return EMPLOYEES.filter((e) => e.status === 'ACTIVE').map((e) => ({
+      userId: e.userId,
+      displayName: e.displayName,
+      ...(e.jobTitle && { jobTitle: e.jobTitle }),
+      ...(e.department && { department: e.department }),
+      ...(e.location && { location: e.location, city: e.location }),
+      country: 'SA',
+    }));
+  }
+
+  async getTimeOffBalances(ctx: SapCallContext, userId: string): Promise<TimeOffBalance[]> {
+    await this.latency();
+    const employee = this.find(userId);
+    if (!this.maySeeDetails(ctx, userId)) {
+      throw new SapError('NOT_AUTHORIZED', `SuccessFactors denied access: your role-based permissions do not include the time off of ${employee.displayName}.`);
+    }
+    // Deterministic per employee, so the same person always shows the same balance.
+    const seed = Number(userId) % 7;
+    return [
+      { account: 'Annual leave', balance: 9.5 + seed * 2.5, unit: 'DAYS' },
+      { account: 'Sick leave', balance: 10 - (seed % 4), unit: 'DAYS' },
+    ];
+  }
+
+  async listAbsences(ctx: SapCallContext, userIds: string[], from: string, to: string): Promise<Absence[]> {
+    await this.latency();
+    this.caller(ctx);
+    return this.absences
+      .filter((a) => userIds.includes(a.userId) && this.maySeeDetails(ctx, a.userId) && a.startDate <= to && a.endDate >= from)
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+      .map((a) => ({ ...a }));
+  }
+
+  async listOpenPositions(ctx: SapCallContext, managerId: string): Promise<OpenPosition[]> {
+    await this.latency();
+    this.caller(ctx);
+    this.find(managerId);
+    return OPEN_POSITIONS.filter((p) => p.managerId === managerId).map(({ managerId: _managerId, ...position }) => position);
+  }
+
+  async listTimeTypes(ctx: SapCallContext): Promise<TimeType[]> {
+    await this.latency();
+    this.caller(ctx);
+    return TIME_TYPES.map((t) => ({ ...t }));
+  }
+
+  async requestTimeOff(ctx: SapCallContext, request: NewTimeOff): Promise<{ id: string }> {
+    await this.latency();
+    const me = this.caller(ctx);
+    if (request.userId !== me.userId) throw new SapError('NOT_AUTHORIZED', 'SuccessFactors denied the request: you may request time off only for yourself.');
+    const type = TIME_TYPES.find((t) => t.code === request.timeType);
+    if (!type) throw new SapError('BUSINESS_RULE', `SuccessFactors rejected the leave request: time type ${request.timeType} is not available to you.`);
+    const overlaps = this.absences.some((a) => a.userId === me.userId && a.status !== 'REJECTED' && a.status !== 'CANCELLED' && a.startDate <= request.endDate && a.endDate >= request.startDate);
+    if (overlaps) throw new SapError('BUSINESS_RULE', 'SuccessFactors rejected the leave request: it overlaps an absence you already have.');
+    const days = Math.round((Date.parse(request.endDate) - Date.parse(request.startDate)) / 86_400_000) + 1;
+    const absence: Absence = { userId: me.userId, timeType: type.name, startDate: request.startDate, endDate: request.endDate, days, status: 'PENDING' };
+    this.absences.push(absence);
+    // The request goes to the manager's inbox, as the time type's approval workflow would route it.
+    const id = String(4100 + this.approvals.length + this.absences.length);
+    if (me.managerId) {
+      this.approvals.push({ id, approverId: me.managerId, subjectUserId: me.userId, subjectName: me.displayName, title: type.name, detail: `${request.startDate} to ${request.endDate}, ${days} days`, requestedOn: isoDay(0), absence });
+    }
+    return { id };
+  }
+
+  async listPendingApprovals(ctx: SapCallContext): Promise<ApprovalRequest[]> {
+    await this.latency();
+    const me = this.caller(ctx);
+    return this.approvals.filter((a) => a.approverId === me.userId).map(({ approverId: _approverId, absence: _absence, ...request }) => request);
+  }
+
+  async decideApproval(ctx: SapCallContext, requestId: string, decision: 'APPROVE' | 'DECLINE'): Promise<void> {
+    await this.latency();
+    const me = this.caller(ctx);
+    const index = this.approvals.findIndex((a) => a.id === requestId);
+    const request = this.approvals[index];
+    if (!request) throw new SapError('NOT_FOUND', `Request ${requestId} was not found in SuccessFactors or is no longer pending.`);
+    if (request.approverId !== me.userId) throw new SapError('NOT_AUTHORIZED', `SuccessFactors denied the decision: you are not the approver of request ${requestId}.`);
+    this.approvals.splice(index, 1);
+    if (request.absence) request.absence.status = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+  }
+
+  /** The mock tenant's entities. SuccessFactors leaves out the records a user may not see; it does not report an error. */
+  private tables(ctx: SapCallContext): Record<string, Record<string, unknown>[]> {
+    return {
       User: EMPLOYEES.map((e) => ({ ...e, title: e.jobTitle, firstName: e.displayName.split(' ')[0], lastName: e.displayName.split(' ')[1], status: e.status === 'ACTIVE' ? 't' : 'f' })),
-      EmpJob: JOBS.filter((j) => this.maySeeDetails(ctx, j.userId)).map((j, i) => ({ ...j, seqNumber: 1, emplStatus: 'A', position: `P${1000 + i}` })),
+      EmpJob: JOBS.filter((j) => this.maySeeDetails(ctx, j.userId)).map((j, i) => ({ ...j, seqNumber: 1, emplStatus: 'A', position: `P${1000 + i}`, lastModifiedDateTime: j.startDate })),
       FODepartment: DEPARTMENTS,
+      EmpPayCompRecurring: EMPLOYEES.filter((e) => this.maySeeDetails(ctx, e.userId)).map((e) => ({
+        userId: e.userId,
+        payComponent: 'BASE_SALARY',
+        paycompvalue: 9000 + (Number(e.userId) % 9) * 1500,
+        currencyCode: 'SAR',
+        frequency: 'MON',
+        startDate: e.hireDate ?? null,
+        bankAccountNumber: 'SA00 0000 0000 0000',
+      })),
+      RBPRole: [
+        { roleId: 10, roleName: 'Employee Self-Service', roleDesc: 'Own data', userType: 'employee' },
+        { roleId: 20, roleName: 'Manager Self-Service', roleDesc: 'Team data', userType: 'employee' },
+        { roleId: 30, roleName: 'HR Administrator', roleDesc: 'All employee data', userType: 'employee' },
+      ],
+      JobRequisition: OPEN_POSITIONS.map((p, i) => ({ jobReqId: 5000 + i, internalStatus: 'Open', numberOpenings: 1, department: p.department ?? null, location: p.location ?? null })),
     };
-    let rows = (tables[query.entityName] ?? []).filter((r) => !query.filter || matches(r, query.filter));
-    for (const order of [...(query.orderBy ?? [])].reverse()) {
+  }
+
+  private select(ctx: SapCallContext, entityName: string, filter: QueryFilter | undefined, orderBy: { field: string; direction: 'asc' | 'desc' }[] | undefined) {
+    let rows = (this.tables(ctx)[entityName] ?? []).filter((r) => !filter || matches(r, filter));
+    for (const order of [...(orderBy ?? [])].reverse()) {
       const sign = order.direction === 'asc' ? 1 : -1;
       rows = [...rows].sort((a, b) => sign * String(a[order.field] ?? '').localeCompare(String(b[order.field] ?? ''), 'en', { numeric: true }));
     }
+    return rows;
+  }
+
+  async queryEntity(ctx: SapCallContext, query: EntityQuery): Promise<EntityQueryResult> {
+    await this.latency();
+    this.caller(ctx);
+    const rows = this.select(ctx, query.entityName, query.filter, query.orderBy);
     return {
       records: rows.slice(0, query.top).map((r) => Object.fromEntries(query.select.map((field) => [field, (r[field] as unknown) ?? null]))),
       hasMore: rows.length > query.top,
     };
+  }
+
+  /** Entities of modules the mock tenant does not have are unknown to it, as in a tenant without the license. */
+  private entity(ctx: SapCallContext, entityName: string) {
+    if (!(entityName in this.tables(ctx))) throw new SapError('NOT_FOUND', `${entityName} records was not found in SuccessFactors.`);
+  }
+
+  async readEntity(ctx: SapCallContext, read: EntityRead): Promise<EntityQueryResult> {
+    await this.latency();
+    this.caller(ctx);
+    this.entity(ctx, read.entityName);
+    const known = new Set(Object.keys(this.tables(ctx)[read.entityName]![0] ?? {}));
+    const unknown = read.filter ? filterFields(read.filter).filter((f) => !known.has(f)) : [];
+    if (unknown.length) throw new SapError('INVALID_INPUT', `SuccessFactors rejected the request for ${read.entityName} records: Invalid property names: ${read.entityName}/${unknown.join(', ')}.`);
+    const rows = this.select(ctx, read.entityName, read.filter, read.orderBy);
+    const pick = (r: Record<string, unknown>) => (read.select ? Object.fromEntries(read.select.map((field) => [field, r[field] ?? null])) : Object.fromEntries(Object.entries(r).filter(([, v]) => v === null || typeof v !== 'object')));
+    return { records: rows.slice(0, read.top).map(pick), hasMore: rows.length > read.top };
+  }
+
+  async describeEntity(ctx: SapCallContext, entityName: string): Promise<EntityField[]> {
+    await this.latency();
+    this.caller(ctx);
+    this.entity(ctx, entityName);
+    const sample = this.tables(ctx)[entityName]![0] ?? {};
+    return Object.entries(sample)
+      .filter(([, v]) => v === null || typeof v !== 'object')
+      .map(([name, v], i) => ({ name, type: typeof v === 'number' ? 'Decimal' : 'String', ...(i === 0 && { key: true }) }));
   }
 }

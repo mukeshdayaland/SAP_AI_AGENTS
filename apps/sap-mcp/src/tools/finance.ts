@@ -5,8 +5,8 @@ import { fiscalYear } from './mm-invoice.js';
 import { defineTool, fmt, now, type ToolContext } from './types.js';
 
 const period = z.string().regex(/^\d{1,3}$/).describe('Fiscal period, e.g. 09');
-const currency = z.string().regex(/^[A-Z]{3}$/).default('SAR').describe('Currency, e.g. SAR');
-const glAccount = z.string().regex(/^\d{6,10}$/).describe('G/L account number, e.g. 220001');
+const currency = z.string().regex(/^[A-Z]{3}$/).default('SAR');
+const glAccount = z.string().regex(/^\d{6,10}$/).describe('e.g. 220001');
 const money = (amount: number, cur: string) => fmt({ amount, currency: cur });
 
 type Column = { key: string; label: string; align?: 'left' | 'right' };
@@ -47,11 +47,11 @@ function proposeClearingTool(accountType: 'CUSTOMER' | 'SUPPLIER') {
     name: accountType === 'CUSTOMER' ? 'ar_proposeClearing' : 'ap_proposeClearing',
     domain: accountType === 'CUSTOMER' ? 'ar' : 'ap',
     title: accountType === 'CUSTOMER' ? 'Propose customer clearing' : 'Propose supplier clearing',
-    description: `Find ${label}s whose open items offset each other (for example an invoice and a payment on account) and can therefore be cleared. A proposal only: nothing is cleared in SAP. Clear a ${label} with gl_clearOpenItems.`,
+    description: `Find ${label}s whose open items offset each other (e.g. an invoice and a payment on account). Proposal only; clear with gl_clearOpenItems.`,
     risk: 'READ',
     operation: 'SAP_READ',
     statusLabel: 'Preparing clearing proposal',
-    input: { companyCode, partner: partnerNumber.optional().describe(`Only this ${label}. Omit for all ${label}s of the company code.`) },
+    input: { companyCode, partner: partnerNumber.optional().describe(`Only this ${label}; omit for all.`) },
     async run({ companyCode, partner }, ctx) {
       const items = await ctx.gateway.listOpenItems(ctx.sap, { accountType, companyCode, status: 'OPEN', ...(partner && { account: partner }) });
       const groups = clearingProposal(items).sort((a, b) => Number(b.clearable) - Number(a.clearable) || b.debit - a.debit);
@@ -86,7 +86,7 @@ const journalLine = z.object({
   glAccount,
   debitCredit: z.enum(['D', 'C']).describe('D = debit, C = credit'),
   amount: z.coerce.number().positive().max(1_000_000_000),
-  costCenter: z.string().regex(/^[A-Z0-9]{1,10}$/i).optional().describe('Cost center, required by SAP for expense accounts'),
+  costCenter: z.string().regex(/^[A-Z0-9]{1,10}$/i).optional().describe('Required for expense accounts'),
   text: z.string().trim().max(50).optional(),
 });
 
@@ -507,8 +507,7 @@ export const financeTools = [
     name: 'gl_clearOpenItems',
     domain: 'gl',
     title: 'Clear open items',
-    description:
-      'Clear the open items of one customer or supplier against each other, for example an invoice against a payment on account (transactions F-32 / F-44). Only possible when the open items of the account offset each other to zero. Consequential: always requires explicit user confirmation.',
+    description: 'Clear the open items of one customer or supplier against each other, e.g. an invoice against a payment on account (F-32 / F-44). Only when they offset to zero.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Clearing open items',
@@ -546,15 +545,14 @@ export const financeTools = [
     name: 'gl_postJournalEntry',
     domain: 'gl',
     title: 'Post journal entry',
-    description:
-      'Post a manual G/L journal entry with balanced debit and credit lines (transaction FB50). Only G/L accounts, no customer or supplier lines. Use gl_searchGLAccounts to find account numbers. Consequential: always requires explicit user confirmation.',
+    description: 'Post a manual G/L journal entry with balanced debit and credit lines (FB50). G/L accounts only, no customer or supplier lines; find them with gl_searchGLAccounts.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Posting journal entry',
     input: {
       companyCode,
       currency,
-      postingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Posting date YYYY-MM-DD; defaults to today'),
+      postingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Defaults to today'),
       headerText: z.string().trim().min(1).max(25).optional(),
       lines: z.array(journalLine).min(2).max(20),
     },

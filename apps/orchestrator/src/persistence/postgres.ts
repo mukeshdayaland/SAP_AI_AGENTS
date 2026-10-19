@@ -105,6 +105,10 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 CREATE INDEX IF NOT EXISTS workflow_runs_owner_idx ON workflow_runs (tenant_id, user_id, updated_at DESC);
 `,
   },
+  {
+    id: 3,
+    sql: `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cached_input_tokens INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : String(v));
@@ -337,8 +341,8 @@ export class PostgresStore implements Store {
   usage = {
     record: async (u: UsageRecord) => {
       await this.q(
-        'INSERT INTO usage_events (user_id,tenant_id,agent,provider,model,model_tier,input_tokens,output_tokens,duration_ms,day,at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-        [u.userId, u.tenantId, u.agent, u.provider, u.model, u.modelTier, u.inputTokens, u.outputTokens, u.durationMs, u.day, u.at],
+        'INSERT INTO usage_events (user_id,tenant_id,agent,provider,model,model_tier,input_tokens,output_tokens,cached_input_tokens,duration_ms,day,at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+        [u.userId, u.tenantId, u.agent, u.provider, u.model, u.modelTier, u.inputTokens, u.outputTokens, u.cachedInputTokens ?? 0, u.durationMs, u.day, u.at],
       );
     },
     totalsForUser: (userId: string, day: string) => this.totals('user_id', userId, day),
@@ -363,10 +367,15 @@ export class PostgresStore implements Store {
 
   private async totals(col: 'user_id' | 'agent', value: string, day: string): Promise<UsageTotals> {
     const { rows } = await this.q(
-      `SELECT COALESCE(SUM(input_tokens),0)::int AS i, COALESCE(SUM(output_tokens),0)::int AS o, COUNT(*)::int AS n FROM usage_events WHERE ${col}=$1 AND day=$2`,
+      `SELECT COALESCE(SUM(input_tokens),0)::int AS i, COALESCE(SUM(output_tokens),0)::int AS o, COALESCE(SUM(cached_input_tokens),0)::int AS c, COUNT(*)::int AS n FROM usage_events WHERE ${col}=$1 AND day=$2`,
       [value, day],
     );
-    return { inputTokens: Number(rows[0]?.i ?? 0), outputTokens: Number(rows[0]?.o ?? 0), requests: Number(rows[0]?.n ?? 0) };
+    return {
+      inputTokens: Number(rows[0]?.i ?? 0),
+      outputTokens: Number(rows[0]?.o ?? 0),
+      cachedInputTokens: Number(rows[0]?.c ?? 0),
+      requests: Number(rows[0]?.n ?? 0),
+    };
   }
 
   async healthCheck(): Promise<boolean> {

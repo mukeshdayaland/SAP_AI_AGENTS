@@ -11,6 +11,10 @@ const WORDING: Record<Kind, { title: string; action: string }> = {
   UNAVAILABLE: { title: 'SAP could not be reached', action: 'Try again in a moment. If it keeps failing, contact support with the reference below.' },
   NOT_SUPPORTED: { title: 'Not available here', action: 'This has to be done directly in SAP.' },
   INVALID_INPUT: { title: 'The request was not valid', action: 'Check the numbers and dates in your question, then ask again.' },
+  OUTCOME_UNKNOWN: {
+    title: 'Result unknown — check SAP',
+    action: 'The change may have been made even though SAP did not confirm it. Check in SAP before you try again, so it is not made twice. Quote the reference below to support.',
+  },
   OTHER: { title: 'This could not be completed', action: 'Try again, or contact support with the reference below.' },
 };
 
@@ -22,6 +26,8 @@ const KIND_BY_CODE: Record<string, Kind> = {
   TOOL_UNAVAILABLE: 'UNAVAILABLE',
   SAP_NOT_SUPPORTED: 'NOT_SUPPORTED',
   SAP_INVALID_INPUT: 'INVALID_INPUT',
+  SAP_OUTCOME_UNKNOWN: 'OUTCOME_UNKNOWN',
+  TOOL_TIMEOUT: 'UNAVAILABLE',
   INVALID_INPUT: 'INVALID_INPUT',
 };
 

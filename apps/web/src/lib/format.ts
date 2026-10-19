@@ -1,43 +1,44 @@
 import type { ConversationSummary, Money } from '@prowess/contracts';
+import { intlLocale } from './i18n';
 
 export function formatMoney(m: Money): string {
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: m.currency, currencyDisplay: 'code', maximumFractionDigits: 2 }).format(m.amount);
+    return new Intl.NumberFormat(intlLocale(), { style: 'currency', currency: m.currency, currencyDisplay: 'code', maximumFractionDigits: 2 }).format(m.amount);
   } catch {
-    return `${m.currency} ${m.amount.toLocaleString()}`;
+    return `${m.currency} ${m.amount.toLocaleString(intlLocale())}`;
   }
 }
 
 export function formatDate(iso: string | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(intlLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 export function formatDateTime(iso: string | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(intlLocale(), { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export function formatTime(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(intlLocale(), { hour: '2-digit', minute: '2-digit' });
 }
 
 export const humanize = (s: string) => s.replaceAll('_', ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 
-export type ConversationGroup = { label: string; items: ConversationSummary[] };
+export type ConversationGroup = { id: 'today' | 'yesterday' | 'week' | 'older'; items: ConversationSummary[] };
 
-/** Groups conversations into Today / Yesterday / Previous 7 Days / Older. */
+/** Groups conversations into Today / Yesterday / Previous 7 Days / Older; the caller names the groups in the user's language. */
 export function groupConversations(items: ConversationSummary[], now = new Date()): ConversationGroup[] {
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const day = 86_400_000;
   const buckets: ConversationGroup[] = [
-    { label: 'Today', items: [] },
-    { label: 'Yesterday', items: [] },
-    { label: 'Previous 7 Days', items: [] },
-    { label: 'Older', items: [] },
+    { id: 'today', items: [] },
+    { id: 'yesterday', items: [] },
+    { id: 'week', items: [] },
+    { id: 'older', items: [] },
   ];
   for (const c of items) {
     const t = new Date(c.updatedAt).getTime();

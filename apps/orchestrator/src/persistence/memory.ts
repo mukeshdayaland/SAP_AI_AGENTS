@@ -146,11 +146,15 @@ export class MemoryStore implements Store {
   };
 
   private totals(pred: (u: UsageRecord) => boolean): UsageTotals {
-    return this.usageRows.filter(pred).reduce((t, u) => ({ inputTokens: t.inputTokens + u.inputTokens, outputTokens: t.outputTokens + u.outputTokens, requests: t.requests + 1 }), {
-      inputTokens: 0,
-      outputTokens: 0,
-      requests: 0,
-    });
+    return this.usageRows.filter(pred).reduce(
+      (t, u) => ({
+        inputTokens: t.inputTokens + u.inputTokens,
+        outputTokens: t.outputTokens + u.outputTokens,
+        cachedInputTokens: t.cachedInputTokens + (u.cachedInputTokens ?? 0),
+        requests: t.requests + 1,
+      }),
+      { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, requests: 0 },
+    );
   }
 
   async healthCheck() {

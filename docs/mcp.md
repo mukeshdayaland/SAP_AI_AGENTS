@@ -73,8 +73,18 @@ authorizes them, and the MCP server executes them against SAP.
 | SF | `sf_searchEmployees` | READ | Employees by a part of their name |
 | SF | `sf_getDirectReports`, `sf_getReportingLine` | READ | Team of a manager; chain of managers above an employee. Default: the current user |
 | SF | `sf_getJobHistory` | READ | Effective-dated job information (EmpJob) |
+| SF | `sf_getTimeOff` | READ | Time account balances and upcoming absences with their approval status |
+| SF | `sf_getTeamOverview` | READ | Headcount, who is out today, open positions and the team. Figures the tenant does not provide are left out |
+| SF | `sf_showEmployeeMap` | READ | Employees on a map by work location, drawn as hotspots. See [vendor-map.md](vendor-map.md#employee-map) |
+| SF | `sf_listEmployeeLocations` | READ (internal) | Hidden from models; feeds the employee map |
+| SF | `sf_listTimeTypes` | READ | The kinds of time off with their codes |
+| SF | `sf_requestTimeOff` | BUSINESS_WRITE | Confirmation required. Leave request for the current user only; SuccessFactors starts its approval workflow |
+| SF | `sf_listApprovals` | READ | Workflow requests waiting for the user's decision |
+| SF | `sf_approveRequest`, `sf_declineRequest` | BUSINESS_WRITE | Confirmation required. Decides one workflow request; declining needs a reason |
+| SF | `sf_listBusinessCases`, `sf_runBusinessCase`, `sf_describeEntity` | READ | Power users only (`AI_POWER_USER`). The top cases of the 13 SuccessFactors modules; see below |
 | SF | `sf_listEntities`, `sf_queryEntity` | READ | Governed generic read: allow-listed entities and fields only, protected fields redacted |
 | Shared | `shared_getUserContext`, `shared_getSystemInformation`, `shared_searchBusinessObject` | READ | |
+| Shared | `shared_showFioriGuide` | READ | Opens a Fiori app in the pane beside the conversation, where the agent then reads, points, types and clicks (`fiori_*`, orchestrator tools). Reads nothing from SAP itself. See [sap-connectivity.md](sap-connectivity.md#fiori-pane) |
 | System | `system_previewAction` | READ (internal) | Hidden from models; builds the confirmation card |
 
 Every tool publishes metadata in `_meta`: `prowess/risk`, `prowess/domain`, `prowess/targetSystem`,
@@ -131,6 +141,27 @@ No other code changes are needed. Tool names are unique across servers (duplicat
 The `sf` domain reads SAP SuccessFactors through its own gateway (`apps/sap-mcp/src/sf`), with the same tool
 contract, caller authentication and metadata as the S/4HANA domains. Deploy it as its own service
 (`MCP_DOMAINS=sf`, `SF_MODE=odata`) and add it to `MCP_SERVERS`; see [sap-connectivity.md](sap-connectivity.md#successfactors).
-The domain is read-only. In PROD it is never served from the mock.
+Its only writes are the two workflow decisions, which go through the confirmation card like every other write.
+In PROD it is never served from the mock.
+
+### Business cases
+
+`apps/sap-mcp/src/sf/business-cases.ts` holds the top read cases of each SuccessFactors module (58 in all, at most
+five per module), ported from the business-case library of the `SAP_SF_MCP_V4` repository. A case names one entity
+and at most one value the user supplies; `sf_runBusinessCase` runs it and shows the records as a table.
+
+- **Power users only.** The three tools declare `requiredRole: AI_POWER_USER`. The orchestrator does not offer them
+  to anyone else, and the MCP server refuses them for a principal without the role.
+- **Field names are a starting point.** They come from the API reference, not from a tenant. A case reads without
+  naming its fields and shows what the tenant returns, its own columns first, at most ten.
+- **Self-correcting.** When SuccessFactors rejects a filter, its reason is passed on; `sf_describeEntity` returns the
+  tenant's real field names, and the case can be run again with `filters`. An entity the tenant does not have is
+  reported as a module that is not in use.
+- **Protected fields are never shown**, whatever the tenant returns: identity documents, bank details, secrets and
+  special categories of personal data (`isProtectedField`). They cannot be used in a filter either.
+- **Read-only.** Cases that change data in the library are left out. The five Learning cases are listed as not
+  available: Learning has its own API, which the `SF_ODATA` destination does not reach.
+
+To add or correct a case, edit the catalog; no tool changes.
 
 The same pattern adds Ariba or other servers.

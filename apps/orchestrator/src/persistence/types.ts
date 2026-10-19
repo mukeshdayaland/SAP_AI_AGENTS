@@ -125,6 +125,8 @@ export interface UsageRecord {
   modelTier: string;
   inputTokens: number;
   outputTokens: number;
+  /** Part of `inputTokens` served from the provider's prompt cache. */
+  cachedInputTokens?: number;
   durationMs: number;
   day: string;
   at: string;
@@ -133,6 +135,7 @@ export interface UsageRecord {
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
   requests: number;
 }
 

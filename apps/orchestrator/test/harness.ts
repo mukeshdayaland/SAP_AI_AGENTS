@@ -25,7 +25,7 @@ export const USERS = {
 
 const silent = createLogger({ service: 'test', level: 'error', sink: () => {} });
 
-export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider>; geocoder?: Geocoder; env?: Record<string, string> } = {}) {
+export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider>; geocoder?: Geocoder; env?: Record<string, string>; fioriLaunchpad?: string } = {}) {
   const mcpServer = createMcpHttpServer(
     {
       port: 0,
@@ -34,8 +34,11 @@ export async function startStack(opts: { providers?: Map<ProviderId, LLMProvider
       domains: new Set(BUSINESS_DOMAINS),
       sap: { mode: 'mock', destinationName: 'S4', systemId: 'S4-MOCK', allowTechnicalUser: false, mockLatencyMs: 0 },
       sf: { mode: 'mock', destinationName: 'SF_ODATA', systemId: 'SF-MOCK', userMapping: 'email' },
+      outlook: { mode: 'mock', systemId: 'M365-MOCK', timeZone: 'Arab Standard Time', allowedRecipientDomains: [] },
+      documentAi: { mode: 'mock', clientId: 'default' },
       toolTimeoutMs: 5_000,
       logLevel: 'error',
+      ...(opts.fioriLaunchpad && { fiori: { launchpadUrl: opts.fioriLaunchpad, embed: true, intents: {} } }),
     },
     { gateway: new MockSapGateway(0), sfGateway: new MockSfGateway(0), logger: silent },
   );

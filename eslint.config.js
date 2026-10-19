@@ -46,4 +46,25 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Interface text lives in apps/web/src/lib/messages (English and Arabic), never in a component.
+    files: ['apps/web/src/components/**/*.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+          message: 'Model or tool output must never be rendered as raw HTML.',
+        },
+        {
+          selector: 'JSXText[value=/[A-Za-z]{2,}/]',
+          message: 'Put interface text in apps/web/src/lib/messages and render it with t().',
+        },
+        {
+          selector: "JSXAttribute[name.name=/^(aria-label|label|title|placeholder|alt)$/] > Literal[value=/[A-Za-z]{2,}/]",
+          message: 'Put interface text in apps/web/src/lib/messages and render it with t().',
+        },
+      ],
+    },
+  },
 );

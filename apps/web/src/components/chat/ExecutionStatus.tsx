@@ -2,6 +2,7 @@
 
 import { Check, ChevronDown, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
+import { translateServer, useT } from '@/lib/i18n';
 import type { StepView } from '@/lib/use-chat';
 import { cx, Spinner } from '../ui/primitives';
 
@@ -29,6 +30,7 @@ const connector: Record<StepView['state'], string> = {
 };
 
 function Legend() {
+  const t = useT();
   const item = (style: string, label: string) => (
     <span className="inline-flex items-center gap-1.5">
       <span aria-hidden className={cx('inline-block w-5 border-t-2', style)} />
@@ -36,15 +38,16 @@ function Legend() {
     </span>
   );
   return (
-    <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-8 text-[10px] text-ink-3" aria-label="Legend">
-      {item('border-solid border-brand', 'Direct call')}
-      {item('border-dashed border-warning', 'Awaiting confirmation')}
-      {item('border-dotted border-line-strong', 'Skipped')}
+    <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 ps-8 text-[10px] text-ink-3" aria-label={t('status.legend')}>
+      {item('border-solid border-brand', t('status.direct'))}
+      {item('border-dashed border-warning', t('status.awaiting'))}
+      {item('border-dotted border-line-strong', t('status.skipped'))}
     </p>
   );
 }
 
 export function ExecutionStatus({ steps, streaming, durationMs }: { steps: StepView[]; streaming: boolean; durationMs?: number }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const visible = steps.filter((s) => s.id !== 'understand' || streaming);
   if (!visible.length && !streaming) return null;
@@ -53,14 +56,13 @@ export function ExecutionStatus({ steps, streaming, durationMs }: { steps: StepV
   const current = [...visible].reverse().find((s) => s.state === 'running');
   const failed = steps.filter((s) => s.state === 'error');
   const denied = failed.filter((s) => s.denied).length;
-  const calls = (n: number) => `${n} SAP ${n === 1 ? 'call' : 'calls'}`;
   // The header says what happened: a failed or denied call is never shown as a success.
   const outcome = !toolCount
-    ? 'Completed'
+    ? t('status.completed')
     : !failed.length
-      ? `Used ${toolCount} SAP ${toolCount === 1 ? 'tool' : 'tools'}`
-      : `${denied === failed.length ? `${calls(denied)} not allowed` : `${calls(failed.length)} did not succeed`}${failed.length < toolCount ? ` · ${toolCount - failed.length} succeeded` : ''}`;
-  const summary = streaming ? (current?.label ?? 'Working…') : `${outcome}${durationMs ? ` · ${(durationMs / 1000).toFixed(1)}s` : ''}`;
+      ? t('status.used', { count: toolCount })
+      : `${denied === failed.length ? t('status.notAllowedCount', { count: denied }) : t('status.failedCount', { count: failed.length })}${failed.length < toolCount ? ` · ${t('status.succeededCount', { count: toolCount - failed.length })}` : ''}`;
+  const summary = streaming ? (current ? translateServer(current.label) : t('status.working')) : `${outcome}${durationMs ? ` · ${t('status.seconds', { seconds: (durationMs / 1000).toFixed(1) })}` : ''}`;
   const showLegend = visible.some((s) => s.state === 'pending_confirmation' || s.state === 'skipped');
 
   return (
@@ -82,16 +84,17 @@ export function ExecutionStatus({ steps, streaming, durationMs }: { steps: StepV
               const last = i === visible.length - 1;
               return (
                 <li key={s.id} className="relative flex gap-3 pb-3 last:pb-0">
-                  {!last && <span aria-hidden className={cx('absolute left-[11px] top-6 bottom-0 border-l-2', connector[visible[i + 1]!.state])} />}
+                  {!last && <span aria-hidden className={cx('absolute start-[11px] top-6 bottom-0 border-s-2', connector[visible[i + 1]!.state])} />}
                   <span
                     className={cx('relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 text-[10px] font-bold tabular-nums', marker[s.state])}
-                    aria-label={`Step ${i + 1}: ${s.state.replace('_', ' ')}`}
+                    aria-label={t('status.step', { n: i + 1, state: t(`status.state.${s.state}`) })}
                   >
                     {s.state === 'running' ? <Spinner className="h-3 w-3" /> : i + 1}
                   </span>
                   <span className={cx('pt-0.5', s.state === 'error' ? 'text-error' : s.state === 'skipped' ? 'text-ink-3' : 'text-ink-2')}>
-                    {s.label}
-                    {s.state === 'pending_confirmation' && <span className="font-semibold text-warning"> — awaiting your confirmation</span>}
+                    {translateServer(s.label)}
+                    {s.state === 'error' && t(s.denied ? 'status.notAllowed' : 'status.failed')}
+                    {s.state === 'pending_confirmation' && <span className="font-semibold text-warning">{t('status.awaitingYou')}</span>}
                   </span>
                 </li>
               );

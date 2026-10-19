@@ -3,6 +3,7 @@ import { createLogger, type Logger } from '@prowess/observability';
 import { AgentRegistry } from './agents/registry.js';
 import { AuditTrail, BtpAuditLogSink, RingBufferAuditSink, StdoutAuditSink, type AuditSink } from './audit/audit.js';
 import { DevAuthenticator } from './auth/dev.js';
+import { BrowserBridge } from './browser/browser-bridge.js';
 import type { Authenticator } from './auth/types.js';
 import { XsuaaAuthenticator } from './auth/xsuaa.js';
 import { loadCatalogs, type AgentCatalog, type WorkflowCatalog } from './config/catalog.js';
@@ -15,6 +16,7 @@ import { ClamAvScanner, NoopScanner, type MalwareScanner } from './files/scanner
 import { McpGateway } from './mcp/gateway.js';
 import { MemoryStore } from './persistence/memory.js';
 import { PostgresStore } from './persistence/postgres.js';
+import { EmployeeMapService } from './employees/employee-map-service.js';
 import type { Store } from './persistence/types.js';
 import { ToolPolicy } from './security/tool-policy.js';
 import { ConcurrencyGuard, QuotaService, RateLimiter } from './usage/limits.js';
@@ -36,11 +38,13 @@ export interface Services {
   auditBuffer: RingBufferAuditSink;
   authenticator: Authenticator;
   chat: ChatService;
+  browser: BrowserBridge;
   conversations: ConversationService;
   actions: ActionService;
   workflows: WorkflowService;
   files: FileService;
   vendorMap: VendorMapService;
+  employeeMap: EmployeeMapService;
   rateLimiter: RateLimiter;
   streams: ConcurrencyGuard;
 }
@@ -93,7 +97,7 @@ export async function createServices(config: OrchestratorConfig, env = process.e
   ];
   const audit = new AuditTrail([...sinks, auditBuffer]);
 
-  const authenticator = overrides.authenticator ?? (config.auth.mode === 'xsuaa' ? XsuaaAuthenticator.fromVcap(env.VCAP_SERVICES, logger) : new DevAuthenticator());
+  const authenticator = overrides.authenticator ?? (config.auth.mode === 'xsuaa' ? XsuaaAuthenticator.fromVcap(env.VCAP_SERVICES, logger, config.auth.iasUrl) : new DevAuthenticator());
   if (config.auth.mode === 'dev') logger.warn('auth.dev_mode', { note: 'Development authentication is active. Never use outside DEV.' });
 
   let scanner: MalwareScanner = overrides.scanner ?? new NoopScanner();
@@ -107,7 +111,8 @@ export async function createServices(config: OrchestratorConfig, env = process.e
 
   const quota = new QuotaService(store, config.limits);
   const workflows = new WorkflowService({ store, mcp, agents, policy, audit, logger, config, catalog: catalogs.workflows ?? { workflows: [] } });
-  const chat = new ChatService({ store, router, mcp, agents, policy, audit, quota, workflows, logger, config });
+  const browser = new BrowserBridge();
+  const chat = new ChatService({ store, router, mcp, agents, policy, audit, quota, workflows, browser, logger, config });
 
   const geocoder = overrides.geocoder
     ? new CachingGeocoder(overrides.geocoder, logger)
@@ -133,6 +138,8 @@ export async function createServices(config: OrchestratorConfig, env = process.e
     workflows,
     files: new FileService({ store, scanner, audit, logger, config: config.uploads }),
     vendorMap: new VendorMapService({ mcp, audit, logger, config, ...(geocoder && { geocoder }) }),
+    employeeMap: new EmployeeMapService({ mcp, audit, logger, config, ...(geocoder && { geocoder }) }),
+    browser,
     rateLimiter: new RateLimiter(config.limits.requestsPerMinute),
     streams: new ConcurrencyGuard(config.limits.maxConcurrentStreamsPerUser),
   };

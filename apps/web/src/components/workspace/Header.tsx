@@ -1,9 +1,10 @@
 'use client';
 
 import type { WorkspaceConfig } from '@prowess/contracts';
-import { ChevronDown, Menu as MenuIcon } from 'lucide-react';
-import { EnvironmentBadge, IconButton } from '../ui/primitives';
+import { Check, ChevronDown, Menu as MenuIcon } from 'lucide-react';
+import { EnvironmentBadge, IconButton, Menu, cx } from '../ui/primitives';
 import { brand } from '@/lib/brand';
+import { useT } from '@/lib/i18n';
 
 interface Props {
   config: WorkspaceConfig;
@@ -16,44 +17,71 @@ interface Props {
   onOpenSidebar: () => void;
 }
 
-function Select({ id, label, value, options, onChange, disabled }: { id: string; label: string; value: string; options: { id: string; label: string; hint?: string }[]; onChange: (v: string) => void; disabled?: boolean }) {
-  return (
-    <div className="relative">
-      <label htmlFor={id} className="sr-only">
-        {label}
-      </label>
-      <select
-        id={id}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-8 appearance-none rounded-lg border border-line bg-surface py-0 pl-2.5 pr-7 text-[12px] font-medium text-ink hover:border-line-strong disabled:opacity-60"
-      >
-        {options.map((o) => (
-          <option key={o.id} value={o.id} title={o.hint}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={14} aria-hidden className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-3" />
-    </div>
-  );
+interface Choice {
+  id: string;
+  label: string;
+  hint?: string;
 }
 
-export function Header({ config, agent, tier, title, locked, onAgent, onTier, onOpenSidebar }: Props) {
+/** Chooses one of a few named options. A native select cannot be styled on the brand bar; what an option is for shows as its tooltip. */
+function Picker({ label, value, options, onChange, disabled }: { label: string; value: string; options: Choice[]; onChange: (v: string) => void; disabled?: boolean }) {
+  const t = useT();
+  const current = options.find((o) => o.id === value);
   return (
-    <header className="brand-bar flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/80 px-3 backdrop-blur md:px-5">
+    <Menu
+      label={t('header.choice', { label, value: current?.label ?? value })}
+      disabled={disabled}
+      compact
+      triggerClassName="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface ps-2.5 pe-2 text-[12px] font-medium text-ink hover:border-line-strong disabled:opacity-60 aria-expanded:border-line-strong"
+      trigger={
+        <>
+          {current?.label ?? value}
+          <ChevronDown size={14} aria-hidden className="text-ink-3" />
+        </>
+      }
+    >
+      {(close) => (
+        <div>
+          {options.map((o) => {
+            const selected = o.id === value;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                title={o.hint}
+                onClick={() => {
+                  close();
+                  if (!selected) onChange(o.id);
+                }}
+                className={cx('flex w-full items-center gap-6 rounded-lg px-2.5 py-1.5 text-start hover:bg-muted focus:bg-muted focus:outline-none', selected && 'bg-muted')}
+              >
+                <span className="flex-1 whitespace-nowrap text-sm font-medium text-ink">{o.label}</span>
+                <Check size={15} aria-hidden className={cx('shrink-0 text-brand', !selected && 'invisible')} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </Menu>
+  );
+}
+export function Header({ config, agent, tier, title, locked, onAgent, onTier, onOpenSidebar }: Props) {
+  const t = useT();
+  return (
+    // Above the conversation, so an open picker is never painted over by a card.
+    <header className="brand-bar relative z-20 flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/80 px-3 backdrop-blur md:px-5">
       <span className="md:hidden">
-        <IconButton label="Open conversations" onClick={onOpenSidebar}>
+        <IconButton label={t('header.openConversations')} onClick={onOpenSidebar}>
           <MenuIcon size={18} />
         </IconButton>
       </span>
-      <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-ink-2">{title ?? <span className="sr-only">{brand.name}</span>}</h1>
+      <h1 className="min-w-0 flex-1 truncate text-sm font-medium text-ink-2">{title ? <bdi>{title}</bdi> : <span className="sr-only">{brand.name}</span>}</h1>
 
       <div className="flex items-center gap-2">
-        <Select
-          id="agent-select"
-          label="Agent"
+        <Picker
+          label={t('header.agent')}
           value={agent}
           disabled={locked}
           onChange={onAgent}
@@ -61,9 +89,8 @@ export function Header({ config, agent, tier, title, locked, onAgent, onTier, on
         />
         {config.modelTiers.length > 1 && (
           <span className="hidden sm:inline">
-            <Select
-              id="tier-select"
-              label="Model"
+            <Picker
+              label={t('header.model')}
               value={tier}
               disabled={locked}
               onChange={onTier}

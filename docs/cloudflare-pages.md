@@ -33,6 +33,7 @@ Browser ──► https://<custom-domain>  (Cloudflare Pages, project prowess-ai
 | `ORCHESTRATOR_URL` | Orchestrator route on BTP |
 | `XSUAA_URL` | `url` from a `prowess-xsuaa` service key |
 | `XSUAA_CLIENT_ID` | `clientid` from the same key |
+| `FIORI_URL` | Optional. The approuter on BTP. With it set, `/sap/*` is forwarded there with the user's token, so the [Fiori pane](sap-connectivity.md#fiori-pane) works on this site too |
 
 Secrets, set once per Pages project and never committed:
 
@@ -40,9 +41,12 @@ Secrets, set once per Pages project and never committed:
 | --- | --- |
 | `XSUAA_CLIENT_SECRET` | `clientsecret` from the service key |
 | `SESSION_SECRET` | ≥ 32 random characters; rotating it signs everyone out |
+| `FIORI_ORIGIN` | Optional. Origin of the SAP Fiori launchpad, allowed as a frame for the [Fiori guides](sap-connectivity.md#fiori-pane) |
 
 The XSUAA instance must allow the custom domain as a redirect target: add `https://<custom-domain>/**` to
-`oauth2-configuration.redirect-uris` and run `cf update-service prowess-xsuaa -c <xs-security.json>`.
+`oauth2-configuration.redirect-uris` and run `cf update-service prowess-xsuaa -c <xs-security.json>`. The file passed
+to `cf` must carry the instance's own `xsappname` (`prowess-ai-<space>`, set by `mta.yaml`), not the plain `prowess-ai` of
+`infrastructure/btp/xs-security.json`; XSUAA rejects the update otherwise ("Cannot change AppId").
 
 ## Deploy
 

@@ -1,5 +1,5 @@
 import { AppError } from '../errors/app-error.js';
-import type { Store } from '../persistence/types.js';
+import type { Store, UsageTotals } from '../persistence/types.js';
 
 /** Fixed-window-free token bucket per key (in-process; use a shared store when scaling out). */
 export class RateLimiter {
@@ -49,6 +49,19 @@ export class ConcurrencyGuard {
 
 export const today = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * Share of full weight a prompt-cache hit counts toward quota. Every model call
+ * re-sends the same tool definitions + system prompt; OpenAI and Gemini serve
+ * that prefix from cache at roughly a tenth of the input price.
+ */
+export const CACHED_INPUT_WEIGHT = 0.1;
+
+/** Tokens charged against quota: cached input at `CACHED_INPUT_WEIGHT`, everything else at full weight. */
+export function quotaTokens(t: UsageTotals): number {
+  const cached = Math.min(t.cachedInputTokens, t.inputTokens);
+  return t.inputTokens - cached + Math.ceil(cached * CACHED_INPUT_WEIGHT) + t.outputTokens;
+}
+
 export class QuotaService {
   constructor(
     private readonly store: Store,
@@ -58,10 +71,10 @@ export class QuotaService {
   async assertWithinQuota(userId: string, agent: string): Promise<void> {
     const day = today();
     const [user, agentTotals] = await Promise.all([this.store.usage.totalsForUser(userId, day), this.store.usage.totalsForAgent(agent, day)]);
-    if (user.inputTokens + user.outputTokens >= this.limits.dailyTokensPerUser) {
+    if (quotaTokens(user) >= this.limits.dailyTokensPerUser) {
       throw new AppError('USER_QUOTA_EXCEEDED', 'You have reached your daily AI usage limit. It resets at midnight UTC.', 'QUOTA');
     }
-    if (agentTotals.inputTokens + agentTotals.outputTokens >= this.limits.dailyTokensPerAgent) {
+    if (quotaTokens(agentTotals) >= this.limits.dailyTokensPerAgent) {
       throw new AppError('AGENT_QUOTA_EXCEEDED', 'This agent has reached its daily usage limit. Please try again tomorrow.', 'QUOTA');
     }
   }

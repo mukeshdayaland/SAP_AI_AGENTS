@@ -36,6 +36,19 @@ used at all: both are unreliable in the vendor master.
 
 Vendors that share an address share a pin; the pin shows how many, and selecting it lists them.
 
+## Employee map
+
+The HCM agent has the same map for people: `sf_showEmployeeMap` puts an `employee_map` card in the chat, and the
+page loads `GET /api/v1/employees/locations` (users with `AI_HR_USER` only). The orchestrator reads the employees
+through the internal tool `sf_listEmployeeLocations`, as the signed-in user.
+
+- An employee is placed at their **work location**: the city on the user record, or the location name without its
+  code (`Riyadh (1000)` becomes `Riyadh`). Home addresses are never read.
+- Each distinct location is geocoded once, however many people work there.
+- Pins are drawn as hotspots: the more people work at a place, the larger and warmer its spot, with the headcount
+  at its core. The card names the five busiest locations under the map.
+- An employee without a work location, or with one Google cannot resolve, is left off and counted as excluded.
+
 ## Configuration
 
 | Setting | Used by | Notes |

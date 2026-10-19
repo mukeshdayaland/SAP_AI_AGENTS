@@ -56,6 +56,33 @@ applications:
       SF_USER_MAPPING: email
       NODE_ENV: production
     services: [prowess-xsuaa, prowess-destination, prowess-logging, prowess-secrets]
+  # Optional: Outlook (mail and calendar) as the signed-in user through Microsoft Graph (docs/outlook.md). Push it by name
+  # without starting it, give it the IAS application (IAS_CLIENT_SECRET goes into prowess-secrets), then start it:
+  #   cf push -f infrastructure/cloudfoundry/manifest.dev-lite.yml prowess-outlook-mcp --var env=… --var domain=… --no-start
+  #   cf set-env prowess-outlook-mcp IAS_URL https://<tenant>.accounts.ondemand.com
+  #   cf set-env prowess-outlook-mcp IAS_CLIENT_ID <client id of the IAS application XSUAA trusts>
+  #   cf start prowess-outlook-mcp
+  # OCR for scanned invoices (docs/invoice-intake.md): bind a SAP Document AI instance, then restage:
+  #   cf create-service sap-document-information-extraction free prowess-document-ai
+  #   cf bind-service prowess-outlook-mcp prowess-document-ai
+  # The orchestrator needs IAS_URL too (to accept the IAS token the edge BFF forwards) and the service in MCP_SERVERS.
+  - name: prowess-outlook-mcp
+    path: ../../apps/sap-mcp/dist
+    memory: 256M
+    instances: 1
+    buildpacks: [nodejs_buildpack]
+    command: node --enable-source-maps server.mjs
+    health-check-type: http
+    health-check-http-endpoint: /health
+    routes:
+      - route: prowess-outlook-mcp-((env)).((domain))
+    env:
+      PROWESS_ENV: DEV
+      MCP_DOMAINS: outlook
+      OUTLOOK_MODE: graph
+      OUTLOOK_TIME_ZONE: Arab Standard Time
+      NODE_ENV: production
+    services: [prowess-logging, prowess-secrets]
   - name: prowess-ai-orchestrator
     path: ../../apps/orchestrator/dist
     memory: 512M
@@ -98,7 +125,8 @@ applications:
       INCOMING_CONNECTION_TIMEOUT: 300000
       destinations: >
         [{"name":"prowess-orchestrator","url":"https://prowess-ai-orchestrator-((env)).((domain))","forwardAuthToken":true,"timeout":300000}]
-    services: [prowess-xsuaa]
+    # Destination and connectivity: Fiori under /sap/ on the workspace's own address (docs/sap-connectivity.md, Fiori pane).
+    services: [prowess-xsuaa, prowess-destination, prowess-connectivity]
 
 # Backend routes are public, as in mta.yaml: container-to-container network policies need
 # network.write, which space developers do not have on every BTP landscape.

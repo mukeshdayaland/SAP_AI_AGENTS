@@ -147,12 +147,25 @@ const PURCHASE_ORDERS: PurchaseOrder[] = [
     companyCode: '1000',
     items: [{ item: '00010', material: 'SP-10090', description: 'Pump mechanical seal kit', quantity: 50, unit: 'EA', netPrice: SAR(4_250), netValue: SAR(212_500) }],
   },
+  // assumed: a delivered order not yet invoiced, for the invoice in the mock mailbox (invoice intake)
+  {
+    number: '4500012410',
+    vendorId: '1000456',
+    vendorName: 'Gulf Industrial Supplies',
+    value: SAR(170_000),
+    status: 'DELIVERED',
+    createdOn: '2026-09-30',
+    purchasingGroup: 'P02',
+    companyCode: '1000',
+    items: [{ item: '00010', material: 'SP-10090', description: 'Pump mechanical seal kit', quantity: 40, unit: 'EA', netPrice: SAR(4_250), netValue: SAR(170_000) }],
+  },
   ...SCENARIO_PURCHASE_ORDERS,
 ];
 
 const GOODS_RECEIPTS: GoodsReceipt[] = [
   { materialDocument: '5000045678', year: '2026', purchaseOrder: '4500012345', item: '00010', postingDate: '2026-09-02', quantity: 120, unit: 'TO', value: SAR(246_000) },
   { materialDocument: '5000045901', year: '2026', purchaseOrder: '4500012345', item: '00010', postingDate: '2026-09-15', quantity: 60, unit: 'TO', value: SAR(123_000) },
+  { materialDocument: '5000046120', year: '2026', purchaseOrder: '4500012410', item: '00010', postingDate: '2026-10-12', quantity: 40, unit: 'EA', value: SAR(170_000) },
   ...SCENARIO_GOODS_RECEIPTS,
 ];
 

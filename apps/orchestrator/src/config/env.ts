@@ -20,7 +20,11 @@ export interface OrchestratorConfig {
   port: number;
   environment: DeploymentEnvironment;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
-  auth: { mode: 'dev' | 'xsuaa' };
+  auth: {
+    mode: 'dev' | 'xsuaa';
+    /** Identity Authentication tenant whose user tokens the edge BFF forwards for the Outlook tools, e.g. https://<tenant>.accounts.ondemand.com. */
+    iasUrl?: string;
+  };
   assertionSecret: string;
   mcpServers: McpServerConfig[];
   llm: {
@@ -145,7 +149,7 @@ export function loadConfig(rawEnv: Env = process.env): OrchestratorConfig {
     port: int(env.PORT, 4000),
     environment,
     logLevel: (env.LOG_LEVEL as OrchestratorConfig['logLevel']) ?? 'info',
-    auth: { mode: authMode },
+    auth: { mode: authMode, ...(env.IAS_URL && { iasUrl: env.IAS_URL.replace(/\/+$/, '') }) },
     assertionSecret,
     mcpServers,
     llm: {

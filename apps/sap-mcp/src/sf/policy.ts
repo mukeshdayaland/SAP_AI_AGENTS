@@ -54,7 +54,7 @@ export const DEFAULT_ALLOWLIST: Record<string, unknown> = {
   Position: {
     operations: ['read'],
     keyFields: ['code', 'effectiveStartDate'],
-    fields: ['code', 'externalName', 'effectiveStartDate', 'effectiveStatus', 'company', 'businessUnit', 'division', 'department', 'location', 'jobCode', 'vacant', 'targetFTE'],
+    fields: ['code', 'externalName_defaultValue', 'effectiveStartDate', 'effectiveStatus', 'company', 'businessUnit', 'division', 'department', 'location', 'jobCode', 'vacant', 'targetFTE'],
   },
   FOCompany: { operations: ['read'], keyFields: ['externalCode', 'startDate'], fields: ['externalCode', 'startDate', 'endDate', 'name', 'description', 'country', 'currency', 'status'] },
   FODepartment: { operations: ['read'], keyFields: ['externalCode', 'startDate'], fields: ['externalCode', 'startDate', 'endDate', 'name', 'description', 'parent', 'headOfUnit', 'status'] },

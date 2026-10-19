@@ -40,6 +40,8 @@ export interface LLMRequest {
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Part of `inputTokens` the provider served from its prompt cache (billed at a discount). */
+  cachedInputTokens?: number;
 }
 
 export type FinishReason = 'stop' | 'tool_calls' | 'length' | 'content_filter' | 'error';

@@ -1,8 +1,10 @@
 import type {
   AttachmentRef,
+  BrowserActionResult,
   ConfirmationRequest,
   ConversationDetail,
   ConversationSummary,
+  EmployeeMap,
   HelpOverview,
   MessageDTO,
   PublicError,
@@ -10,6 +12,7 @@ import type {
   VendorMap,
   WorkspaceConfig,
 } from '@prowess/contracts';
+import { getLocale } from './i18n';
 import { prefs } from './prefs';
 import { brand } from './brand';
 
@@ -34,6 +37,8 @@ function headers(json: boolean): HeadersInit {
   const devUser = prefs.devUser();
   return {
     'x-requested-with': 'prowess',
+    // The backend answers configuration text (agents, starters, model tiers) in this language.
+    'accept-language': getLocale(),
     ...(json && { 'content-type': 'application/json' }),
     ...(devUser && { 'x-prowess-dev-user': devUser }),
   };
@@ -72,6 +77,8 @@ export const api = {
   conversation: (id: string) => request<ConversationDetail>('GET', `/conversations/${encodeURIComponent(id)}`),
   rename: (id: string, title: string) => request<ConversationSummary>('PATCH', `/conversations/${encodeURIComponent(id)}`, { title }),
   remove: (id: string) => request<void>('DELETE', `/conversations/${encodeURIComponent(id)}`),
+  /** What the Fiori pane did with an action the agent sent. */
+  browserResult: (result: BrowserActionResult) => request<void>('POST', '/browser/results', result),
   feedback: (conversationId: string, messageId: string, rating: 'up' | 'down') =>
     request<void>('POST', `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/feedback`, { rating }),
   confirm: (id: string, acknowledgeEnvironment?: string) =>
@@ -79,6 +86,7 @@ export const api = {
   cancel: (id: string) => request<{ confirmation: ConfirmationRequest; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/cancel`, {}),
   help: () => request<HelpOverview>('GET', '/help'),
   vendorLocations: () => request<VendorMap>('GET', '/vendors/locations'),
+  employeeLocations: () => request<EmployeeMap>('GET', '/employees/locations'),
   adminOverview: () => request<Record<string, unknown>>('GET', '/admin/overview'),
   audit: () => request<{ events: Record<string, unknown>[] }>('GET', '/admin/audit'),
 

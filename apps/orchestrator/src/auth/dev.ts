@@ -7,9 +7,9 @@ import type { AuthContext, Authenticator } from './types.js';
  * exercised without an IdP. Configuration refuses this mode outside DEV.
  */
 export const DEV_USERS: readonly UserProfile[] = [
-  { id: 'alex.morgan@prowess.example', displayName: 'Alex Morgan', email: 'alex.morgan@prowess.example', tenantId: 'prowess-dev', roles: ['AI_USER', 'AI_POWER_USER', 'AI_HR_USER'] },
+  { id: 'alex.morgan@prowess.example', displayName: 'Alex Morgan', email: 'alex.morgan@prowess.example', tenantId: 'prowess-dev', roles: ['AI_USER', 'AI_POWER_USER', 'AI_HR_USER', 'AI_MAIL_USER'] },
   { id: 'jordan.lee@prowess.example', displayName: 'Jordan Lee', email: 'jordan.lee@prowess.example', tenantId: 'prowess-dev', roles: ['AI_USER'] },
-  { id: 'sam.rivera@prowess.example', displayName: 'Sam Rivera', email: 'sam.rivera@prowess.example', tenantId: 'prowess-dev', roles: ['AI_USER', 'AI_POWER_USER', 'AI_ADMIN', 'AI_HR_USER'] },
+  { id: 'sam.rivera@prowess.example', displayName: 'Sam Rivera', email: 'sam.rivera@prowess.example', tenantId: 'prowess-dev', roles: ['AI_USER', 'AI_POWER_USER', 'AI_ADMIN', 'AI_HR_USER', 'AI_MAIL_USER'] },
   { id: 'casey.kim@prowess.example', displayName: 'Casey Kim', email: 'casey.kim@prowess.example', tenantId: 'prowess-dev', roles: ['AI_AUDITOR'] },
 ];
 

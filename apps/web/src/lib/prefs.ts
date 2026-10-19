@@ -2,6 +2,7 @@
 
 export type ThemePref = 'light' | 'dark' | 'system';
 export type SendKey = 'enter' | 'mod-enter';
+export type Locale = 'en' | 'ar';
 
 const read = (key: string) => {
   try {
@@ -28,6 +29,9 @@ export const prefs = {
     write('prowess-theme', theme === 'system' ? null : theme);
     document.documentElement.dataset.theme = theme;
   },
+  /** Interface language; read before paint by public/theme-init.js, which sets `lang` and `dir`. */
+  locale: (): Locale => (read('prowess-lang') === 'ar' ? 'ar' : 'en'),
+  setLocale: (v: Locale) => write('prowess-lang', v === 'en' ? null : v),
   sendKey: (): SendKey => (read('prowess-send-key') === 'mod-enter' ? 'mod-enter' : 'enter'),
   setSendKey: (v: SendKey) => write('prowess-send-key', v),
   sidebarCollapsed: () => read('prowess-sidebar') === 'collapsed',

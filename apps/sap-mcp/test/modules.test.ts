@@ -18,6 +18,8 @@ const cfg: McpConfig = {
   domains: new Set(BUSINESS_DOMAINS),
   sap: { mode: 'mock', destinationName: 'S4', systemId: 'S4-MOCK', allowTechnicalUser: false, mockLatencyMs: 0 },
   sf: { mode: 'mock', destinationName: 'SF_ODATA', systemId: 'SF-MOCK', userMapping: 'email' },
+  outlook: { mode: 'mock', systemId: 'M365-MOCK', timeZone: 'Arab Standard Time', allowedRecipientDomains: [] },
+  documentAi: { mode: 'mock', clientId: 'default' },
   toolTimeoutMs: 5_000,
   logLevel: 'error',
 };
@@ -81,6 +83,10 @@ describe('tool domains follow SAP modules', () => {
       'mm_releaseInvoicePaymentBlock',
       'mm_reverseGoodsReceipt',
       'mm_reverseSupplierInvoice',
+      'outlook_createDraft',
+      'outlook_reply',
+      'outlook_sendDraft',
+      'outlook_sendMail',
       'sd_cancelBillingDocument',
       'sd_createBillingDocument',
       'sd_createCreditMemoRequest',
@@ -92,6 +98,9 @@ describe('tool domains follow SAP modules', () => {
       'sd_setItemPrice',
       'sd_setItemWeight',
       'sd_updateSalesOrder',
+      'sf_approveRequest',
+      'sf_declineRequest',
+      'sf_requestTimeOff',
     ]);
   });
 

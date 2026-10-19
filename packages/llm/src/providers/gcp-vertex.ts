@@ -13,6 +13,7 @@ import {
   type LLMProvider,
   type LLMRequest,
   type LLMResponse,
+  type TokenUsage,
   type ToolSpec,
 } from '../types.js';
 
@@ -198,14 +199,14 @@ export class GcpVertexProvider implements LLMProvider {
     });
 
     let finish: FinishReason | undefined;
-    let usage = { inputTokens: 0, outputTokens: 0 };
+    let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
     let callIndex = 0;
     let sawToolCall = false;
 
     for await (const msg of parseSSE(readBody(res, this.id, this.policy.idleTimeoutMs, req.signal))) {
       const json = safeJsonObject(msg.data) as {
         candidates?: { content?: { parts?: Part[] }; finishReason?: string }[];
-        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
         error?: { message?: string };
       };
       if (json.error) throw new ProviderError(this.id, 'unavailable', `Upstream stream error: ${String(json.error.message).slice(0, 300)}`);
@@ -223,7 +224,12 @@ export class GcpVertexProvider implements LLMProvider {
       }
       finish = mapFinish(candidate?.finishReason) ?? finish;
       if (json.usageMetadata) {
-        usage = { inputTokens: json.usageMetadata.promptTokenCount ?? 0, outputTokens: json.usageMetadata.candidatesTokenCount ?? 0 };
+        const cached = json.usageMetadata.cachedContentTokenCount;
+        usage = {
+          inputTokens: json.usageMetadata.promptTokenCount ?? 0,
+          outputTokens: json.usageMetadata.candidatesTokenCount ?? 0,
+          ...(cached && { cachedInputTokens: cached }),
+        };
       }
     }
     yield { type: 'usage', usage };

@@ -32,6 +32,9 @@ modules:
       INCOMING_CONNECTION_TIMEOUT: 300000 # long-lived SSE responses
     requires:
       - name: prowess-xsuaa
+      # Fiori under /sap/ on the workspace's own address: the S4HANA destination, reached as the signed-in user.
+      - name: prowess-destination
+      - name: prowess-connectivity
       - name: prowess-orchestrator-api
         group: destinations
         properties:
@@ -97,6 +100,8 @@ modules:
       SAP_DESTINATION: S4HANA
       SAP_SYSTEM_ID: S4-${env}
       SAP_ALLOW_TECHNICAL_USER: false
+      # The launchpad as the approuter serves it; add ?sap-client=<client> when the system has no default client.
+      SAP_FIORI_LAUNCHPAD_URL: /sap/bc/ui2/flp
       MCP_DOMAINS: sd,credit,ar,ap,gl,mm,pm,shared
       NODE_ENV: production
     requires:

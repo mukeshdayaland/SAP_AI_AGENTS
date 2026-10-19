@@ -21,8 +21,11 @@ const shared = {
 
 const brand = process.argv.find((a) => a.startsWith('--brand='))?.slice('--brand='.length);
 
+// With mocked SAP the sap-mcp service also serves a mock Fiori page, which the web dev server forwards /sap/* to.
+const mockSap = (process.env.SAP_MODE ?? 'mock') === 'mock';
+
 const apps = [
-  { name: 'sap-mcp', color: 35, cmd: ['run', 'dev', '-w', '@prowess/sap-mcp'], env: { PORT: '4100', SAP_MODE: process.env.SAP_MODE ?? 'mock' } },
+  { name: 'sap-mcp', color: 35, cmd: ['run', 'dev', '-w', '@prowess/sap-mcp'], env: { PORT: '4100', SAP_MODE: process.env.SAP_MODE ?? 'mock', ...(mockSap && { SAP_FIORI_LAUNCHPAD_URL: process.env.SAP_FIORI_LAUNCHPAD_URL ?? '/sap/bc/ui2/flp' }) } },
   { name: 'orchestrator', color: 36, cmd: ['run', 'dev', '-w', '@prowess/orchestrator'], env: { PORT: '4000', AUTH_MODE: 'dev', SAP_MCP_URL: 'http://localhost:4100/mcp' } },
   { name: 'web', color: 33, cmd: ['run', 'dev', '-w', '@prowess/web'], env: { ORCHESTRATOR_URL: 'http://localhost:4000', ...(brand && { NEXT_PUBLIC_BRAND: brand }) } },
 ];

@@ -1,48 +1,34 @@
 'use client';
 
 import type { ActivityEntry, HelpCapability, HelpOverview, PublicError, WorkspaceConfig } from '@prowess/contracts';
-import { ArrowLeft, Coins, Package, Sparkles, Truck, Users, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, Coins, Mail, Package, Sparkles, Truck, Users, type LucideIcon } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ApiError } from '@/lib/api';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { isMessageKey, translateServer, useDocumentTitle, useT, type T } from '@/lib/i18n';
 import { Badge, EnvironmentBadge, ProwessMark, Spinner, cx, type Tone } from '../ui/primitives';
 import { brand } from '@/lib/brand';
 
-const TABS = ['Agents', 'Tools', 'My activity'] as const;
+const TABS = ['agents', 'tools', 'activity'] as const;
 type Tab = (typeof TABS)[number];
 
-const ICONS: Record<string, LucideIcon> = { coins: Coins, package: Package, truck: Truck, users: Users };
+const ICONS: Record<string, LucideIcon> = { coins: Coins, package: Package, truck: Truck, users: Users, mail: Mail };
 
-const KIND: Record<HelpCapability['risk'], { label: string; tone: Tone }> = {
-  READ: { label: 'Reads data', tone: 'success' },
-  LOW_RISK_WRITE: { label: 'Change · you confirm', tone: 'info' },
-  BUSINESS_WRITE: { label: 'Change · you confirm', tone: 'warning' },
-  HIGH_IMPACT: { label: 'Posting · you confirm', tone: 'critical' },
-};
+const KIND: Record<HelpCapability['risk'], Tone> = { READ: 'success', LOW_RISK_WRITE: 'info', BUSINESS_WRITE: 'warning', HIGH_IMPACT: 'critical' };
 
-const EVENT: Record<string, string> = {
-  SAP_READ: 'Read',
-  SAP_WRITE_REQUESTED: 'Change proposed',
-  SAP_WRITE_CONFIRMED: 'Change confirmed',
-  SAP_WRITE_CANCELLED: 'Change cancelled',
-  SAP_WRITE_COMPLETED: 'Change posted',
-  SAP_WRITE_FAILED: 'Change failed',
-  WORKFLOW_STARTED: 'Process started',
-  WORKFLOW_ENDED: 'Process ended',
-};
+const STATUS: Record<ActivityEntry['status'], Tone> = { success: 'success', pending: 'warning', denied: 'critical', failure: 'critical' };
 
-const STATUS: Record<ActivityEntry['status'], { label: string; tone: Tone }> = {
-  success: { label: 'Done', tone: 'success' },
-  pending: { label: 'Waiting', tone: 'warning' },
-  denied: { label: 'Denied', tone: 'critical' },
-  failure: { label: 'Failed', tone: 'critical' },
+/** An audit event type in the user's language; an unknown type is shown as recorded. */
+const eventLabel = (t: T, type: string) => {
+  const key = `help.event.${type}`;
+  return isMessageKey(key) ? t(key) : type;
 };
 
 function Table({ head, rows, empty }: { head: string[]; rows: ReactNode[][]; empty: string }) {
   return (
     <div className="overflow-x-auto rounded-area border border-line bg-surface">
-      <table className="w-full text-left text-[12px]">
+      <table className="w-full text-start text-[12px]">
         <thead className="bg-muted text-ink-2">
           <tr>
             {head.map((h) => (
@@ -77,10 +63,12 @@ function Table({ head, rows, empty }: { head: string[]; rows: ReactNode[][]; emp
 
 /** What the user's agents can do, and what the user has done in SAP through them. */
 export function HelpCenter() {
+  const t = useT();
+  useDocumentTitle('help.title');
   const [config, setConfig] = useState<WorkspaceConfig | null>(null);
   const [help, setHelp] = useState<HelpOverview | null>(null);
   const [error, setError] = useState<PublicError | null>(null);
-  const [tab, setTab] = useState<Tab>('Agents');
+  const [tab, setTab] = useState<Tab>('agents');
 
   useEffect(() => {
     Promise.all([api.workspace(), api.help()])
@@ -96,7 +84,7 @@ export function HelpCenter() {
     const byTitle = new Map<string, HelpCapability & { agents: string[] }>();
     for (const a of help?.agents ?? []) {
       for (const c of a.capabilities) {
-        const row = byTitle.get(c.title) ?? { ...c, agents: [] };
+        const row = byTitle.get(c.title) ?? { ...c, title: translateServer(c.title), agents: [] };
         row.agents.push(a.name);
         byTitle.set(c.title, row);
       }
@@ -104,7 +92,7 @@ export function HelpCenter() {
     return [...byTitle.values()].sort((x, y) => Number(x.needsConfirmation) - Number(y.needsConfirmation) || x.title.localeCompare(y.title));
   }, [help]);
 
-  if (error) return <p className="p-8 text-ink">{error.message}</p>;
+  if (error) return <p className="p-8 text-ink">{translateServer(error.message)}</p>;
   if (!config || !help) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -118,33 +106,33 @@ export function HelpCenter() {
       <header className="brand-bar sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
           <a href="/" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-ink-2 hover:bg-muted hover:text-ink">
-            <ArrowLeft size={15} aria-hidden /> Workspace
+            <ArrowLeft size={15} aria-hidden className="rtl:-scale-x-100" /> {t('common.workspace')}
           </a>
           <ProwessMark size={24} />
-          <h1 className="text-[14px] font-semibold text-ink">Help</h1>
-          <span className="ml-auto">
+          <h1 className="text-[14px] font-semibold text-ink">{t('help.title')}</h1>
+          <span className="ms-auto">
             <EnvironmentBadge env={config.environment} />
           </span>
         </div>
-        <nav aria-label="Help sections" className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-4" role="tablist">
-          {TABS.map((t) => (
+        <nav aria-label={t('help.sections')} className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-4" role="tablist">
+          {TABS.map((id) => (
             <button
-              key={t}
+              key={id}
               role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-              className={cx('whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium', tab === t ? 'border-brand text-ink' : 'border-transparent text-ink-3 hover:text-ink')}
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+              className={cx('whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium', tab === id ? 'border-brand text-ink' : 'border-transparent text-ink-3 hover:text-ink')}
             >
-              {t}
+              {t(`help.tab.${id}`)}
             </button>
           ))}
         </nav>
       </header>
 
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-6" role="tabpanel" aria-label={tab}>
-        {tab === 'Agents' && (
+      <main className="mx-auto max-w-5xl space-y-4 px-4 py-6" role="tabpanel" aria-label={t(`help.tab.${tab}`)}>
+        {tab === 'agents' && (
           <>
-            <p className="text-sm text-ink-2">Choose an agent in the workspace header. Each one works in its own SAP area and uses your SAP authorizations.</p>
+            <p className="text-sm text-ink-2">{t('help.agentsIntro')}</p>
             <ul className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {help.agents.map((a) => {
                 const Icon = ICONS[a.icon] ?? Sparkles;
@@ -160,20 +148,20 @@ export function HelpCenter() {
                     </div>
                     <p className="mt-3 text-[12px] text-ink-2">{a.description}</p>
                     <p className="mt-3 text-xs text-ink-3">
-                      {a.capabilities.length - changes.length} ways to read data · {changes.length} {changes.length === 1 ? 'change' : 'changes'} you confirm
+                      {t('help.reads', { count: a.capabilities.length - changes.length })} · {t('help.changes', { count: changes.length })}
                     </p>
                     {changes.length > 0 && (
                       <ul className="mt-2 flex flex-wrap gap-1.5">
                         {changes.map((c) => (
                           <li key={c.title}>
-                            <Badge tone={KIND[c.risk].tone}>{c.title}</Badge>
+                            <Badge tone={KIND[c.risk]}>{translateServer(c.title)}</Badge>
                           </li>
                         ))}
                       </ul>
                     )}
                     {examples.length > 0 && (
                       <div className="mt-4 border-t border-line pt-3">
-                        <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-3">Try asking</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-3">{t('help.tryAsking')}</h3>
                         <ul className="mt-1.5 space-y-1.5 text-[12px] text-ink">
                           {examples.map((s) => (
                             <li key={s.id}>“{s.prompt}”</li>
@@ -188,45 +176,45 @@ export function HelpCenter() {
           </>
         )}
 
-        {tab === 'Tools' && (
+        {tab === 'tools' && (
           <>
-            <p className="text-sm text-ink-2">Everything the agents can do in SAP for you. Nothing is changed in SAP until you confirm it, and SAP checks your authorization every time.</p>
+            <p className="text-sm text-ink-2">{t('help.toolsIntro')}</p>
             <Table
-              head={['Action', 'Agent', 'Type']}
-              empty="No tools are available right now."
-              rows={tools.map((t) => [
+              head={[t('help.col.action'), t('help.col.agent'), t('help.col.type')]}
+              empty={t('help.noTools')}
+              rows={tools.map((tool) => [
                 <div key="a">
-                  <strong className="font-semibold">{t.title}</strong>
-                  <p className="mt-0.5 text-xs text-ink-3">{t.description}</p>
+                  <strong className="font-semibold">{tool.title}</strong>
+                  <p className="mt-0.5 text-xs text-ink-3">{translateServer(tool.description)}</p>
                 </div>,
                 <span key="g" className="whitespace-nowrap">
-                  {t.agents.join(', ')}
+                  {tool.agents.join(', ')}
                 </span>,
-                <Badge key="k" tone={KIND[t.risk].tone} className="whitespace-nowrap">
-                  {KIND[t.risk].label}
+                <Badge key="k" tone={KIND[tool.risk]} className="whitespace-nowrap">
+                  {t(`help.kind.${tool.risk}`)}
                 </Badge>,
               ])}
             />
           </>
         )}
 
-        {tab === 'My activity' && (
+        {tab === 'activity' && (
           <>
-            <p className="text-sm text-ink-2">Your most recent SAP reads, changes and process runs through {brand.name}. Only you see this list; it covers recent activity and is not the permanent audit record.</p>
+            <p className="text-sm text-ink-2">{t('help.activityIntro', { name: brand.name })}</p>
             <Table
-              head={['Time', 'Event', 'Action', 'Object', 'Agent', 'System', 'Status']}
-              empty="You have no SAP activity yet."
+              head={[t('help.col.time'), t('help.col.event'), t('help.col.action'), t('help.col.object'), t('help.col.agent'), t('help.col.system'), t('help.col.status')]}
+              empty={t('help.noActivity')}
               rows={help.activity.map((e) => [
                 <span key="t" className="whitespace-nowrap">
                   {formatDateTime(e.timestamp)}
                 </span>,
-                EVENT[e.type] ?? e.type,
-                e.action ?? '—',
+                eventLabel(t, e.type),
+                e.action ? translateServer(e.action) : '—',
                 e.object ?? '—',
                 e.agent ?? '—',
                 e.system ?? '—',
-                <Badge key="s" tone={STATUS[e.status].tone}>
-                  {STATUS[e.status].label}
+                <Badge key="s" tone={STATUS[e.status]}>
+                  {t(`help.status.${e.status}`)}
                 </Badge>,
               ])}
             />

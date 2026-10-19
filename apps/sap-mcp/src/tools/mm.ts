@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { SapError } from '../sap/model.js';
 import type { PurchaseOrder } from '../sap/model.js';
 import { companyCode } from './line-items.js';
+import { checkIncomingInvoice, invoiceDate, invoiceReference } from './mm-invoice-check.js';
 import { defineTool, fmt, now, type ToolContext } from './types.js';
 
 export const poNumber = z.string().regex(/^\d{10}$/).describe('Purchase order number, e.g. 4500012345');
@@ -216,7 +218,7 @@ export const mmTools = [
     name: 'mm_createPurchaseRequisition',
     domain: 'mm',
     title: 'Create purchase requisition',
-    description: 'Create a purchase requisition for a material and plant (for example when stock is below the reorder point). Requires explicit user confirmation.',
+    description: 'Create a purchase requisition for a material and plant (for example when stock is below the reorder point).',
     risk: 'BUSINESS_WRITE',
     operation: 'SAP_WRITE',
     statusLabel: 'Creating purchase requisition',
@@ -245,7 +247,7 @@ export const mmTools = [
     domain: 'mm',
     title: 'Create purchase order',
     description:
-      'Create a standard purchase order with one item for a supplier (transaction ME21N). Leave the price empty to use the info record price. Consequential: always requires explicit user confirmation.',
+      'Create a standard purchase order with one item for a supplier (transaction ME21N). Leave the price empty to use the info record price.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Creating purchase order',
@@ -285,7 +287,7 @@ export const mmTools = [
     domain: 'mm',
     title: 'Post goods receipt',
     description:
-      'Post the goods receipt for all open quantities of a purchase order (transaction MIGO, movement type 101). Increases stock and posts to the GR/IR clearing account. Consequential: always requires explicit user confirmation.',
+      'Post the goods receipt for all open quantities of a purchase order (transaction MIGO, movement type 101). Increases stock and posts to the GR/IR clearing account.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Posting goods receipt',
@@ -320,28 +322,35 @@ export const mmTools = [
     domain: 'mm',
     title: 'Enter supplier invoice',
     description:
-      "Post a supplier's invoice against a purchase order (transaction MIRO). SAP performs the three-way match and blocks the invoice for payment if price or quantity deviate. Consequential: always requires explicit user confirmation.",
+      "Post a supplier's invoice against a purchase order (transaction MIRO). SAP performs the three-way match and blocks the invoice for payment if price or quantity deviate.",
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Posting supplier invoice',
     input: {
       purchaseOrder: poNumber,
-      reference: z.string().trim().min(1).max(16).describe("The supplier's own invoice number, e.g. VEN003"),
+      reference: invoiceReference,
       grossAmount: z.coerce.number().positive().describe('Gross amount on the invoice, including tax'),
       taxCode: z.string().regex(/^[A-Z0-9]{2}$/).optional().describe('Tax code, e.g. V1'),
+      invoiceDate: invoiceDate.optional().describe('Invoice date as printed on the invoice, YYYY-MM-DD; default today'),
     },
-    async preview({ purchaseOrder, reference, grossAmount }, ctx) {
-      const po = await ctx.gateway.getPurchaseOrder(ctx.sap, purchaseOrder);
+    async preview({ purchaseOrder, reference, grossAmount, invoiceDate }, ctx) {
+      // The same checks as mm_checkSupplierInvoice: a duplicate or an unreleased order never reaches the confirmation card.
+      const { po, checks } = await checkIncomingInvoice(ctx, { purchaseOrder, reference, grossAmount, ...(invoiceDate && { invoiceDate }) });
+      const stop = checks.filter((c) => c.status === 'STOP');
+      if (stop.length) throw new SapError('BUSINESS_RULE', stop.map((c) => c.message).join(' '));
+      const warnings = checks.filter((c) => c.status === 'WARN').map((c) => c.message);
       const gross = fmt({ amount: grossAmount, currency: po.value.currency });
       return {
         action: 'Enter supplier invoice',
         businessObject: { type: 'Purchase order', id: po.number },
-        proposedChange: `Post invoice ${reference} from ${po.vendorName} for ${gross} gross against an order value of ${fmt(po.value)} net.`,
-        impact: `A payable of ${gross} is posted to ${po.vendorName}. If the amount or quantity does not match the order and the goods received, SAP posts the invoice blocked for payment.`,
+        proposedChange: `Post invoice ${reference}${invoiceDate ? ` dated ${invoiceDate}` : ''} from ${po.vendorName} for ${gross} gross against an order value of ${fmt(po.value)} net.`,
+        impact:
+          `A payable of ${gross} is posted to ${po.vendorName}. If the amount or quantity does not match the order and the goods received, SAP posts the invoice blocked for payment.` +
+          (warnings.length ? ` Check first: ${warnings.join(' ')}` : ''),
       };
     },
-    async run({ purchaseOrder, reference, grossAmount, taxCode }, ctx) {
-      const inv = await ctx.gateway.createSupplierInvoice(ctx.sap, { purchaseOrder, reference, grossAmount, ...(taxCode && { taxCode }) });
+    async run({ purchaseOrder, reference, grossAmount, taxCode, invoiceDate }, ctx) {
+      const inv = await ctx.gateway.createSupplierInvoice(ctx.sap, { purchaseOrder, reference, grossAmount, ...(taxCode && { taxCode }), ...(invoiceDate && { invoiceDate }) });
       const findings = (inv.varianceChecks ?? []).filter((c) => !c.withinTolerance).map((c) => c.message);
       return {
         data: {

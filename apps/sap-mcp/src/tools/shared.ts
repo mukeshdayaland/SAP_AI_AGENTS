@@ -1,5 +1,15 @@
+import { describeChoices, type ToolChoices } from '@prowess/contracts';
 import { z } from 'zod';
+import { FIORI_GUIDES, fioriUrl } from '../sap/fiori-guides.js';
 import { defineTool, now } from './types.js';
+
+/** Each agent is offered the guides of its own area only (see ToolChoices). */
+const GUIDE_CHOICES: ToolChoices = {
+  param: 'guide',
+  intro:
+    'Open a Fiori app beside the conversation and walk the user through a task in it, under their own SAP authorizations: when SAP rejected an action, no tool can make the change, or the user asks how to do it in SAP. Guides:',
+  options: FIORI_GUIDES.map((g) => ({ value: g.id, domains: g.domains, text: `"${g.id}" (${g.app}) when ${g.when}` })),
+};
 
 export const sharedTools = [
   defineTool({
@@ -70,6 +80,46 @@ export const sharedTools = [
             ]
           : [],
         source: { system: ctx.gateway.systemId, objectType: 'Search', objectId: query, retrievedAt: now(), mock: ctx.gateway.mock },
+      };
+    },
+  }),
+
+  defineTool({
+    name: 'shared_showFioriGuide',
+    domain: 'shared',
+    title: 'Guide the user in SAP Fiori',
+    description: describeChoices(GUIDE_CHOICES, GUIDE_CHOICES.options),
+    choices: GUIDE_CHOICES,
+    risk: 'READ',
+    operation: 'NONE',
+    statusLabel: 'Preparing the Fiori guide',
+    input: {
+      guide: z.enum(FIORI_GUIDES.map((g) => g.id) as [string, ...string[]]),
+      objectId: z.string().trim().regex(/^[A-Za-z0-9-]{1,20}$/).optional().describe('Number of the business object, e.g. the sales order'),
+    },
+    async run({ guide: id, objectId }, ctx) {
+      const guide = FIORI_GUIDES.find((g) => g.id === id)!;
+      // Without a number the titles name the object only and the details ask for its number.
+      const fill = (s: string, unnamed: string) => s.replaceAll(' {id}', ` ${objectId ?? unnamed}`).replace(/ +$/, '');
+      const url = ctx.fiori && fioriUrl(guide, ctx.fiori, objectId);
+      const steps = guide.steps.map((s) => ({ title: fill(s.title, ''), ...(s.detail && { detail: fill(s.detail, 'its number') }) }));
+      return {
+        data: {
+          guide: guide.id,
+          app: guide.app,
+          steps: steps.map((s) => s.title),
+          opensFiori: Boolean(url),
+          agentCanAct: Boolean(url?.startsWith('/')),
+          summary: `Guide **${guide.title}** in the Fiori app ${guide.app}${objectId ? ` for ${objectId}` : ''}: ${steps.length} steps.`,
+          note: !url
+            ? 'No Fiori launchpad is connected here, so the user sees the steps without the app.'
+            : url.startsWith('/')
+              ? 'The app is open beside the conversation. Read the page with fiori_read, then show the user each step in the page with fiori_point, fiori_type and fiori_click.'
+              : 'The app is open beside the conversation, but on an address you cannot read or act in. The user follows the steps shown there; help from the step they name.',
+        },
+        components: [
+          { type: 'fiori_guide', data: { guide: guide.id, title: guide.title, app: guide.app, ...(objectId && { objectId }), ...(url && { url }), embed: Boolean(url) && ctx.fiori!.embed, steps } },
+        ],
       };
     },
   }),

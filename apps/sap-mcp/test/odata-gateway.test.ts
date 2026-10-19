@@ -387,6 +387,17 @@ describe('OData V2: finance analysis services', () => {
     document = '';
     await expect(gateway.postJournalEntry(ctx, entry)).rejects.toMatchObject({ code: 'BUSINESS_RULE', message: 'SAP did not post journal entry in company code 1030. Check the document in SAP for the reason.' });
   });
+
+  it('reports a write that timed out as having an unknown result, not as retryable', async () => {
+    const entry = { companyCode: '1030', currency: 'SAR', postingDate: '2026-10-02', lines: [{ glAccount: '200041', debitCredit: 'D' as const, amount: 750 }, { glAccount: '200040', debitCredit: 'C' as const, amount: 750 }] };
+    const timedOut = () => Object.assign(new Error('timeout of 20000ms exceeded'), { code: 'ECONNABORTED' });
+    sdk.reply = () => {
+      throw timedOut();
+    };
+    await expect(gateway.postJournalEntry(ctx, entry)).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', retryable: false, message: expect.stringMatching(/not known whether the change was made/) });
+    // A read that times out changed nothing, so it stays a temporary failure.
+    await expect(gateway.getGLBalance(ctx, '200041', '1030', '2026')).rejects.toMatchObject({ code: 'UNAVAILABLE', retryable: true });
+  });
 });
 
 describe('OData V2: purchase-to-pay postings', () => {

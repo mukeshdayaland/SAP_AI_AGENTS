@@ -8,17 +8,19 @@ import {
   type StreamEvent,
   type ToolExecutionMetadata,
   type UIComponent,
+  type UiLocale,
 } from '@prowess/contracts';
 import type { LLMMessage, ModelRouter, RoutedSelection, ToolCall, ToolSpec } from '@prowess/llm';
 import { currentContext, enrichContext, M, type Logger } from '@prowess/observability';
 import { detectInjectionMarkers, fenceUntrusted } from '@prowess/security';
 import type { AgentRegistry } from '../agents/registry.js';
 import type { AuditTrail } from '../audit/audit.js';
-import type { AuthContext } from '../auth/types.js';
+import { tokensOf, type AuthContext } from '../auth/types.js';
+import { BROWSER_TOOLS, FIORI_OPEN_TOOL, isBrowserTool, toBrowserAction, type BrowserBridge } from '../browser/browser-bridge.js';
 import type { AgentDefinition } from '../config/catalog.js';
 import type { OrchestratorConfig } from '../config/env.js';
 import { AppError, toAppError, toPublicError } from '../errors/app-error.js';
-import { buildContext, HANDOFF_TOOL, systemPrompt, updateSummary, withAttachments } from '../llm/context.js';
+import { buildContext, fitToolResults, HANDOFF_TOOL, systemPrompt, toolSpecForModel, toolSpecTokens, updateSummary, withAttachments } from '../llm/context.js';
 import type { McpGateway, McpSession, McpToolInfo } from '../mcp/gateway.js';
 import type { ConversationRecord, MessageRecord, Owner, Store } from '../persistence/types.js';
 import type { ToolPolicy } from '../security/tool-policy.js';
@@ -37,6 +39,7 @@ export interface ChatDeps {
   audit: AuditTrail;
   quota: QuotaService;
   workflows: WorkflowService;
+  browser: BrowserBridge;
   logger: Logger;
   config: OrchestratorConfig;
 }
@@ -53,6 +56,8 @@ export interface PreparedTurn {
   userTurn: string;
   assistantMessageId: string;
   correlationId: string;
+  /** The interface language; the model answers in it. */
+  locale: UiLocale;
 }
 
 export type Emit = (event: StreamEvent) => void;
@@ -68,9 +73,8 @@ function componentKey(c: UIComponent): string | undefined {
 function handoffSpec(others: Pick<AgentDefinition, 'id' | 'name' | 'description'>[]): ToolSpec {
   return {
     name: HANDOFF_TOOL,
-    description:
-      'Hand the request over to another agent when it belongs to that agent\'s area and you have no tool for it. The platform continues the request with that agent. Agents: ' +
-      others.map((o) => `"${o.id}" (${o.name}) — ${o.description}`).join(' '),
+    // The agents and their areas are listed in the system prompt; the enum names the ids.
+    description: "Hand the request over to another agent of this workspace when it belongs to that agent's area and you have no tool for it. The platform continues the request with that agent.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -81,6 +85,11 @@ function handoffSpec(others: Pick<AgentDefinition, 'id' | 'name' | 'description'
     },
   };
 }
+
+/** An earlier answer opened a Fiori app or worked in one, so the page may still be open beside the conversation. */
+const usedFiori = (m: MessageRecord) => m.response?.execution?.tools.some((t) => t.status === 'success' && (t.tool === FIORI_OPEN_TOOL || isBrowserTool(t.tool))) ?? false;
+
+const BROWSER_LABELS ={ read: 'Reading the Fiori page', point: 'Pointing in Fiori', type: 'Typing in Fiori', click: 'Clicking in Fiori' } as const;
 
 const MAX_FOLLOW_UPS = 4;
 /** A request is handed over at most once per answer, so agents cannot pass it back and forth. */
@@ -94,7 +103,7 @@ interface TurnState {
   confirmations: ConfirmationRequest[];
   tools: ToolExecutionMetadata[];
   toolContext: string[];
-  usage: { inputTokens: number; outputTokens: number };
+  usage: { inputTokens: number; outputTokens: number; cachedInputTokens: number };
   selection?: RoutedSelection;
 }
 
@@ -106,7 +115,7 @@ export class ChatService {
    * client must fix (authorization, quota, unknown IDs) *before* streaming
    * starts, so those surface as proper HTTP errors.
    */
-  async prepare(auth: AuthContext, req: ChatRequest): Promise<PreparedTurn> {
+  async prepare(auth: AuthContext, req: ChatRequest, locale: UiLocale = 'en'): Promise<PreparedTurn> {
     const { store, agents, quota, audit } = this.deps;
     const user = auth.user;
     const owner: Owner = { userId: user.id, tenantId: user.tenantId };
@@ -172,6 +181,7 @@ export class ChatService {
       userTurn: withAttachments(content, attachments.map((a) => ({ fileName: a.fileName, ...(a.extractedText && { text: a.extractedText }) }))),
       assistantMessageId: newId('m'),
       correlationId,
+      locale,
     };
   }
 
@@ -179,7 +189,7 @@ export class ChatService {
   async execute(turn: PreparedTurn, emit: Emit, signal: AbortSignal): Promise<void> {
     const { store, router, mcp, agents, workflows, config, logger } = this.deps;
     const started = Date.now();
-    const state: TurnState = { text: '', components: [], sources: [], followUps: [], confirmations: [], tools: [], toolContext: [], usage: { inputTokens: 0, outputTokens: 0 } };
+    const state: TurnState = { text: '', components: [], sources: [], followUps: [], confirmations: [], tools: [], toolContext: [], usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 } };
     let status: 'complete' | 'stopped' = 'complete';
     let session: McpSession | undefined;
 
@@ -211,21 +221,32 @@ export class ChatService {
       let handoffs = 0;
       let overflow: MessageRecord[] = [];
       turns: for (;;) {
-        const agentTools = agents.toolsFor(turn.agent, allTools);
-        const toolSpecs: ToolSpec[] = agentTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+        const agentTools = agents.toolsFor(turn.agent, allTools, turn.auth.user);
+        // Tool definitions are re-sent with every model call and are most of each request, so offer only what the agent can use now.
+        const toolSpecs: ToolSpec[] = agentTools.map(toolSpecForModel);
         // Workflow runs execute SAP tools, so the entry point is only offered while those are reachable.
         const workflowSpec = allTools.length ? workflows.toolSpec(turn.agent, turn.auth.user) : undefined;
         if (workflowSpec) toolSpecs.push(workflowSpec);
+        // An agent that can open a Fiori app can also read and act in the page the user then has open,
+        // once a page is open: opened earlier in the conversation, or in this turn (added below).
+        const canUseFiori = agentTools.some((t) => t.name === FIORI_OPEN_TOOL);
+        if (canUseFiori && turn.history.some(usedFiori)) toolSpecs.push(...BROWSER_TOOLS);
         const others = handoffs < MAX_HANDOFFS ? agents.forUser(turn.auth.user).filter((a) => a.id !== turn.agent.id) : [];
         if (others.length) toolSpecs.push(handoffSpec(others));
 
         const tier = router.tier(turn.tier)!;
+        const budget = (tools: readonly ToolSpec[] | undefined) => ({
+          maxContextTokens: tier.maxContextTokens,
+          reservedOutputTokens: tier.maxOutputTokens,
+          toolTokens: tools ? toolSpecTokens(tools) : 0,
+          ...(tier.maxHistoryTokens && { maxHistoryTokens: tier.maxHistoryTokens }),
+        });
         const context = buildContext({
-          system: systemPrompt(turn.agent, config.environment, turn.auth.user.displayName, new Date(), others),
+          system: systemPrompt(turn.agent, config.environment, turn.auth.user.displayName, new Date(), others, turn.locale),
           conversation: turn.conversation,
           history: turn.history,
           userTurn: turn.userTurn,
-          budget: { maxContextTokens: tier.maxContextTokens, reservedOutputTokens: tier.maxOutputTokens },
+          budget: budget(toolSpecs),
         });
         overflow = context.overflow;
         const messages: LLMMessage[] = context.messages;
@@ -237,12 +258,15 @@ export class ChatService {
           agent: turn.agent.id,
           environment: config.environment,
           correlationId: turn.correlationId,
-          ...(turn.auth.token && { userToken: turn.auth.token }),
+          ...tokensOf(turn.auth),
         });
 
-        const llmSignal = AbortSignal.any([signal, AbortSignal.timeout(config.llm.requestTimeoutMs)]);
         for (let round = 0; round <= config.llm.maxToolRounds; round++) {
+          // Per model call: a step in the Fiori pane may wait for the user, which must not use up the model's time.
+          const llmSignal = AbortSignal.any([signal, AbortSignal.timeout(config.llm.requestTimeoutMs)]);
           const offerTools = round < config.llm.maxToolRounds && toolSpecs.length ? toolSpecs : undefined;
+          const shortened = fitToolResults(messages, budget(offerTools));
+          if (shortened) logger.info('chat.tool_results_shortened', { count: shortened, round });
           const calls: ToolCall[] = [];
           let roundText = '';
           const stream = router.stream(
@@ -267,6 +291,7 @@ export class ChatService {
             } else if (chunk.type === 'usage') {
               state.usage.inputTokens += chunk.usage.inputTokens;
               state.usage.outputTokens += chunk.usage.outputTokens;
+              state.usage.cachedInputTokens += chunk.usage.cachedInputTokens ?? 0;
             }
           }
           if (round === 0 && !handoffs) emit({ type: 'status', step: { id: 'understand', label: 'Understanding request', state: 'done' } });
@@ -289,6 +314,9 @@ export class ChatService {
             if (signal.aborted) break;
             const result = await this.runToolCall(turn, call, agentTools, allTools, session, state, emit, signal);
             messages.push({ role: 'tool', toolCallId: call.id, name: call.name, content: result.content, ...(result.isError && { isError: true }) });
+          }
+          if (canUseFiori && !toolSpecs.some((t) => isBrowserTool(t.name)) && state.tools.some((t) => t.tool === FIORI_OPEN_TOOL && t.status === 'success')) {
+            toolSpecs.push(...BROWSER_TOOLS);
           }
           emit({ type: 'status', step: { id: `compose-${handoffs}-${round}`, label: 'Preparing response', state: 'running' } });
         }
@@ -399,6 +427,7 @@ export class ChatService {
     if (call.name === WORKFLOW_TOOL && this.deps.workflows.toolSpec(turn.agent, turn.auth.user)) return this.startWorkflow(turn, call, state, emit, signal);
     // A hand-off the orchestrator did not act on: the agent named is not available to this user.
     if (call.name === HANDOFF_TOOL) return { content: JSON.stringify({ error: 'That agent is not available to this user. Answer within your own area.' }), isError: true };
+    if (isBrowserTool(call.name) && agentTools.some((t) => t.name === FIORI_OPEN_TOOL)) return this.runBrowserAction(turn, call, state, emit, signal);
     const tool = agentTools.find((t) => t.name === call.name);
     const base = { ...turn.owner, agent: turn.agent.id, tool: call.name };
 
@@ -410,7 +439,7 @@ export class ChatService {
     }
 
     const risk = policy.effectiveRisk(tool.name, tool.risk);
-    const meta = { id: call.id, agent: turn.agent.id, tool: tool.name, system: tool.targetSystem, risk };
+    const meta = { id: call.id, agent: turn.agent.id, tool: tool.name, system: tool.targetSystem, risk, label: tool.statusLabel };
     emit({ type: 'tool.start', tool: meta, label: tool.statusLabel });
 
     if (policy.requiresConfirmation(risk, config.environment)) {
@@ -511,6 +540,26 @@ export class ChatService {
     return { content: fenceUntrusted('tool_result', payload) };
   }
 
+  /**
+   * Carries out one step in the Fiori pane of the user's browser and tells the model what the page shows afterwards.
+   * The page is the user's own SAP session: what it contains reaches the model as untrusted data, like a tool result.
+   */
+  private async runBrowserAction(turn: PreparedTurn, call: ToolCall, state: TurnState, emit: Emit, signal: AbortSignal): Promise<{ content: string; isError?: boolean }> {
+    const action = toBrowserAction(call.name, call.arguments as Record<string, unknown>);
+    if (!action) return { content: JSON.stringify({ error: 'Name the element with the ref that fiori_read returned.' }), isError: true };
+    const meta = { id: call.id, agent: turn.agent.id, tool: call.name, system: 'Fiori', risk: 'READ' as const, label: BROWSER_LABELS[action.kind] };
+    emit({ type: 'tool.start', tool: meta, label: BROWSER_LABELS[action.kind] });
+    const started = Date.now();
+    const result = await this.deps.browser.request(turn.owner, action, (a) => emit({ type: 'browser.action', action: a }), signal);
+    const durationMs = Date.now() - started;
+    const m: ToolExecutionMetadata = { ...meta, durationMs, status: result.ok ? 'success' : 'error', correlationId: turn.correlationId, mock: false };
+    state.tools.push(m);
+    this.deps.audit.record({ type: 'BROWSER_ACTION', ...turn.owner, agent: turn.agent.id, tool: call.name, status: result.ok ? 'success' : 'failure', durationMs, details: { conversationId: turn.conversation.id } });
+    emit(result.ok ? { type: 'tool.complete', tool: m } : { type: 'tool.error', tool: m, message: result.message ?? 'The step was not carried out.' });
+    const summary = result.ok ? (action.kind === 'read' ? `Read the Fiori page "${result.page?.title ?? ''}".` : 'Done in the Fiori page.') : (result.message ?? 'The step was not carried out.');
+    return { content: fenceUntrusted('tool_result', JSON.stringify({ ok: result.ok, summary, ...(result.page && { page: result.page }) })), ...(!result.ok && { isError: true }) };
+  }
+
   /** Starts a workflow run from the chat turn; its cards and first confirmation stream into this answer. */
   private async startWorkflow(turn: PreparedTurn, call: ToolCall, state: TurnState, emit: Emit, signal: AbortSignal): Promise<{ content: string; isError?: boolean }> {
     const { workflows } = this.deps;
@@ -591,6 +640,7 @@ export class ChatService {
         modelTier: turn.tier,
         inputTokens: state.usage.inputTokens,
         outputTokens: state.usage.outputTokens,
+        cachedInputTokens: state.usage.cachedInputTokens,
         durationMs: Date.now() - started,
         day: today(),
         at: new Date().toISOString(),
@@ -600,7 +650,7 @@ export class ChatService {
         ...turn.owner,
         agent: turn.agent.id,
         status: 'success',
-        details: { provider: state.selection.provider, model: state.selection.model, tier: turn.tier, inputTokens: state.usage.inputTokens, outputTokens: state.usage.outputTokens },
+        details: { provider: state.selection.provider, model: state.selection.model, tier: turn.tier, inputTokens: state.usage.inputTokens, outputTokens: state.usage.outputTokens, cachedInputTokens: state.usage.cachedInputTokens },
       });
     } catch (err) {
       this.deps.logger.error('usage.record_failed', { error: err as Error });

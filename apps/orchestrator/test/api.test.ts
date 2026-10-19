@@ -43,6 +43,22 @@ describe('workspace configuration', () => {
     expect((power.json.modelTiers as { id: string; technical?: unknown }[]).find((t) => t.id === 'advanced')?.technical).toBeDefined();
     expect((power.json.starters as unknown[]).length).toBeGreaterThan(0);
   });
+
+  it('answers configuration text in the language the browser asks for, and keeps the SAP module names', async () => {
+    type Workspace = { agents: { id: string; name: string; description: string }[]; starters: { id: string; label: string; prompt: string }[]; modelTiers: { id: string; label: string }[] };
+    const en = (await stack.request('GET', '/api/v1/workspace', USERS.alex)).json as unknown as Workspace;
+    const ar = (await stack.request('GET', '/api/v1/workspace', USERS.alex, undefined, { 'accept-language': 'ar-SA,ar;q=0.9,en;q=0.5' })).json as unknown as Workspace;
+    const invoice = (w: Workspace) => w.starters.find((s) => s.id === 'invoice')!;
+    expect(invoice(en).label).toBe('Analyze an invoice');
+    expect(invoice(ar).label).toBe('تحليل فاتورة');
+    expect(invoice(ar).prompt).toBe('لماذا الفاتورة 5100012345 موقوفة؟');
+    expect(invoice(en).prompt).toBe('Why is invoice 5100012345 blocked?');
+    expect(ar.agents.find((a) => a.id === 'fico')).toMatchObject({ name: 'FICO', description: expect.stringMatching(/[؀-ۿ]/) });
+    expect(ar.modelTiers.find((t) => t.id === 'standard')?.label).toBe('قياسي');
+    // An unsupported language falls back to English.
+    const fr = (await stack.request('GET', '/api/v1/workspace', USERS.alex, undefined, { 'accept-language': 'fr-FR' })).json as unknown as Workspace;
+    expect(invoice(fr).label).toBe('Analyze an invoice');
+  });
 });
 
 describe('Invoice analysis vertical slice', () => {
@@ -240,9 +256,57 @@ describe('file uploads', () => {
 describe('agents by SAP area', () => {
   it('offers the SuccessFactors agent only to HR users', async () => {
     const agents = async (user: string) => ((await stack.request('GET', '/api/v1/workspace', user)).json.agents as { id: string }[]).map((a) => a.id);
-    expect(await agents(USERS.alex)).toEqual(['fico', 'mm', 'sd', 'hcm']);
+    expect(await agents(USERS.alex)).toEqual(['fico', 'mm', 'sd', 'hcm', 'outlook', 'invoices']);
     expect(await agents(USERS.jordan)).not.toContain('hcm');
     expect((await stack.chat(USERS.jordan, { message: 'Who are my direct reports?', agent: 'hcm' })).status).toBe(403);
+  });
+
+  it('offers the Outlook agent only to mail users', async () => {
+    const agents = async (user: string) => ((await stack.request('GET', '/api/v1/workspace', user)).json.agents as { id: string }[]).map((a) => a.id);
+    expect(await agents(USERS.jordan)).not.toContain('outlook');
+    expect(await agents(USERS.jordan)).not.toContain('invoices');
+    expect((await stack.chat(USERS.jordan, { message: 'Summarize my unread mail.', agent: 'outlook' })).status).toBe(403);
+  });
+
+  it('reads mail and the calendar with the Outlook agent, and sends only after confirmation', async () => {
+    const unread = await stack.chat(USERS.alex, { message: 'Summarize my unread mail.', agent: 'outlook' });
+    expect(ofType(unread.events, 'tool.start')[0]!.tool.tool).toBe('outlook_listMessages');
+    expect(ofType(unread.events, 'component')[0]!.component).toMatchObject({ type: 'mail_list', data: { title: 'Unread mail' } });
+    expect(ofType(unread.events, 'source')[0]!.source).toMatchObject({ system: 'M365-MOCK', mock: true });
+
+    const calendar = await stack.chat(USERS.alex, { message: 'What is on my calendar today?', agent: 'outlook' });
+    expect(ofType(calendar.events, 'component')[0]!.component).toMatchObject({ type: 'calendar' });
+
+    const { events } = await stack.chat(USERS.alex, { message: 'Send an e-mail to mei.tanaka@prowess.example with subject "Quarterly zebra report" saying "Please check the report."', agent: 'outlook' });
+    const confirmation = ofType(events, 'confirmation.required')[0]!.confirmation;
+    expect(confirmation).toMatchObject({ action: 'Send an e-mail', risk: 'BUSINESS_WRITE', status: 'pending' });
+    const sentBefore = await stack.chat(USERS.alex, { message: 'Show e-mails about zebra', agent: 'outlook' });
+    expect(ofType(sentBefore.events, 'component')).toHaveLength(0);
+
+    const confirmed = await stack.request('POST', `/api/v1/actions/${confirmation.id}/confirm`, USERS.alex, {});
+    expect((confirmed.json.confirmation as { status: string }).status).toBe('completed');
+    const sentAfter = await stack.chat(USERS.alex, { message: 'Show e-mails about zebra', agent: 'outlook' });
+    expect(ofType(sentAfter.events, 'component')[0]!.component).toMatchObject({ type: 'mail_list', data: { items: [{ subject: 'Quarterly zebra report' }] } });
+  });
+
+  it('takes a supplier invoice from the mail to a posted SAP invoice, posting only after confirmation', async () => {
+    const intake = await stack.chat(USERS.alex, { message: 'Find the supplier invoices in my inbox, check each against its purchase order and post the ones that match.', agent: 'invoices' });
+    expect(ofType(intake.events, 'tool.start').map((e) => e.tool.tool)).toEqual(['outlook_searchMail', 'outlook_getMessage', 'outlook_readAttachment', 'mm_checkSupplierInvoice']);
+    const check = ofType(intake.events, 'component').at(-1)!.component;
+    expect(check).toMatchObject({ type: 'business_object_table', data: { title: 'Invoice GIS-2026-0815 against PO 4500012410' } });
+    expect((check.data as unknown as { rows: { result: string }[] }).rows.every((r) => r.result === 'OK')).toBe(true);
+    expect(ofType(intake.events, 'confirmation.required')).toHaveLength(0);
+
+    const post = await stack.chat(USERS.alex, { message: 'Post invoice GIS-2026-0815 for 190400 against purchase order 4500012410, dated 2026-10-14.', agent: 'invoices' });
+    const confirmation = ofType(post.events, 'confirmation.required')[0]!.confirmation;
+    expect(confirmation).toMatchObject({ action: 'Enter supplier invoice', risk: 'HIGH_IMPACT', status: 'pending' });
+    const confirmed = await stack.request('POST', `/api/v1/actions/${confirmation.id}/confirm`, USERS.alex, {});
+    expect((confirmed.json.confirmation as { status: string }).status).toBe('completed');
+    expect((confirmed.json.message as { content: string }).content).toMatch(/Gulf Industrial Supplies.*open for payment/);
+
+    // The same invoice again is stopped before a confirmation card is offered.
+    const again = await stack.chat(USERS.alex, { message: 'Post invoice GIS-2026-0815 for 190400 against purchase order 4500012410.', agent: 'invoices' });
+    expect(ofType(again.events, 'confirmation.required')).toHaveLength(0);
   });
 
   it('reads the team from SuccessFactors with the HCM agent', async () => {
@@ -255,6 +319,58 @@ describe('agents by SAP area', () => {
 
     const profile = await stack.chat(USERS.alex, { message: 'Show employee 100102.', agent: 'hcm' });
     expect(ofType(profile.events, 'component')[0]!.component).toMatchObject({ type: 'employee', data: { userId: '100102', displayName: 'Jordan Lee', managerName: 'Alex Morgan' } });
+  });
+
+  it('shows the team, time off and approvals as cards, and decides a request only after confirmation', async () => {
+    const types = async (message: string) => ofType((await stack.chat(USERS.alex, { message, agent: 'hcm' })).events, 'component').map((c) => c.component.type);
+    expect(await types('Show my team overview.')).toEqual(['team_overview']);
+    expect(await types('Show my time off.')).toEqual(['time_off']);
+    expect(await types('Show the reporting line of employee 100102.')).toEqual(['reporting_line']);
+    expect(await types('What is waiting for my approval?')).toEqual(['approvals']);
+
+    const { events } = await stack.chat(USERS.alex, { message: 'Approve request 4001.', agent: 'hcm' });
+    const confirmation = ofType(events, 'confirmation.required')[0]!.confirmation;
+    expect(confirmation).toMatchObject({ action: 'Approve request', risk: 'BUSINESS_WRITE', status: 'pending' });
+    // Not decided yet: the request is still waiting.
+    expect(ofType((await stack.chat(USERS.alex, { message: 'What is waiting for my approval?', agent: 'hcm' })).events, 'component')[0]!.component).toMatchObject({ data: { items: [{ id: '4001' }, { id: '4002' }] } });
+
+    const confirmed = await stack.request('POST', `/api/v1/actions/${confirmation.id}/confirm`, USERS.alex, {});
+    expect((confirmed.json.confirmation as { status: string }).status).toBe('completed');
+    expect((confirmed.json.message as { content: string }).content).toMatch(/Approved: Annual leave of Jordan Lee/);
+    expect(ofType((await stack.chat(USERS.alex, { message: 'What is waiting for my approval?', agent: 'hcm' })).events, 'component')[0]!.component).toMatchObject({ data: { items: [{ id: '4002' }] } });
+  });
+
+  it('runs SuccessFactors business cases for power users', async () => {
+    const list = await stack.chat(USERS.alex, { message: 'List the business cases for Recruiting.', agent: 'hcm' });
+    expect(ofType(list.events, 'tool.start')[0]!.tool.tool).toBe('sf_listBusinessCases');
+    expect(ofType(list.events, 'component')[0]!.component).toMatchObject({ type: 'business_object_table', data: { title: 'Business cases · Recruiting' } });
+
+    const run = await stack.chat(USERS.alex, { message: 'Run case ec-04 for 100102', agent: 'hcm' });
+    expect(ofType(run.events, 'tool.start')[0]!.tool.tool).toBe('sf_runBusinessCase');
+    const table = ofType(run.events, 'component')[0]!.component;
+    expect(table).toMatchObject({ type: 'business_object_table', data: { title: 'Recurring pay components · 1 record(s)' } });
+    expect(JSON.stringify(run.events)).not.toContain('SA00');
+
+    // The tools are part of what a power user's HCM agent can do, and carry the role they ask for.
+    const tools = await stack.services.mcp.listTools('DEV');
+    expect(tools.filter((t) => t.requiredRole === 'AI_POWER_USER').map((t) => t.name).sort()).toEqual(['sf_describeEntity', 'sf_listBusinessCases', 'sf_runBusinessCase']);
+    const hcm = stack.services.agents.resolve({ id: 'x', displayName: 'X', tenantId: 't', roles: ['AI_USER', 'AI_HR_USER'] }, 'hcm');
+    const offered = (roles: ('AI_USER' | 'AI_HR_USER' | 'AI_POWER_USER')[]) => stack.services.agents.toolsFor(hcm, tools, { id: 'x', displayName: 'X', tenantId: 't', roles }).map((t) => t.name);
+    expect(offered(['AI_USER', 'AI_HR_USER'])).not.toContain('sf_runBusinessCase');
+    expect(offered(['AI_USER', 'AI_HR_USER'])).toContain('sf_getMyProfile');
+    expect(offered(['AI_USER', 'AI_HR_USER', 'AI_POWER_USER'])).toContain('sf_runBusinessCase');
+  });
+
+  it('creates a leave request in SuccessFactors only after the user confirms it', async () => {
+    const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    const [from, to] = [day(60), day(61)];
+    const { events } = await stack.chat(USERS.alex, { message: `Request annual leave from ${from} to ${to}.`, agent: 'hcm' });
+    const confirmation = ofType(events, 'confirmation.required')[0]!.confirmation;
+    expect(confirmation).toMatchObject({ action: 'Request time off', risk: 'BUSINESS_WRITE', status: 'pending' });
+
+    const confirmed = await stack.request('POST', `/api/v1/actions/${confirmation.id}/confirm`, USERS.alex, {});
+    expect((confirmed.json.confirmation as { status: string }).status).toBe('completed');
+    expect((confirmed.json.message as { content: string }).content).toMatch(new RegExp(`Annual leave from ${from} to ${to} was requested`));
   });
 
   it('lets SuccessFactors permissions deny what the HCM agent may otherwise read', async () => {

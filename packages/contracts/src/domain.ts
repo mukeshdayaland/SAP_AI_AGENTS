@@ -10,10 +10,18 @@ import type { UIComponent, WorkflowRunComponent } from './components.js';
  * They NEVER grant SAP business authorization — S/4HANA evaluates its own
  * authorizations for every call made on the user's behalf.
  */
-export const APP_ROLES = ['AI_USER', 'AI_POWER_USER', 'AI_ADMIN', 'AI_AUDITOR', 'AI_HR_USER'] as const;
+export const APP_ROLES = ['AI_USER', 'AI_POWER_USER', 'AI_ADMIN', 'AI_AUDITOR', 'AI_HR_USER', 'AI_MAIL_USER'] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
 export const ENVIRONMENTS = ['DEV', 'QA', 'PROD'] as const;
+/** Interface languages. The browser sends its choice as Accept-Language; configuration text is answered in it. */
+export const UI_LOCALES = ['en', 'ar'] as const;
+export type UiLocale = (typeof UI_LOCALES)[number];
+/** The interface language named first in an Accept-Language header; English when none is supported. */
+export const uiLocale = (acceptLanguage: string | undefined): UiLocale => {
+  const tag = acceptLanguage?.split(',')[0]?.split(';')[0]?.trim().toLowerCase().split('-')[0];
+  return UI_LOCALES.find((l) => l === tag) ?? 'en';
+};
 export type DeploymentEnvironment = (typeof ENVIRONMENTS)[number];
 
 export interface UserProfile {
@@ -48,7 +56,26 @@ export const MCP_META = {
   targetSystem: 'prowess/targetSystem',
   operation: 'prowess/operation',
   statusLabel: 'prowess/statusLabel',
+  /** The application role a user must hold to be offered the tool. */
+  requiredRole: 'prowess/requiredRole',
+  /** {@link ToolChoices} of an argument whose options only some agents need. */
+  choices: 'prowess/choices',
 } as const;
+
+/**
+ * The options of one enum argument, each tagged with the tool domains it belongs to. An agent
+ * is offered only the options of the domains it covers in full (`ar_*`), and the description
+ * lists only those, so no agent pays tokens for options of another area.
+ */
+export interface ToolChoices {
+  param: string;
+  /** The description up to the list of options. */
+  intro: string;
+  options: { value: string; domains: string[]; text: string }[];
+}
+
+/** The tool description for these options. */
+export const describeChoices = (choices: Pick<ToolChoices, 'intro'>, options: ToolChoices['options']) => `${choices.intro} ${options.map((o) => o.text).join('; ')}.`;
 
 /* ------------------------------------------------------------------ */
 /* Agent response contract                                             */
@@ -91,6 +118,8 @@ export interface ToolExecutionMetadata {
   status: 'success' | 'error' | 'denied' | 'pending_confirmation';
   correlationId: string;
   mock: boolean;
+  /** What the step was shown as while it ran ("Retrieving invoice"), so a reloaded answer shows the same words. */
+  label?: string;
 }
 
 export interface ExecutionMetadata {
@@ -351,6 +380,29 @@ export interface VendorLocation {
   lat: number;
   lng: number;
   precision: LocationPrecision;
+}
+
+/** An employee placed at their work location. `address` is the job title and the location as SuccessFactors names it. */
+export interface EmployeeLocation {
+  id: string;
+  name: string;
+  address: string;
+  /** The work location, for filtering. */
+  location: string;
+  lat: number;
+  lng: number;
+  precision: LocationPrecision;
+}
+
+export interface EmployeeMap {
+  employees: EmployeeLocation[];
+  /** Employees read from SuccessFactors, including those that could not be placed. */
+  total: number;
+  /** Employees left off the map because their work location is missing or could not be resolved. */
+  excluded: number;
+  system: string;
+  mock: boolean;
+  maps?: { apiKey: string; mapId: string };
 }
 
 export interface VendorMap {

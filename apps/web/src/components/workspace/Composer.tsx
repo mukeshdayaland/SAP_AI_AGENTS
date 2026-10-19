@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import type { SendKey } from '@/lib/prefs';
 import { Spinner, cx } from '../ui/primitives';
 import { brand } from '@/lib/brand';
+import { translateServer, useT } from '@/lib/i18n';
 
 export interface ComposerHandle {
   focus(): void;
@@ -25,6 +26,7 @@ interface Props {
 }
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ streaming, attachmentsEnabled, accept, sendKey, agentLabel, onSend, onStop }, ref) {
+  const t = useT();
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<AttachmentRef[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -79,7 +81,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
         const ref = await api.upload(file);
         setAttachments((a) => [...a, ref]);
       } catch (err) {
-        setError((err as ApiError).error?.message ?? 'Upload failed.');
+        setError((err as ApiError).error?.message ? translateServer((err as ApiError).error.message) : t('composer.uploadFailed'));
       } finally {
         setUploading((n) => n - 1);
       }
@@ -91,25 +93,25 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
     <div className="mx-auto w-full max-w-[76rem]">
       <div className="rounded-area border border-line-strong bg-elevated shadow-lift transition-colors focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/15">
         {(attachments.length > 0 || uploading > 0) && (
-          <ul className="flex flex-wrap gap-2 px-3 pt-3" aria-label="Attachments">
+          <ul className="flex flex-wrap gap-2 px-3 pt-3" aria-label={t('composer.attachments')}>
             {attachments.map((a) => (
-              <li key={a.id} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-muted py-1 pl-2 pr-1 text-xs text-ink">
+              <li key={a.id} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-muted py-1 ps-2 pe-1 text-xs text-ink">
                 <FileText size={13} aria-hidden className="text-brand" />
                 <span className="max-w-48 truncate">{a.fileName}</span>
-                <button type="button" aria-label={`Remove ${a.fileName}`} onClick={() => setAttachments((x) => x.filter((y) => y.id !== a.id))} className="rounded p-0.5 text-ink-3 hover:bg-surface hover:text-ink">
+                <button type="button" aria-label={t('composer.remove', { name: a.fileName })} onClick={() => setAttachments((x) => x.filter((y) => y.id !== a.id))} className="rounded p-0.5 text-ink-3 hover:bg-surface hover:text-ink">
                   <X size={12} />
                 </button>
               </li>
             ))}
             {uploading > 0 && (
               <li className="inline-flex items-center gap-2 px-2 text-xs text-ink-3">
-                <Spinner /> Uploading and scanning…
+                <Spinner /> {t('composer.uploading')}
               </li>
             )}
           </ul>
         )}
         <label htmlFor="prowess-prompt" className="sr-only">
-          Message {agentLabel}
+          {t('composer.label', { agent: agentLabel })}
         </label>
         <textarea
           id="prowess-prompt"
@@ -121,7 +123,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
             resize();
           }}
           onKeyDown={onKeyDown}
-          placeholder={`Ask ${brand.name}…`}
+          placeholder={t('composer.placeholder', { name: brand.name })}
+          dir="auto"
           aria-describedby="prowess-prompt-hint"
           className="focus-bare block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-[14px] leading-relaxed text-ink placeholder:text-ink-3"
         />
@@ -136,17 +139,17 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
                   disabled={attachments.length >= 5}
                   className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] text-ink-3 hover:bg-muted hover:text-ink disabled:opacity-40"
                 >
-                  <Paperclip size={15} aria-hidden /> Attach
+                  <Paperclip size={15} aria-hidden /> {t('composer.attach')}
                 </button>
               </>
             )}
           </div>
           <div className="flex items-center gap-2">
             <span id="prowess-prompt-hint" className="hidden text-[10px] text-ink-3 sm:inline">
-              {sendKey === 'enter' ? 'Enter to send · Shift + Enter for new line' : 'Ctrl/⌘ + Enter to send'}
+              {t(sendKey === 'enter' ? 'composer.hintEnter' : 'composer.hintMod')}
             </span>
             {streaming ? (
-              <button type="button" onClick={onStop} aria-label="Stop generating" className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-on-brand transition-colors hover:bg-brand-hover">
+              <button type="button" onClick={onStop} aria-label={t('composer.stop')} className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-on-brand transition-colors hover:bg-brand-hover">
                 <Square size={14} fill="currentColor" />
               </button>
             ) : (
@@ -154,7 +157,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
                 type="button"
                 onClick={submit}
                 disabled={!canSend}
-                aria-label="Send message"
+                aria-label={t('composer.send')}
                 className={cx('flex h-9 w-9 items-center justify-center rounded-lg transition-colors', canSend ? 'bg-brand text-on-brand hover:bg-brand-hover' : 'bg-muted text-ink-3')}
               >
                 <ArrowUp size={18} />
@@ -168,7 +171,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ st
           {error}
         </p>
       )}
-      <p className="mt-2 text-center text-[10px] text-ink-3">AI can make mistakes. SAP remains the system of record — verify important figures.</p>
+      <p className="mt-2 text-center text-[10px] text-ink-3">{t('composer.disclaimer')}</p>
     </div>
   );
 });

@@ -4,7 +4,9 @@
  *  1. assembles infrastructure/approuter/dist (package.json, xs-app.json and
  *     the static Next.js export under resources/),
  *  2. computes SHA-256 hashes of every inline <script> Next emitted and pins
- *     them in the Content-Security-Policy — no 'unsafe-inline' for scripts.
+ *     them in the Content-Security-Policy — no 'unsafe-inline' for scripts,
+ *  3. with FIORI_ORIGIN set, allows that origin as a frame so the Fiori guides
+ *     can show the app inside the workspace.
  */
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -21,6 +23,7 @@ if (!existsSync(out)) throw new Error('apps/web/out not found — run `npm run b
 rmSync(dist, { recursive: true, force: true });
 cpSync(out, resources, { recursive: true });
 cpSync(join(approuter, 'package.json'), join(dist, 'package.json'));
+cpSync(join(approuter, 'start.mjs'), join(dist, 'start.mjs'));
 cpSync(join(approuter, 'resources-static'), resources, { recursive: true });
 
 const hashes = new Set();
@@ -42,5 +45,10 @@ const xsAppPath = join(approuter, 'xs-app.json');
 const xsApp = JSON.parse(readFileSync(xsAppPath, 'utf8'));
 const csp = xsApp.responseHeaders.find((h) => h.name === 'Content-Security-Policy');
 csp.value = csp.value.replace("script-src 'self'", `script-src 'self' ${[...hashes].join(' ')}`.trim());
+const fiori = process.env.FIORI_ORIGIN?.trim();
+if (fiori) {
+  if (!/^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(fiori)) throw new Error('FIORI_ORIGIN must be an https origin, e.g. https://s4.example.com:44300');
+  csp.value = csp.value.replace('frame-ancestors', `frame-src ${fiori}; frame-ancestors`);
+}
 writeFileSync(join(dist, 'xs-app.json'), `${JSON.stringify(xsApp, null, 2)}\n`);
 console.log(`approuter resources prepared (${hashes.size} inline script hashes pinned in CSP)`);

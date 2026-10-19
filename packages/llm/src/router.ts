@@ -25,8 +25,12 @@ export interface ModelTier {
   privateOnly?: boolean;
   maxOutputTokens: number;
   maxContextTokens: number;
+  /** Recent turns sent verbatim with each call; older turns are summarized. Defaults to what fits the window. */
+  maxHistoryTokens?: number;
   temperature?: number;
   targets: ModelTarget[];
+  /** Label and description in other interface languages, keyed by language code (e.g. "ar"). */
+  i18n?: Record<string, { label?: string; description?: string }>;
 }
 
 export interface ModelCatalog {

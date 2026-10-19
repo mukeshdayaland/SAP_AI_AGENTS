@@ -202,6 +202,17 @@ const MAX_ASSETS = 20;
 
 const num = (v: unknown) => (typeof v === 'number' ? v : Number.parseFloat(String(v ?? '0')) || 0);
 
+/** Whether the request gave up waiting for an answer (a client timeout), as opposed to being refused. */
+export function isTimeout(err: unknown): boolean {
+  let e: unknown = err;
+  for (let i = 0; i < 6 && e; i++) {
+    const { code, message } = e as { code?: unknown; message?: unknown };
+    if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || (typeof message === 'string' && /\btimeout\b.*\bexceeded\b/i.test(message))) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export function statusOf(err: unknown): number | undefined {
   let e: unknown = err;
   for (let i = 0; i < 6 && e; i++) {
@@ -319,6 +330,8 @@ export class ODataSapGateway implements SapGateway {
       // A rejected posting is a business outcome the user must be able to act on, so SAP's reason is passed on.
       if (status === 400 && method !== 'get' && sapMessage) throw new SapError('BUSINESS_RULE', `SAP rejected ${what}: ${sapMessage}`);
       if (status === 400) throw new SapError('INVALID_INPUT', `SAP rejected the request for ${what}.`);
+      // SAP may still have made a change it did not answer for in time, so the user must check before trying again.
+      if (method !== 'get' && isTimeout(err)) throw new SapError('OUTCOME_UNKNOWN', `SAP did not answer in time for ${what}, so it is not known whether the change was made.`);
       throw new SapError('UNAVAILABLE', `SAP is not reachable right now (${what}).`, true);
     } finally {
       M.sapDuration().observe({ system: this.systemId, method }, Date.now() - started);

@@ -143,7 +143,19 @@ SuccessFactors token and caches it, so the service stores no tokens.
 | --- | --- |
 | profile, search, direct reports, reporting line | `User` (expanded with `manager`) |
 | job history | `EmpJob` (`fromDate=1900-01-01`, `toDate=9999-12-31`) |
+| time off balances | `TimeAccount` for the employee's open accounts, then `EmpTimeAccountBalance` once per account type (SuccessFactors requires `userId` and `timeAccountType` in the filter) |
+| absences, who is out today | `EmployeeTime` (`startDate`, `endDate`, `quantityInDays`, `approvalStatus`) |
+| open positions of a team | `EmpJob` for the manager's position, then `Position` (`parentPosition/code`, `vacant eq true`) |
+| time types | `TimeType` |
+| leave request | `POST /upsert` of an `EmployeeTime` record (`externalCode`, `userId`, `timeType`, `startDate`, `endDate`, `comment`); a refusal in the per-record status of the 200 answer is passed on |
+| pending approvals | `MyPendingWorkflow`, merged with the approval items of the user's to-do list (`TodoEntryV2`, which holds forwarded and delegated requests) |
+| approve / decline | function imports `approveWfRequest` / `rejectWfRequest` (POST, `wfRequestId`, `comment`) |
 | `sf_queryEntity` | whatever the entity allow-list names |
+
+`EmpTimeAccountBalance`, `Position` and `MyPendingWorkflow` are read without `$select`, because their properties
+differ between tenants and releases; the gateway maps the names it knows and logs the property names of the first
+record once (`sf.entity_shape`), so the mapping can be checked from the logs. The team overview leaves out a figure
+when its entity is missing or the user may not read it, instead of failing.
 
 ### Entity allow-list
 
@@ -159,6 +171,138 @@ SuccessFactors token and caches it, so the service stores no tokens.
 
 Entity and field names follow the standard data model. **Validate them against the tenant's `$metadata`** before
 going live; `scripts/validate_allowlist.py` of the `SAP_SF_MCP_V4` repository checks a list against tenant metadata.
+
+## Fiori pane
+
+Some things an agent cannot do through a tool: SAP rejected the action for a reason that has to be fixed in the
+document, or no released API covers the change. For these the agent opens the Fiori app in a browser pane beside the
+conversation (`shared_showFioriGuide`) and works in the page with the user:
+
+| Agent tool | What it does in the page |
+|---|---|
+| `fiori_read` | Reads the fields with their values, the buttons, and the messages SAP shows. Password fields are never read |
+| `fiori_point` | Moves the agent's cursor to an element and shows a note beside it. Changes nothing |
+| `fiori_type` | Enters a value into a field. Nothing is saved by typing |
+| `fiori_click` | Clicks a button, tab or link. A click that may save, post, release or delete waits until the user allows it in the pane |
+
+The steps are shown in the browser only, next to the element they concern; the conversation keeps a one-line note.
+"Take over" stops the agent and leaves the page to the user.
+
+How it works: the `fiori_*` tools are not SAP calls. The orchestrator sends the action down the chat stream
+(`browser.action`), the pane carries it out in the page the user has open, and posts the result to
+`POST /api/v1/browser/results`. SAP sees the user's own session, so SAP authorizations apply exactly as when the user
+clicks. Every action is written to the audit trail (`BROWSER_ACTION`). What the page contains reaches the model as
+untrusted data, like any tool result. Results are matched in memory, so the orchestrator must run as one instance, or
+with sticky sessions, for this feature.
+
+The agent can only do this when Fiori is served **on the workspace's own address**; a browser does not let one site
+read or click inside another. The approuter does that: `xs-app.json` forwards `/sap/*` to the `S4HANA_2023_PP` destination as
+the signed-in user, and `start.mjs` gives those pages their own Content-Security-Policy (`frame-ancestors 'self'`)
+instead of the workspace's.
+
+| Setting | Where | Meaning |
+|---|---|---|
+| `SAP_FIORI_LAUNCHPAD_URL` | sap-mcp | `/sap/bc/ui2/flp` (add `?sap-client=<client>` if needed): Fiori through the approuter, the agent can act. An `https://` address: Fiori on its own host, the pane shows the guide's steps and the agent cannot see the page. Empty: steps only |
+| `SAP_FIORI_EMBED` | sap-mcp | `false` opens Fiori in a new window instead of the pane |
+| `SAP_FIORI_INTENTS_JSON` | sap-mcp | `{ "<guide id>": "SemanticObject-action" }` for apps this system assigns to another intent |
+| `FIORI_ORIGIN` | front end | Only for an `https://` launchpad: its origin, allowed as a frame in the Content-Security-Policy |
+
+What the SAP side needs for `/sap/*` through the approuter:
+
+- The `S4HANA_2023_PP` destination must sign the user in without a prompt (principal propagation through the Cloud
+  Connector, or OAuth2SAMLBearerAssertion), as it already does for the OData calls.
+- The launchpad service (`/sap/bc/ui2/flp`) and the apps' services must be reachable through that destination; with
+  the Cloud Connector, expose the `/sap/` path with all sub-paths.
+
+Things to know before relying on it:
+
+- Serving Fiori on the workspace's address puts both in one browser origin. A script-injection flaw in a Fiori page
+  could then call the workspace's API as the user. This is the price of letting the agent act in the page.
+- The apps the agent opens come from a fixed catalogue (`apps/sap-mcp/src/sap/fiori-guides.ts`); the model chooses
+  an entry and names the document, it cannot supply an address. **Validate the intents against the system** (app
+  finder, or the target mappings in `/UI2/FLPD_CUST`): they are those of the SAP standard content.
+- Pages are read through their HTML: labels, roles and values. This suits Fiori elements and freestyle UI5 apps.
+  Classic transactions shown as SAP GUI for HTML are read too, but their labels are poorer and they need Enter to
+  confirm an entry, which the agent does not press.
+- Local development: with `SAP_MODE=mock` the sap-mcp service serves a mock Fiori page at `/sap/bc/ui2/flp` and the
+  web dev server forwards `/sap/*` to it, so the whole flow runs without SAP.
+- The Cloudflare Pages front end cannot reach S/4HANA itself. With `FIORI_URL` set it forwards `/sap/*` to the approuter
+  with the user's token (`x-approuter-authorization`), and the approuter forwards to S/4HANA as above.
+
+## Identity
+
+- Every call runs **as the end user**, so SuccessFactors role-based permissions decide what comes back. There is no
+  technical-user mode: a call without a user token is refused.
+- `SF_USER_MAPPING` says how the login is matched to a SuccessFactors user: `email` (default) and `username` look
+  the user up once in `User` and remember the user id for ten minutes; `userId` takes the login name as the user id.
+  No match, or more than one, is an error. The gateway does not guess.
+
+### Entities used
+
+| Tool(s) | Entity |
+| --- | --- |
+| profile, search, direct reports, reporting line | `User` (expanded with `manager`) |
+| job history | `EmpJob` (`fromDate=1900-01-01`, `toDate=9999-12-31`) |
+| time off balances | `TimeAccount` for the employee's open accounts, then `EmpTimeAccountBalance` once per account type (SuccessFactors requires `userId` and `timeAccountType` in the filter) |
+| absences, who is out today | `EmployeeTime` (`startDate`, `endDate`, `quantityInDays`, `approvalStatus`) |
+| open positions of a team | `EmpJob` for the manager's position, then `Position` (`parentPosition/code`, `vacant eq true`) |
+| time types | `TimeType` |
+| leave request | `POST /upsert` of an `EmployeeTime` record (`externalCode`, `userId`, `timeType`, `startDate`, `endDate`, `comment`); a refusal in the per-record status of the 200 answer is passed on |
+| pending approvals | `MyPendingWorkflow`, merged with the approval items of the user's to-do list (`TodoEntryV2`, which holds forwarded and delegated requests) |
+| approve / decline | function imports `approveWfRequest` / `rejectWfRequest` (POST, `wfRequestId`, `comment`) |
+| `sf_queryEntity` | whatever the entity allow-list names |
+
+`EmpTimeAccountBalance`, `Position` and `MyPendingWorkflow` are read without `$select`, because their properties
+differ between tenants and releases; the gateway maps the names it knows and logs the property names of the first
+record once (`sf.entity_shape`), so the mapping can be checked from the logs. The team overview leaves out a figure
+when its entity is missing or the user may not read it, instead of failing.
+
+### Entity allow-list
+
+`sf_queryEntity` reads only the entities and fields on the allow-list (`apps/sap-mcp/src/sf/policy.ts`): `User`,
+`EmpJob`, `EmpEmployment`, `Position` and the foundation objects `FOCompany`, `FODepartment`, `FODivision`,
+`FOLocation`, `FOJobCode`. Personal data and compensation entities are left out on purpose.
+
+- Fields listed under `sensitiveFields` come back as `[REDACTED]` and cannot be used to filter or sort.
+- A query without a filter returns at most 50 records; with a filter at most 200.
+- `SF_ENTITY_ALLOWLIST_JSON` replaces the bundled list: `{ "<Entity>": { "operations": ["read"], "fields": [...],
+  "sensitiveFields": [...], "keyFields": [...] } }`. Invalid JSON, a wildcard entry or an entry without `fields`
+  fails startup, so a bad change cannot widen access.
+
+Entity and field names follow the standard data model. **Validate them against the tenant's `$metadata`** before
+going live; `scripts/validate_allowlist.py` of the `SAP_SF_MCP_V4` repository checks a list against tenant metadata.
+
+## Fiori guides
+
+Some things an agent cannot do through a tool: SAP rejected the action for a reason the user has to fix in the
+document, or no released API covers the change. For these the agent calls `shared_showFioriGuide`. The user gets a
+card with the steps and opens the Fiori app in the workspace's built-in browser, next to the conversation. The user
+does the work in SAP under their own sign-in and authorizations; the workspace cannot read or drive the app. "I'm
+stuck" sends the step to the agent, and "Done, check the result" asks it to read the document again.
+
+The guides are a fixed catalogue in `apps/sap-mcp/src/sap/fiori-guides.ts`: the app, its launchpad intent and the
+steps. The model only chooses a guide and names the business object; it cannot supply an address or steps.
+
+| Setting | Where | Meaning |
+|---|---|---|
+| `SAP_FIORI_LAUNCHPAD_URL` | sap-mcp | Launchpad address, https only, e.g. `https://s4.example.com:44300/sap/bc/ui2/flp?sap-client=100`. Without it the guides show their steps only |
+| `SAP_FIORI_EMBED` | sap-mcp | `true` (default) shows the app inside the workspace; `false` opens it in a new window |
+| `SAP_FIORI_INTENTS_JSON` | sap-mcp | `{ "<guide id>": "SemanticObject-action" }` for apps this system assigns to another intent |
+| `FIORI_ORIGIN` | front end | Origin of the launchpad, e.g. `https://s4.example.com:44300`. Added to the Content-Security-Policy as the only allowed frame. Cloudflare Pages: a project variable. Approuter: set it when running `npm run build:cf` |
+
+To show the app inside the workspace, S/4HANA must allow it:
+
+- Clickjacking protection: add the workspace's origin to the HTTP allowlist (transaction `UCONCOCKPIT`, scenario
+  *Clickjacking Framing Protection*). Otherwise the frame stays blank.
+- Sign-in: the browser must accept the SAP session cookie inside a frame. With single sign-on through the same
+  identity provider this works without a prompt; browsers that block third-party cookies need the launchpad on the
+  same site as the workspace, or `SAP_FIORI_EMBED=false`.
+
+The pane always offers "open in a new window", which needs none of this.
+
+**Validate the intents against the system** before going live (launchpad app finder, or the target mappings in
+`/UI2/FLPD_CUST`): they are those of the SAP standard content and were not checked against a tenant.
+
 ## Identity
 
 - User token present → the SDK exchanges it and S/4HANA executes **as the user**, so SAP authorizations apply.

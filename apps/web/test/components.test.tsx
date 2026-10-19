@@ -5,6 +5,9 @@ import Markdown from '@/components/chat/Markdown';
 import { SapComponent } from '@/components/sap/cards';
 import { ConfirmationCard } from '@/components/chat/ConfirmationCard';
 import { groupConversations, safeHref } from '@/lib/format';
+import { translate, translateServer } from '@/lib/i18n';
+import { ar } from '@/lib/messages/ar';
+import { en } from '@/lib/messages/en';
 
 describe('Markdown rendering of untrusted model output', () => {
   const html = renderToStaticMarkup(
@@ -187,6 +190,42 @@ describe('format helpers', () => {
     const now = new Date('2026-09-29T12:00:00');
     const at = (d: string) => ({ id: d, title: d, agent: 'fico', createdAt: d, updatedAt: d });
     const groups = groupConversations([at('2026-09-29T09:00:00'), at('2026-09-28T09:00:00'), at('2026-09-25T09:00:00'), at('2026-08-01T09:00:00')], now);
-    expect(groups.map((g) => g.label)).toEqual(['Today', 'Yesterday', 'Previous 7 Days', 'Older']);
+    expect(groups.map((g) => g.id)).toEqual(['today', 'yesterday', 'week', 'older']);
+  });
+});
+
+describe('clicks the agent may make in a Fiori page', () => {
+  it('asks the user first for anything that may save, post or delete, and for a button without a name', async () => {
+    const { needsConsent } = await import('@/components/sap/fiori-page');
+    for (const label of ['Save', 'Post Goods Issue', 'Release Invoice', 'Delete', 'OK', '']) expect(needsConsent('button', label), label).toBe(true);
+    for (const label of ['Go', 'Edit', 'Incompletion Log', 'Display Messages']) expect(needsConsent('button', label), label).toBe(false);
+    // Moving between tabs changes nothing.
+    expect(needsConsent('tab', 'Save options')).toBe(false);
+  });
+});
+
+describe('interface languages', () => {
+  it('has every English text in Arabic, with the same placeholders', () => {
+    const holes = (v: unknown) => JSON.stringify(v).match(/\{\w+\}/g)?.filter((h) => h !== '{count}').sort() ?? [];
+    for (const key of Object.keys(en) as (keyof typeof en)[]) {
+      expect(ar[key], key).toBeDefined();
+      expect(new Set(holes(ar[key])), key).toEqual(new Set(holes(en[key])));
+    }
+  });
+
+  it('picks the Arabic plural form for the count', () => {
+    expect(translate('ar', 'workspace.earlier', { count: 1 })).toBe('عرض رسالة سابقة واحدة');
+    expect(translate('ar', 'workspace.earlier', { count: 2 })).toBe('عرض رسالتين سابقتين');
+    expect(translate('ar', 'workspace.earlier', { count: 5 })).toBe('عرض 5 رسائل سابقة');
+    expect(translate('ar', 'workspace.earlier', { count: 12 })).toBe('عرض 12 رسالة سابقة');
+    expect(translate('en', 'workspace.earlier', { count: 1 })).toBe('Show 1 earlier message');
+  });
+
+  it('translates text the backend sends in English, and leaves unknown text as sent', () => {
+    expect(translateServer('Retrieving invoice', 'ar')).toBe('جلب الفاتورة');
+    expect(translateServer('Already done in SAP.', 'ar')).toBe('تم مسبقًا في SAP.');
+    expect(translateServer('FICO handed this over to MM', 'ar')).toBe('أحال FICO هذا الطلب إلى MM');
+    expect(translateServer('Vendor 100023 is on hold', 'ar')).toBe('Vendor 100023 is on hold');
+    expect(translateServer('Retrieving invoice', 'en')).toBe('Retrieving invoice');
   });
 });

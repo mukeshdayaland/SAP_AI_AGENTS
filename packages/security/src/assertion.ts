@@ -28,6 +28,8 @@ export interface PrincipalAssertion {
   aud: string;
   /** SHA-256 of the forwarded end-user token, binding it to this principal. */
   utk?: string;
+  /** SHA-256 of the forwarded Identity Authentication (IAS) token, binding it to this principal. */
+  itk?: string;
   iat: number;
   exp: number;
 }
@@ -125,6 +127,8 @@ export const HEADERS = {
   confirmation: 'x-prowess-confirmation',
   /** End-user XSUAA token, forwarded for SAP principal propagation. */
   userToken: 'x-prowess-user-token',
+  /** End-user Identity Authentication token, set by the edge BFF; exchanged for Microsoft Graph tokens by the outlook domain. */
+  iasToken: 'x-prowess-ias-token',
 } as const;
 
 export const MCP_AUDIENCE = 'prowess-sap-mcp';
