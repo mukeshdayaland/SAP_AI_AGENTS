@@ -80,7 +80,9 @@ export async function checkIncomingInvoice(ctx: ToolContext, inv: IncomingInvoic
     add('Duplicate', 'WARN', `The order already has ${invoices.length} invoice(s) for ${money(invoiced)} gross (${invoices.map((i) => i.number).join(', ')}). Make sure this is not the same invoice under another number.`);
   } else add('Duplicate', 'OK', `No invoice is posted for the order yet.`);
 
-  const receivedNet = receipts.reduce((s, g) => s + (g.value?.amount ?? 0), 0);
+  // The value received at the order price, as the invoice is posted; a receipt's own value is used when it is in the order currency.
+  const orderPrice = (item: string) => po.items.find((i) => Number(i.item) === Number(item))?.netPrice.amount ?? 0;
+  const receivedNet = Math.round(receipts.reduce((s, g) => s + (g.value && g.value.currency === currency ? g.value.amount : g.quantity * orderPrice(g.item)), 0) * 100) / 100;
   if (!receipts.length) add('Goods receipt', 'WARN', `No goods have been received for the order. SAP will post the invoice blocked for payment until they are.`);
   else
     add(

@@ -497,6 +497,36 @@ describe('OData V2: purchase-to-pay postings', () => {
     expect(sdk.sent.some((s) => s.request.params?.$expand === 'to_SuplrInvcItemPurOrdRef')).toBe(true);
   });
 
+  it('gives the terms of payment of the order, else of the supplier, else the configured ones (M8 169)', async () => {
+    const reply = (order: unknown, supplierTerms: string) => (r: SentRequest) => {
+      if (r.method === 'post') return { d: { SupplierInvoice: '5105600004', FiscalYear: '2026' } };
+      if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [{ ...receipt('5000000011', '10', '3'), TotalGoodsMvtAmtInCCCrcy: '3000.00', CompanyCodeCurrency: 'SAR' }] } };
+      if (r.url.includes('A_PurchaseOrder')) return order;
+      if (r.url.includes('A_SupplierCompany')) return { d: { PaymentTerms: supplierTerms } };
+      if (r.url.includes('A_SupplierInvoice')) return { d: { SupplierInvoice: '5105600004', FiscalYear: '2026', CompanyCode: '1030', InvoicingParty: '7002200010', InvoiceGrossAmount: '3360.00', DocumentCurrency: 'SAR' } };
+      return { d: { Supplier: '7002200010', SupplierName: 'AL-QASSIM' } };
+    };
+    const terms = () => (posted().request.data as { PaymentTerms?: string }).PaymentTerms;
+    const invoice = { purchaseOrder: '4200000403', reference: 'VEN004', grossAmount: 3360 };
+
+    sdk.reply = reply({ d: { ...purchaseOrder.d, PaymentTerms: '0002' } }, '0004');
+    await gateway.createSupplierInvoice(ctx, invoice);
+    expect(terms()).toBe('0002');
+
+    sdk.sent.length = 0;
+    sdk.reply = reply(purchaseOrder, '0004');
+    await gateway.createSupplierInvoice(ctx, invoice);
+    expect(sdk.sent.find((s) => s.request.url.includes('A_SupplierCompany'))!.request.url).toBe("/sap/opu/odata/sap/API_BUSINESS_PARTNER/A_SupplierCompany(Supplier='7002200010',CompanyCode='1030')");
+    expect(terms()).toBe('0004');
+
+    sdk.sent.length = 0;
+    sdk.reply = reply(purchaseOrder, '');
+    const configured = new ODataSapGateway({ destinationName: 'S4HANA', systemId: 'S4-DEV', allowTechnicalUser: false, logger: createLogger({ service: 't', level: 'error', sink: () => {} }), defaultPaymentTerms: '0001' });
+    await configured.createSupplierInvoice(ctx, invoice);
+    expect(terms()).toBe('0001');
+    expect(await configured.getGoodsReceipts(ctx, '4200000403')).toEqual([expect.objectContaining({ value: { amount: 3000, currency: 'SAR' } })]);
+  });
+
   it('refuses an invoice before any goods receipt', async () => {
     sdk.reply = (r) => {
       if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [] } };

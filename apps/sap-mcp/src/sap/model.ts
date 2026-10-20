@@ -75,6 +75,8 @@ export interface PurchaseOrder {
   createdOn: string;
   purchasingGroup?: string;
   companyCode: string;
+  /** Terms of payment key of the order, e.g. 0001. */
+  paymentTerms?: string;
   items: PurchaseOrderItem[];
 }
 

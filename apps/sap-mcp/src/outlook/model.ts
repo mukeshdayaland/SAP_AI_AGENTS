@@ -63,6 +63,8 @@ export interface MailListQuery {
 }
 
 export interface MailSearch {
+  /** Only this folder; all mail when absent. */
+  folder?: MailFolder;
   /** Words to look for in subject and body. */
   text?: string;
   /** Sender address or name. */

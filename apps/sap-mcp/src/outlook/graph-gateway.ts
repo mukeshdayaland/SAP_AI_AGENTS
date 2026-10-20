@@ -242,7 +242,8 @@ export class GraphMailGateway implements MailGateway {
 
   async searchMessages(ctx: SapCallContext, s: MailSearch): Promise<MailSummary[]> {
     // Graph does not combine $search with $orderby; search results come back by relevance, so they are sorted here.
-    const d = (await this.send(ctx, 'Your messages', 'get', '/v1.0/me/messages', { params: { $select: SUMMARY_SELECT, $top: String(s.top), $search: `"${kql(s)}"` } })) as { value?: GraphEntity[] };
+    const path = s.folder ? `/v1.0/me/mailFolders/${s.folder}/messages` : '/v1.0/me/messages';
+    const d = (await this.send(ctx, 'Your messages', 'get', path, { params: { $select: SUMMARY_SELECT, $top: String(s.top), $search: `"${kql(s)}"` } })) as { value?: GraphEntity[] };
     return (d.value ?? []).map(toSummary).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
   }
 

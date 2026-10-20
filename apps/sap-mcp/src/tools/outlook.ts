@@ -178,12 +178,13 @@ export const outlookTools = [
       from: z.string().trim().min(2).max(120).optional().describe("Sender's e-mail address or name"),
       since: isoDate.optional().describe('Received on or after, YYYY-MM-DD'),
       until: isoDate.optional().describe('Received on or before, YYYY-MM-DD'),
+      folder: z.enum(MAIL_FOLDERS).optional().describe('Only inbox, sentitems or drafts; default all mail. Use inbox for mail received, so copies the user sent are left out'),
       top: z.number().int().min(1).max(MAX_LIST).optional().describe(`How many messages, at most ${MAX_LIST}; default 10`),
     },
-    async run({ text, from, since, until, top = 10 }, ctx) {
+    async run({ text, from, since, until, folder, top = 10 }, ctx) {
       if (!text && !from && !since && !until) throw new SapError('INVALID_INPUT', 'Say what to search for: words, a sender or dates.');
       if (since && until && until < since) throw new SapError('INVALID_INPUT', 'The end date is before the start date.');
-      const items = await ctx.outlook.gateway.searchMessages(ctx.sap, { ...(text && { text }), ...(from && { from }), ...(since && { since }), ...(until && { until }), top });
+      const items = await ctx.outlook.gateway.searchMessages(ctx.sap, { ...(folder && { folder }), ...(text && { text }), ...(from && { from }), ...(since && { since }), ...(until && { until }), top });
       const what = [text && `"${text}"`, from && `from ${from}`, since && `since ${since}`, until && `until ${until}`].filter(Boolean).join(' ');
       return {
         data: { messages: facts(items), notice: UNTRUSTED_NOTE, summary: items.length ? `${items.length} message(s) match ${what}.` : `No message matches ${what}.` },

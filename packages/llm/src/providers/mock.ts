@@ -125,7 +125,7 @@ const INTENTS: Intent[] = [
     pattern: /\binvoice\s+([A-Z0-9./-]{1,16})\s+for\s+(?:[A-Z]{3}\s*)?(\d[\d,]*(?:\.\d{1,2})?)\s+against purchase order\s+(4[1-5]\d{8})\b/i,
     args: (m, t) => ({ purchaseOrder: m[3], reference: m[1], grossAmount: Number(m[2]!.replaceAll(',', '')), ...(/\bdated (\d{4}-\d{2}-\d{2})\b/.exec(t) && { invoiceDate: /\bdated (\d{4}-\d{2}-\d{2})\b/.exec(t)![1] }) }),
   },
-  { tool: 'searchMail', when: /\b(mail|inbox|e-?mails?)\b/i, pattern: /\b(?:supplier |vendor )?invoices?\b/i, args: () => ({ text: 'invoice' }) },
+  { tool: 'searchMail', when: /\b(mail|inbox|e-?mails?)\b/i, pattern: /\b(?:supplier |vendor )?invoices?\b/i, args: () => ({ text: 'invoice', folder: 'inbox' }) },
   { tool: 'getGoodsReceipt', when: /\bgoods receipt|GR\b/i, pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrder: m[1] }) },
   { tool: 'getPurchaseOrder', pattern: /\b(4[25]\d{8})\b/, args: (m) => ({ purchaseOrderNumber: m[1] }) },
   {

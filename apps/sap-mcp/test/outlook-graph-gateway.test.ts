@@ -83,6 +83,9 @@ describe('Graph mail gateway', () => {
     withGraph(() => ({ status: 200, body: { value: [] } }));
     await gateway().searchMessages(ctx(), { text: 'invoice "5100012345"', from: 'nadia@supplier.example', since: '2026-10-01', top: 10 });
     expect(graphCalls()[0]!.url.searchParams.get('$search')).toBe('"invoice  5100012345 from:nadia@supplier.example received>=2026-10-01"');
+    expect(graphCalls()[0]!.url.pathname).toBe('/v1.0/me/messages');
+    await gateway().searchMessages(ctx(), { text: 'invoice', folder: 'inbox', top: 10 });
+    expect(graphCalls()[1]!.url.pathname).toBe('/v1.0/me/mailFolders/inbox/messages');
   });
 
   it('asks Graph for a plain-text body and leaves inline attachments out', async () => {

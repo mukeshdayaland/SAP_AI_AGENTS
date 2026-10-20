@@ -81,6 +81,8 @@ export interface ODataGatewayConfig {
   /** Allows calls without an end-user token (technical user). Off by default. */
   allowTechnicalUser: boolean;
   logger: Logger;
+  /** Terms of payment for a supplier invoice when neither the order nor the supplier's company code data has any. */
+  defaultPaymentTerms?: string;
 }
 
 const SERVICES = {
@@ -487,6 +489,7 @@ export class ODataSapGateway implements SapGateway {
       createdOn: odataDate(e.CreationDate) ?? '',
       ...(e.PurchasingGroup ? { purchasingGroup: String(e.PurchasingGroup) } : {}),
       companyCode: String(e.CompanyCode ?? ''),
+      ...(str(e.PaymentTerms) && { paymentTerms: str(e.PaymentTerms) }),
       items,
     };
   }
@@ -523,7 +526,21 @@ export class ODataSapGateway implements SapGateway {
       postingDate: odataDate(i.PostingDate) ?? '',
       quantity: num(i.QuantityInEntryUnit),
       unit: String(i.EntryUnit ?? ''),
+      // The value of the movement in company code currency, where the service returns it.
+      ...(num(i.TotalGoodsMvtAmtInCCCrcy) > 0 && { value: { amount: num(i.TotalGoodsMvtAmtInCCCrcy), currency: str(i.CompanyCodeCurrency) } }),
     }));
+  }
+
+  /** Terms of payment of the supplier in a company code, if maintained. */
+  private async supplierPaymentTerms(ctx: SapCallContext, supplier: string, companyCode: string): Promise<string | undefined> {
+    try {
+      const e = (await this.request(ctx, `Supplier ${supplier} in company code ${companyCode}`, 'get', `${SERVICES.bp}/A_SupplierCompany(Supplier=${lit(supplier)},CompanyCode=${lit(companyCode)})`, {
+        $select: 'PaymentTerms',
+      })) as ODataEntity;
+      return str(e.PaymentTerms) || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async getEquipment(ctx: SapCallContext, number: string): Promise<Equipment> {
@@ -997,6 +1014,8 @@ export class ODataSapGateway implements SapGateway {
       .map((i) => ({ ...i, received: received.filter((g) => g.item === i.item).reduce((sum, g) => sum + g.quantity, 0) }))
       .filter((i) => i.received > 0);
     if (!items.length) throw new SapError('BUSINESS_RULE', `No goods receipt has been posted for purchase order ${invoice.purchaseOrder}, so there is nothing to invoice.`);
+    // MIRO takes the terms of payment from the order; without them (M8 169) the supplier's or the configured ones are given.
+    const paymentTerms = po.paymentTerms ?? (await this.supplierPaymentTerms(ctx, po.vendorId, po.companyCode)) ?? this.cfg.defaultPaymentTerms;
 
     const created = (await this.request(ctx, `Supplier invoice for purchase order ${invoice.purchaseOrder}`, 'post', `${SERVICES.invoice}/A_SupplierInvoice`, undefined, {
       body: {
@@ -1007,6 +1026,7 @@ export class ODataSapGateway implements SapGateway {
         DocumentCurrency: currency,
         InvoiceGrossAmount: String(invoice.grossAmount),
         SupplierInvoiceIDByInvcgParty: invoice.reference,
+        ...(paymentTerms && { PaymentTerms: paymentTerms }),
         TaxIsCalculatedAutomatically: true,
         to_SuplrInvcItemPurOrdRef: {
           results: items.map((i, index) => ({

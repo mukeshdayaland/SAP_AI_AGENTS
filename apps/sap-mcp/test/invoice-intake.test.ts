@@ -96,6 +96,18 @@ describe('mm_checkSupplierInvoice', () => {
   });
 });
 
+describe('goods receipts without a value', () => {
+  it('values them at the order price, as the invoice is posted', async () => {
+    const ctx = context();
+    const gateway = ctx.gateway as MockSapGateway;
+    const original = gateway.getGoodsReceipts.bind(gateway);
+    gateway.getGoodsReceipts = async (sap, po) => (await original(sap, po)).map(({ value: _value, ...g }) => g);
+    const r = await run(ctx, 'mm_checkSupplierInvoice', GULF);
+    expect(r.data.verdict).toBe('READY');
+    expect((r.data.checks as { check: string; message: string }[]).find((c) => c.check === 'Goods receipt')!.message).toMatch(/^SAR 170,000 net received/);
+  });
+});
+
 describe('posting the invoice', () => {
   it('shows the warnings on the confirmation card and refuses a duplicate before it gets there', async () => {
     const ctx = context();

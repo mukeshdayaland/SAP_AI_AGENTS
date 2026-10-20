@@ -296,7 +296,7 @@ export class MockMailGateway implements MailGateway {
     const words = (s.text ?? '').toLowerCase().split(/\s+/).filter(Boolean);
     const from = s.from?.toLowerCase();
     return this.mailbox(ctx)
-      .messages.filter((m) => m.folder !== 'drafts')
+      .messages.filter((m) => (s.folder ? m.folder === s.folder : m.folder !== 'drafts'))
       .filter((m) => words.every((w) => `${m.subject} ${m.body}`.toLowerCase().includes(w)))
       .filter((m) => !from || `${m.from?.name ?? ''} ${m.from?.address ?? ''}`.toLowerCase().includes(from))
       .filter((m) => (!s.since || m.receivedAt.slice(0, 10) >= s.since) && (!s.until || m.receivedAt.slice(0, 10) <= s.until))

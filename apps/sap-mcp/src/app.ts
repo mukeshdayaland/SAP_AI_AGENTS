@@ -43,7 +43,7 @@ function send(res: ServerResponse, status: number, body: unknown, type = 'applic
 
 export function createGateway(cfg: McpConfig, logger: Logger): SapGateway {
   return cfg.sap.mode === 'odata'
-    ? new ODataSapGateway({ destinationName: cfg.sap.destinationName, systemId: cfg.sap.systemId, allowTechnicalUser: cfg.sap.allowTechnicalUser, logger })
+    ? new ODataSapGateway({ destinationName: cfg.sap.destinationName, systemId: cfg.sap.systemId, allowTechnicalUser: cfg.sap.allowTechnicalUser, logger, ...(cfg.sap.defaultPaymentTerms && { defaultPaymentTerms: cfg.sap.defaultPaymentTerms }) })
     : new MockSapGateway(cfg.sap.mockLatencyMs);
 }
 

@@ -16,6 +16,8 @@ export interface McpConfig {
     systemId: string;
     allowTechnicalUser: boolean;
     mockLatencyMs: number;
+    /** Terms of payment for supplier invoices whose order and supplier have none. */
+    defaultPaymentTerms?: string;
   };
   /** The Fiori launchpad the guides open. Without an address the guides show their steps only. */
   fiori?: FioriSettings;
@@ -131,6 +133,7 @@ export function loadConfig(rawEnv: Record<string, string | undefined> = process.
     throw new Error('DOCUMENT_AI_MODE=service needs a bound sap-document-information-extraction service or DOCUMENT_AI_SERVICE_KEY');
   }
   if (environment === 'PROD' && documentAiMode === 'mock') throw new Error('DOCUMENT_AI_MODE=mock is not permitted in PROD');
+  if (env.SAP_DEFAULT_PAYMENT_TERMS && !/^[A-Z0-9]{1,4}$/.test(env.SAP_DEFAULT_PAYMENT_TERMS)) throw new Error('SAP_DEFAULT_PAYMENT_TERMS must be a terms of payment key, e.g. 0001');
   const userMapping = (env.SF_USER_MAPPING ?? 'email') as UserMapping;
   if (!USER_MAPPINGS.includes(userMapping)) throw new Error(`SF_USER_MAPPING must be one of ${USER_MAPPINGS.join(', ')}`);
   return {
@@ -144,6 +147,7 @@ export function loadConfig(rawEnv: Record<string, string | undefined> = process.
       systemId: env.SAP_SYSTEM_ID ?? (mode === 'mock' ? 'S4-MOCK' : `S4-${environment}`),
       allowTechnicalUser: /^true$/i.test(env.SAP_ALLOW_TECHNICAL_USER ?? 'false'),
       mockLatencyMs: Number(env.SAP_MOCK_LATENCY_MS ?? 150),
+      ...(env.SAP_DEFAULT_PAYMENT_TERMS && { defaultPaymentTerms: env.SAP_DEFAULT_PAYMENT_TERMS }),
     },
     fiori: fioriSettings(env),
     sf: {

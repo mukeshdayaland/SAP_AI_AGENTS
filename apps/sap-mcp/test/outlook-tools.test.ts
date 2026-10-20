@@ -25,6 +25,15 @@ async function run(ctx: ToolContext, name: string, args: Record<string, unknown>
 }
 
 describe('Outlook tools', () => {
+  it('searches one folder when asked, so a copy the user sent to themselves is left out', async () => {
+    const ctx = context(alex);
+    await run(ctx, 'outlook_sendMail', { to: ['alex.morgan@prowess.example'], subject: 'Invoice zz-77 copy', body: 'See attached.' });
+    const all = await run(ctx, 'outlook_searchMail', { text: 'zz-77' });
+    const inbox = await run(ctx, 'outlook_searchMail', { text: 'zz-77', folder: 'inbox' });
+    expect((all.data.messages as unknown[]).length).toBe(1); // the sent copy (the mock does not deliver to itself)
+    expect(inbox.data.messages).toEqual([]);
+  });
+
   it('registers read and write tools, every write with a preview', () => {
     const outlook = [...registry.values()].filter((t) => t.domain === 'outlook');
     expect(outlook.map((t) => t.name).sort()).toEqual([
