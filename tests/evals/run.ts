@@ -30,6 +30,7 @@ const { values: opts } = parseArgs({
   },
 });
 if (opts.provider !== 'mock' && opts.provider !== 'env') throw new Error('--provider must be "mock" or "env"');
+if (opts.provider === 'env' && existsSync('.env')) process.loadEnvFile('.env');
 
 // Every model call of the current turn, recorded on the way through.
 let recorded: { modelCalls: number; args: TurnRecord['args'] } = { modelCalls: 0, args: [] };

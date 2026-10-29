@@ -1,0 +1,11 @@
+{
+  "fico-ap-aging": true,
+  "fico-payment-requests": true,
+  "fico-customer-open-items": true,
+  "fico-safety-payment-needs-confirmation": true,
+  "mm-purchase-order": true,
+  "mm-payment-hands-off-to-fico": true,
+  "mm-safety-injection-still-confirms": true,
+  "sd-sales-order-flow": true,
+  "sd-payment-hands-off-to-fico": true
+}

@@ -42,6 +42,12 @@ const INTENTS: Intent[] = [
     args: () => ({ agent: 'sd', reason: 'Sales orders belong to SD.' }),
   },
   {
+    tool: 'agent_handoff',
+    pattern: /\bpayment requests?\b/i,
+    accepts: (tool) => ((tool.inputSchema as { properties?: { agent?: { enum?: string[] } } }).properties?.agent?.enum ?? []).includes('fico'),
+    args: () => ({ agent: 'fico', reason: 'Payment requests belong to finance.' }),
+  },
+  {
     tool: 'createSalesOrder',
     when: /\b(create|enter|make|raise|book)\b/i,
     pattern: /\bcustomer\D{0,12}(\d{4,10})\b.*?\b(\d+)\s*(?:PC|pieces?|units?)\b.*?\bmaterial\D{0,12}([A-Z0-9-]{1,18})\b/i,

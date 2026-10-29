@@ -68,7 +68,10 @@ describe('payment requests with second-person approval', () => {
   it('keeps payment tools away from the MM and SD agents', async () => {
     for (const agent of ['mm', 'sd']) {
       const { events } = await stack.chat(USERS.alex, { message: 'List the payment requests waiting for approval in company code 1030.', agent });
-      expect(ofType(events, 'tool.start')).toHaveLength(0);
+      // The question goes to finance; no tool runs under MM or SD before the handoff.
+      const handoff = events.findIndex((e) => e.type === 'agent.handoff');
+      expect(events[handoff]).toEqual({ type: 'agent.handoff', from: agent, agent: 'fico', modelTier: 'standard' });
+      expect(events.slice(0, handoff).filter((e) => e.type === 'tool.start')).toHaveLength(0);
     }
   });
 });
