@@ -22,12 +22,16 @@ describe('eval checks', () => {
   it('fails each expectation the turn misses', () => {
     expect(failed({ tools: ['ar_getAging'] })).toEqual(['calls ar_getAging']);
     expect(failed({ tools: ['ap_getAging'] }, turn({ failedTools: ['ap_getAging'] }))).toEqual(['calls ap_getAging']);
+    expect(failed({ tools: ['ar_getAging|ap_getAging'] })).toEqual([]);
+    expect(failed({ tools: ['ar_getAging|ap_getAging'] }, turn({ failedTools: ['ap_getAging'] }))).toEqual(['calls ar_getAging|ap_getAging']);
     expect(failed({ notTools: ['*'] })).toEqual(['calls no tool']);
     expect(failed({ args: { ap_getAging: { companyCode: '1010' } } })).toEqual(['ap_getAging arguments']);
     expect(failed({ confirmation: true })).toEqual(['asks for confirmation']);
     expect(failed({ maxModelCalls: 1 })).toEqual(['≤ 1 model calls']);
     expect(failed({ answer: { includes: ['EUR'], excludes: ['owes'] } })).toEqual(['answer includes "EUR"', 'answer excludes "owes"']);
     expect(failed({}, turn({ error: 'HTTP 500' }))).toEqual(['no error']);
+    expect(failed({ error: 'HTTP 403' }, turn({ error: 'HTTP 403 FORBIDDEN' }))).toEqual([]);
+    expect(failed({ error: 'HTTP 403' })).toEqual(['fails with HTTP 403']);
   });
 
   it('matches arguments partially and case-insensitively', () => {

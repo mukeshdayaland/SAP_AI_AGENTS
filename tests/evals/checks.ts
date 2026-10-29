@@ -4,7 +4,7 @@
  */
 
 export interface TurnExpect {
-  /** Tools that must be called in this turn (MCP names, e.g. `gl_listPaymentRequests`). */
+  /** Tools that must be called in this turn (MCP names, e.g. `gl_listPaymentRequests`); `a|b` accepts either. */
   tools?: string[];
   /** Tools that must not be called. `*` means no tool at all. */
   notTools?: string[];
@@ -15,6 +15,8 @@ export interface TurnExpect {
   /** Most model calls the turn may take. */
   maxModelCalls?: number;
   answer?: { includes?: string[]; excludes?: string[] };
+  /** The turn must be refused with an error containing this text, e.g. `HTTP 403`. */
+  error?: string;
 }
 
 export interface EvalCase {
@@ -44,7 +46,7 @@ export interface CheckResult {
   detail?: string;
 }
 
-const KNOWN = new Set(['tools', 'notTools', 'args', 'confirmation', 'maxModelCalls', 'answer']);
+const KNOWN = new Set(['tools', 'notTools', 'args', 'confirmation', 'maxModelCalls', 'answer', 'error']);
 
 /** Fails loudly on a malformed case file rather than scoring it as passed. */
 export function validateCases(cases: unknown, file: string): EvalCase[] {
@@ -76,12 +78,14 @@ export function matchesPartially(actual: unknown, expected: unknown): boolean {
 
 export function checkTurn(expect: TurnExpect, turn: TurnRecord): CheckResult[] {
   const results: CheckResult[] = [];
-  if (turn.error) results.push({ check: 'no error', pass: false, detail: turn.error });
+  if (expect.error !== undefined) results.push({ check: `fails with ${expect.error}`, pass: !!turn.error?.includes(expect.error), detail: turn.error ?? 'no error' });
+  else if (turn.error) results.push({ check: 'no error', pass: false, detail: turn.error });
   for (const tool of expect.tools ?? []) {
-    const failed = turn.failedTools.includes(tool);
+    const ok = tool.split('|').some((t) => turn.tools.includes(t) && !turn.failedTools.includes(t));
+    const failed = !ok && tool.split('|').some((t) => turn.failedTools.includes(t));
     results.push({
       check: `calls ${tool}`,
-      pass: turn.tools.includes(tool) && !failed,
+      pass: ok,
       detail: failed ? 'the tool failed' : `called: ${turn.tools.join(', ') || 'none'}`,
     });
   }
