@@ -576,6 +576,7 @@ export const ar: Messages = {
   'admin.tab.tools': 'الأدوات',
   'admin.tab.usage': 'الاستخدام',
   'admin.tab.audit': 'التدقيق',
+  'admin.tab.archive': 'أرشيف المحادثات',
   'admin.noAccess': 'ليست لديك صلاحية الوصول إلى الإدارة.',
   'admin.readOnly': 'الإعدادات هنا للقراءة فقط، وتُدار عبر ملفات خاضعة للتحكم بالإصدارات وارتباطات BTP. لا تُعرض بيانات اعتماد المزوّدين أبدًا.',
   'admin.healthy': 'سليم',
@@ -616,4 +617,9 @@ export const ar: Messages = {
   'admin.col.agentTool': 'الوكيل / الأداة',
   'admin.col.system': 'النظام',
   'admin.col.correlation': 'الارتباط',
+  'admin.col.kind': 'السجل',
+  'admin.col.content': 'المحتوى',
+  'admin.col.conversation': 'المحادثة',
+  'admin.search': 'بحث',
+  'admin.archiveIntro': 'كل رسالة واستدعاء أداة وقرار بشأن تغيير في SAP، محفوظة حتى بعد أن يحذف المستخدمون محادثاتهم أو يعدّلوها. يُسجَّل كل بحث في سجل التدقيق. الأحدث أولاً؛ صفِّ حسب المحادثة لقراءتها بالترتيب.',
 };

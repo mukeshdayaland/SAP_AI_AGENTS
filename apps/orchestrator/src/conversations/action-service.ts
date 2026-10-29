@@ -57,6 +57,22 @@ export class ActionService {
     return { owner, action };
   }
 
+  /** The user's decision on a write, with what was sent to SAP, for the conversation archive. */
+  private archiveDecision(action: PendingActionRecord, decision: 'confirmed' | 'cancelled', outcome?: Record<string, unknown>) {
+    const correlationId = currentContext()?.correlationId;
+    return this.deps.store.archive.append({
+      userId: action.userId,
+      tenantId: action.tenantId,
+      kind: 'action',
+      conversationId: action.conversationId,
+      messageId: action.messageId,
+      ...(correlationId && { correlationId }),
+      agent: action.agent,
+      at: new Date().toISOString(),
+      data: { actionId: action.id, tool: action.tool, arguments: action.arguments, environment: action.environment, targetSystem: action.targetSystem, preview: action.preview, decision, ...outcome },
+    });
+  }
+
   /** Keeps the confirmation card stored on the originating message in sync. */
   private async syncCard(owner: Owner, action: PendingActionRecord) {
     const conversation = await this.deps.store.conversations.get(owner, action.conversationId);
@@ -74,6 +90,7 @@ export class ActionService {
     }
     const updated = { ...action, status: 'cancelled' as const };
     await this.syncCard(owner, updated);
+    await this.archiveDecision(action, 'cancelled');
     this.deps.audit.record({ type: 'SAP_WRITE_CANCELLED', ...owner, agent: action.agent, tool: action.tool, targetSystem: action.targetSystem, operation: 'SAP_WRITE', status: 'success', details: { actionId: id } });
     return { confirmation: toConfirmation(updated), followUp: await this.continueRun(auth, action, { status: 'cancelled' }) };
   }
@@ -120,6 +137,7 @@ export class ActionService {
     await store.actions.transition(owner, id, 'confirmed', finalStatus);
     const updated: PendingActionRecord = { ...action, status: finalStatus };
     await this.syncCard(owner, updated);
+    await this.archiveDecision(action, 'confirmed', { status: finalStatus, durationMs: out.durationMs, ...(errorCode && { errorCode }), ...(errorMessage && { errorMessage }), ...(out.structured !== undefined && { result: out.structured }) });
     audit.record({ type: out.ok ? 'SAP_WRITE_COMPLETED' : 'SAP_WRITE_FAILED', ...auditBase, status: out.ok ? 'success' : 'failure', durationMs: out.durationMs, details: { ...details, ...(errorCode && { errorCode }) } });
 
     const structured = (out.structured ?? {}) as { data?: { summary?: string }; components?: unknown[]; source?: Omit<SourceReference, 'id' | 'agent' | 'tool'> };

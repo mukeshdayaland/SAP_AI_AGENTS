@@ -36,6 +36,8 @@ and correlate by trace ID.
 ## Retention
 
 - Conversations: purged hourly when not updated for `CONVERSATION_RETENTION_DAYS` (default 90).
+- Conversation archive: entries older than `ARCHIVE_RETENTION_DAYS` (default 3650) are purged hourly. Independent of
+  the conversation retention and of user deletes. See [security](security.md#conversation-archive).
 - Uploads: deleted after `UPLOAD_RETENTION_HOURS` (default 24). File bytes live on the instance's ephemeral disk,
   so an attachment is available only on the instance that received it and only for this window. For multi-instance
   retention beyond minutes, back `FileService` with SAP Object Store.

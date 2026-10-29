@@ -196,6 +196,43 @@ describe('role-based access', () => {
   });
 });
 
+describe('conversation archive', () => {
+  type Entry = { kind: string; userId: string; messageId?: string; correlationId?: string; data: Record<string, unknown> };
+  const archive = async (user: string, query: string) => stack.request('GET', `/api/v1/admin/archive?${query}`, user);
+
+  it('keeps messages and tool calls after the user deletes the conversation, for auditors only', async () => {
+    const { events } = await stack.chat(USERS.jordan, { message: 'Analyze maintenance history for equipment 20001234.', agent: 'maintenance' });
+    const { conversationId } = ofType(events, 'message.start')[0]!;
+    expect((await stack.request('DELETE', `/api/v1/conversations/${conversationId}`, USERS.jordan)).status).toBe(204);
+
+    const res = await archive(USERS.casey, `conversationId=${conversationId}`);
+    expect(res.status).toBe(200);
+    const entries = res.json.entries as Entry[];
+    expect(entries.every((e) => e.userId === USERS.jordan && e.correlationId)).toBe(true);
+    expect(entries.find((e) => e.kind === 'message' && e.data.role === 'user')?.data.content).toBe('Analyze maintenance history for equipment 20001234.');
+    expect(entries.some((e) => e.kind === 'message' && e.data.role === 'assistant')).toBe(true);
+    expect(entries.find((e) => e.kind === 'tool_call')?.data).toMatchObject({ arguments: expect.anything(), result: expect.any(String) });
+    expect(stack.auditBuffer.events.some((e) => e.type === 'ADMIN_ACCESS' && e.userId === USERS.casey && e.details?.view === 'archive')).toBe(true);
+
+    // Administrators and users cannot read conversation content.
+    expect((await archive(USERS.sam, `conversationId=${conversationId}`)).status).toBe(403);
+    expect((await archive(USERS.jordan, `userId=${USERS.jordan}`)).status).toBe(403);
+    expect((await archive(USERS.casey, 'from=yesterday')).status).toBe(400);
+  });
+
+  it('records the decision on a write with what was sent to SAP', async () => {
+    const { events } = await stack.chat(USERS.alex, { message: 'Release the payment block on invoice 5100012345.', agent: 'fi-ap' });
+    const { conversationId } = ofType(events, 'message.start')[0]!;
+    const confirmation = ofType(events, 'confirmation.required')[0]!.confirmation;
+    // An earlier test already released this invoice in the mock, so SAP may refuse it: the outcome is archived either way.
+    const confirmed = await stack.request('POST', `/api/v1/actions/${confirmation.id}/confirm`, USERS.alex, {});
+    const status = (confirmed.json.confirmation as { status: string }).status;
+
+    const entries = (await archive(USERS.casey, `conversationId=${conversationId}`)).json.entries as Entry[];
+    expect(entries.find((e) => e.kind === 'action')?.data).toMatchObject({ actionId: confirmation.id, decision: 'confirmed', status, arguments: expect.anything() });
+  });
+});
+
 describe('help', () => {
   type Help = { agents: { id: string; capabilities: { title: string; description: string; risk: string; needsConfirmation: boolean }[] }[]; activity: { type: string; action?: string; object?: string; agent?: string; status: string }[] };
 

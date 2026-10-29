@@ -1,8 +1,8 @@
 'use client';
 
-import type { PublicError, WorkspaceConfig } from '@prowess/contracts';
+import type { ArchiveEntry, PublicError, WorkspaceConfig } from '@prowess/contracts';
 import { ArrowLeft } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { ApiError} from '@/lib/api';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
@@ -22,7 +22,7 @@ interface Overview {
   settings: Record<string, unknown>;
 }
 
-const TABS = ['overview', 'models', 'agents', 'tools', 'usage', 'audit'] as const;
+const TABS = ['overview', 'models', 'agents', 'tools', 'usage', 'audit', 'archive'] as const;
 type Tab = (typeof TABS)[number];
 
 const riskTone = (r: string): Tone => (r === 'HIGH_IMPACT' ? 'critical' : r === 'BUSINESS_WRITE' ? 'warning' : r === 'LOW_RISK_WRITE' ? 'info' : 'success');
@@ -69,6 +69,66 @@ function Health({ ok }: { ok: boolean }) {
   return <Badge tone={ok ? 'success' : 'critical'}>{t(ok ? 'admin.healthy' : 'admin.unavailable')}</Badge>;
 }
 
+/** What an archive entry recorded, in one cell: the message text, the tool call or the decision on a write. */
+function archiveSummary(e: ArchiveEntry): string {
+  const d = e.data as { role?: string; content?: string; tool?: string; decision?: string; status?: string };
+  if (e.kind === 'message') return `${d.role ?? ''}: ${d.content ?? ''}`;
+  if (e.kind === 'tool_call') return d.tool ?? '';
+  return [d.tool, d.decision, d.status].filter(Boolean).join(' · ');
+}
+
+function ArchiveView() {
+  const t = useT();
+  const [filter, setFilter] = useState({ userId: '', conversationId: '' });
+  const [entries, setEntries] = useState<ArchiveEntry[] | null>(null);
+  const [error, setError] = useState<PublicError | null>(null);
+
+  const search = (e?: FormEvent) => {
+    e?.preventDefault();
+    setError(null);
+    api.archive(filter).then((r) => setEntries(filter.conversationId ? [...r.entries].reverse() : r.entries)).catch((err: ApiError) => setError(err.error));
+  };
+  useEffect(search, []);
+
+  const input = 'rounded-lg border border-line bg-surface px-2 py-1 text-[12px] text-ink';
+  return (
+    <>
+      <p className="text-[12px] text-ink-3">{t('admin.archiveIntro')}</p>
+      <form onSubmit={search} className="flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1 text-[12px] text-ink-2">
+          {t('admin.col.user')}
+          <input className={input} value={filter.userId} onChange={(e) => setFilter({ ...filter, userId: e.target.value.trim() })} />
+        </label>
+        <label className="flex flex-col gap-1 text-[12px] text-ink-2">
+          {t('admin.col.conversation')}
+          <input className={`${input} font-mono`} value={filter.conversationId} onChange={(e) => setFilter({ ...filter, conversationId: e.target.value.trim() })} />
+        </label>
+        <button type="submit" className="rounded-lg bg-brand px-3 py-1.5 text-[12px] font-medium text-on-brand">{t('admin.search')}</button>
+      </form>
+      {error && <p className="text-[12px] text-error">{translateServer(error.message)}</p>}
+      {!entries && !error && <Spinner className="h-5 w-5 text-brand" />}
+      {entries && (
+        <Table
+          head={[t('admin.col.time'), t('admin.col.user'), t('admin.col.kind'), t('admin.col.agent'), t('admin.col.content'), t('admin.col.conversation')]}
+          rows={entries.map((e) => [
+            formatDateTime(e.at),
+            e.userId,
+            <span key="k" className="font-mono text-xs">{e.kind}</span>,
+            e.agent ?? '',
+            <details key="c">
+              <summary className="cursor-pointer whitespace-pre-wrap break-words">{archiveSummary(e)}</summary>
+              <pre className="mt-2 max-h-80 overflow-auto rounded-lg bg-muted p-2 font-mono text-[10px] text-ink-2">{JSON.stringify(e.data, null, 2)}</pre>
+            </details>,
+            <button key="v" type="button" className="font-mono text-[10px] text-brand hover:underline" onClick={() => setFilter({ userId: '', conversationId: e.conversationId })}>
+              {e.conversationId}
+            </button>,
+          ])}
+        />
+      )}
+    </>
+  );
+}
+
 export function AdminConsole() {
   const t = useT();
   useDocumentTitle('admin.title');
@@ -81,7 +141,7 @@ export function AdminConsole() {
   useEffect(() => {
     api.workspace().then(async (c) => {
       setConfig(c);
-      setTab(c.features.admin ? 'overview' : 'audit');
+      setTab(c.features.admin ? 'overview' : c.features.audit ? 'audit' : 'archive');
       if (c.features.admin) setOverview((await api.adminOverview()) as unknown as Overview);
       if (c.features.audit) setAudit((await api.audit()).events);
     }).catch((e: ApiError) => setError(e.error));
@@ -89,9 +149,9 @@ export function AdminConsole() {
 
   if (error) return <p className="p-8 text-ink">{translateServer(error.message)}</p>;
   if (!config) return <div className="flex h-full items-center justify-center"><Spinner className="h-6 w-6 text-brand" /></div>;
-  if (!config.features.admin && !config.features.audit) return <p className="p-8 text-ink">{t('admin.noAccess')}</p>;
+  if (!config.features.admin && !config.features.audit && !config.features.archive) return <p className="p-8 text-ink">{t('admin.noAccess')}</p>;
 
-  const tabs = TABS.filter((id) => (id === 'audit' ? config.features.audit : config.features.admin));
+  const tabs = TABS.filter((id) => (id === 'audit' ? config.features.audit : id === 'archive' ? config.features.archive : config.features.admin));
 
   return (
     <div className="h-full overflow-y-auto">
@@ -220,6 +280,8 @@ export function AdminConsole() {
             />
           </>
         )}
+
+        {tab === 'archive' && <ArchiveView />}
       </main>
     </div>
   );

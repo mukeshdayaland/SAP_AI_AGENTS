@@ -16,13 +16,14 @@ logger.info('orchestrator.config', {
   mcpServers: config.mcpServers.map((m) => m.id),
 });
 
-// Retention: conversations and expired uploads, hourly.
+// Retention: conversations, the conversation archive and expired uploads, hourly.
 const retention = setInterval(async () => {
   try {
-    const cutoff = new Date(Date.now() - config.retentionDays * 86_400_000).toISOString();
-    const conversations = await services.store.conversations.purgeUpdatedBefore(cutoff);
+    const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+    const conversations = await services.store.conversations.purgeUpdatedBefore(daysAgo(config.retentionDays));
+    const archive = await services.store.archive.purgeBefore(daysAgo(config.archiveRetentionDays));
     const files = await services.files.purgeExpired();
-    if (conversations || files) logger.info('retention.purged', { conversations, files });
+    if (conversations || archive || files) logger.info('retention.purged', { conversations, archive, files });
   } catch (err) {
     logger.error('retention.failed', { error: err as Error });
   }

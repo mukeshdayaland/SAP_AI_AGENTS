@@ -30,6 +30,13 @@ declare module 'fastify' {
 const IdParam = z.object({ id: z.string().regex(/^[a-z]_[A-Za-z0-9_-]{16,40}$/) });
 const WorkflowParam = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/) });
 const MessageParams = IdParam.extend({ messageId: z.string().regex(/^m_[A-Za-z0-9_-]{16,40}$/) });
+const ArchiveQuery = z.object({
+  userId: z.string().min(1).max(200).optional(),
+  conversationId: IdParam.shape.id.optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+});
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const r = schema.safeParse(value);
@@ -96,6 +103,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
         technicalPanel: hasAnyRole(user, ['AI_POWER_USER', 'AI_ADMIN']),
         admin: hasRole(user, 'AI_ADMIN'),
         audit: hasAnyRole(user, ['AI_AUDITOR', 'AI_ADMIN']),
+        archive: hasRole(user, 'AI_AUDITOR'),
       },
       uploads: { maxBytes: s.config.uploads.maxBytes, accept: s.config.uploads.allowedTypes.map((t) => `.${t}`) },
     };
@@ -262,6 +270,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       usage,
       settings: {
         retentionDays: s.config.retentionDays,
+        archiveRetentionDays: s.config.archiveRetentionDays,
         uploads: { enabled: s.config.uploads.enabled, maxBytes: s.config.uploads.maxBytes, allowedTypes: s.config.uploads.allowedTypes, scanner: s.config.uploads.scanner },
         limits: s.config.limits,
         confirmationTtlSeconds: s.config.confirmations.ttlSeconds,
@@ -276,5 +285,14 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     if (!hasAnyRole(a.user, ['AI_AUDITOR', 'AI_ADMIN'])) throw AppError.forbidden();
     s.audit.record({ type: 'ADMIN_ACCESS', userId: a.user.id, tenantId: a.user.tenantId, status: 'success', details: { view: 'audit' } });
     return { events: s.auditBuffer.events.slice(0, 200) };
+  });
+
+  // Conversation content is for auditors only, not administrators (separation of duties). Every lookup is audited.
+  app.get('/api/v1/admin/archive', async (req) => {
+    const a = auth(req);
+    if (!hasRole(a.user, 'AI_AUDITOR')) throw AppError.forbidden();
+    const q = parse(ArchiveQuery, req.query);
+    s.audit.record({ type: 'ADMIN_ACCESS', userId: a.user.id, tenantId: a.user.tenantId, status: 'success', details: { view: 'archive', ...q } });
+    return { entries: await s.store.archive.list({ ...q, tenantId: a.user.tenantId }) };
   });
 }

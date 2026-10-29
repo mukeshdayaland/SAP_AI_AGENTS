@@ -248,6 +248,23 @@ export interface StarterAction {
   icon: string;
 }
 
+/**
+ * One record of the conversation archive: a message, a tool call or a decision on a write. Read only by auditors.
+ * `data` holds the full message, the tool's arguments and result, or the action with its outcome.
+ */
+export interface ArchiveEntry {
+  id: string;
+  at: string;
+  userId: string;
+  tenantId: string;
+  kind: 'message' | 'tool_call' | 'action';
+  conversationId: string;
+  messageId?: string;
+  correlationId?: string;
+  agent?: string;
+  data: Record<string, unknown>;
+}
+
 export interface WorkspaceConfig {
   product: { name: string; subtitle: string };
   environment: DeploymentEnvironment;
@@ -263,6 +280,8 @@ export interface WorkspaceConfig {
     technicalPanel: boolean;
     admin: boolean;
     audit: boolean;
+    /** Conversation archive (AI_AUDITOR only). */
+    archive: boolean;
   };
   uploads: { maxBytes: number; accept: string[] };
 }

@@ -35,6 +35,8 @@ export interface OrchestratorConfig {
   };
   persistence: { mode: 'memory' | 'postgres'; postgresUrl?: string };
   retentionDays: number;
+  /** Days the conversation archive keeps entries; independent of `retentionDays`. */
+  archiveRetentionDays: number;
   limits: {
     requestsPerMinute: number;
     dailyTokensPerUser: number;
@@ -160,6 +162,7 @@ export function loadConfig(rawEnv: Env = process.env): OrchestratorConfig {
     },
     persistence: { mode: persistenceMode, ...(postgresUrl && { postgresUrl }) },
     retentionDays: int(env.CONVERSATION_RETENTION_DAYS, 90),
+    archiveRetentionDays: int(env.ARCHIVE_RETENTION_DAYS, 3650),
     limits: {
       requestsPerMinute: int(env.RATE_LIMIT_PER_MINUTE, 30),
       dailyTokensPerUser: int(env.DAILY_TOKENS_PER_USER, 400_000),

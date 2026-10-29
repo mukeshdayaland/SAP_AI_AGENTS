@@ -1,4 +1,5 @@
 import type {
+  ArchiveEntry,
   AttachmentRef,
   BrowserActionResult,
   ConfirmationRequest,
@@ -89,6 +90,10 @@ export const api = {
   employeeLocations: () => request<EmployeeMap>('GET', '/employees/locations'),
   adminOverview: () => request<Record<string, unknown>>('GET', '/admin/overview'),
   audit: () => request<{ events: Record<string, unknown>[] }>('GET', '/admin/audit'),
+  archive: (filter: { userId?: string; conversationId?: string }) => {
+    const query = new URLSearchParams(Object.entries(filter).filter((e): e is [string, string] => Boolean(e[1]))).toString();
+    return request<{ entries: ArchiveEntry[] }>('GET', `/admin/archive${query ? `?${query}` : ''}`);
+  },
 
   async upload(file: File): Promise<AttachmentRef> {
     const form = new FormData();

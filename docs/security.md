@@ -66,3 +66,28 @@ review the Prowess audit trail. That trail still records the real end user for e
 Each event carries a correlation ID, timestamp, user, tenant, agent, tool, target system, operation, status and
 duration. **No tokens, prompts, model output or business payloads.** A test asserts that invoice amounts and vendor
 names don't appear in audit records.
+
+## Conversation archive
+
+The audit trail says who did what. The conversation archive says what was said. Table `conversation_archive` keeps:
+
+| Record | What it holds |
+| --- | --- |
+| `message` | Every user and assistant message as stored, with attachments metadata, cards, sources, errors and the model used |
+| `tool_call` | Every tool the model called: arguments and the result the model received, including denied and failed calls |
+| `action` | Every confirm or cancel of an SAP write: tool, arguments, environment, preview, outcome and SAP's result |
+
+Each entry carries user, tenant, conversation, message, agent and the request's correlation ID, so it links to the
+audit trail and the logs.
+
+- **Kept apart from conversations.** No foreign key: deleting a conversation, editing or regenerating a message and
+  the `CONVERSATION_RETENTION_DAYS` purge leave the archive untouched. A message and its archive entry are written in
+  one statement.
+- **Append-only.** Database triggers refuse `UPDATE` and `TRUNCATE`, and refuse `DELETE` except in the retention purge
+  (`ARCHIVE_RETENTION_DAYS`, default 3650). The database owner can still drop the triggers. For legal hold or
+  regulator-grade immutability, also export to storage with a write-once lock (Object Store with object lock).
+- **Auditors only.** `GET /api/v1/admin/archive` (filters `userId`, `conversationId`, `from`, `to`, `limit` ≤ 500) and
+  the *Conversation archive* tab of the admin console need `AI_AUDITOR`. Administrators cannot read conversation
+  content. Every lookup is recorded as `ADMIN_ACCESS` with its filters. Results are limited to the auditor's tenant.
+- **Personal data.** The archive holds whatever users type and whatever SAP returned. Agree its purpose and retention
+  with your data protection officer (and works council where employee monitoring rules apply) before production.

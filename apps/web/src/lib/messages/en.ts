@@ -561,6 +561,7 @@ export const en = {
   'admin.tab.tools': 'Tools',
   'admin.tab.usage': 'Usage',
   'admin.tab.audit': 'Audit',
+  'admin.tab.archive': 'Conversation archive',
   'admin.noAccess': 'You do not have access to administration.',
   'admin.readOnly': 'Configuration is read-only here and managed through version-controlled files and BTP bindings. Provider credentials are never displayed.',
   'admin.healthy': 'Healthy',
@@ -601,6 +602,11 @@ export const en = {
   'admin.col.agentTool': 'Agent / tool',
   'admin.col.system': 'System',
   'admin.col.correlation': 'Correlation',
+  'admin.col.kind': 'Record',
+  'admin.col.content': 'Content',
+  'admin.col.conversation': 'Conversation',
+  'admin.search': 'Search',
+  'admin.archiveIntro': 'Every message, tool call and decision on an SAP change, kept even after users delete or edit their conversations. Each search is recorded in the audit trail. Newest first; filter by conversation to read it in order.',
 } satisfies Record<string, string | Plural>;
 
 export type MessageKey = keyof typeof en;

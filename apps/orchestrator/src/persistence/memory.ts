@@ -1,4 +1,7 @@
+import { currentContext } from '@prowess/observability';
 import type {
+  ArchiveEntry,
+  ArchiveQuery,
   AttachmentRecord,
   ConversationRecord,
   MessageRecord,
@@ -21,6 +24,8 @@ export class MemoryStore implements Store {
   private readonly acts = new Map<string, PendingActionRecord>();
   private readonly runRows = new Map<string, WorkflowRunRecord>();
   private readonly usageRows: UsageRecord[] = [];
+  private readonly archiveRows: ArchiveEntry[] = [];
+  private archiveSeq = 0;
 
   conversations = {
     create: async (c: ConversationRecord) => {
@@ -66,8 +71,21 @@ export class MemoryStore implements Store {
   messages = {
     add: async (m: MessageRecord) => {
       const list = this.msgs.get(m.conversationId);
-      if (!list) throw new Error('Conversation does not exist');
+      const c = this.convs.get(m.conversationId);
+      if (!list || !c) throw new Error('Conversation does not exist');
       list.push(clone(m));
+      const correlationId = currentContext()?.correlationId;
+      await this.archive.append({
+        userId: c.userId,
+        tenantId: c.tenantId,
+        kind: 'message',
+        conversationId: m.conversationId,
+        messageId: m.id,
+        ...(correlationId && { correlationId }),
+        ...(m.agent && { agent: m.agent }),
+        at: m.createdAt,
+        data: clone(m) as unknown as Record<string, unknown>,
+      });
     },
     list: async (conversationId: string) => clone(this.msgs.get(conversationId) ?? []),
     update: async (conversationId: string, id: string, patch: Partial<MessageRecord>) => {
@@ -142,6 +160,22 @@ export class MemoryStore implements Store {
         groups.set(key, g);
       }
       return [...groups.values()].sort((a, b) => b.day.localeCompare(a.day));
+    },
+  };
+
+  archive = {
+    append: async (e: Omit<ArchiveEntry, 'id'>) => void this.archiveRows.push(clone({ ...e, id: String(++this.archiveSeq) })),
+    list: async (q: ArchiveQuery) =>
+      this.archiveRows
+        .filter((e) => e.tenantId === q.tenantId && (!q.userId || e.userId === q.userId) && (!q.conversationId || e.conversationId === q.conversationId) && (!q.from || e.at >= q.from) && (!q.to || e.at <= q.to))
+        .sort((a, b) => b.at.localeCompare(a.at) || Number(b.id) - Number(a.id))
+        .slice(0, q.limit)
+        .map(clone),
+    purgeBefore: async (cutoff: string) => {
+      const keep = this.archiveRows.filter((e) => e.at >= cutoff);
+      const n = this.archiveRows.length - keep.length;
+      this.archiveRows.splice(0, this.archiveRows.length, ...keep);
+      return n;
     },
   };
 

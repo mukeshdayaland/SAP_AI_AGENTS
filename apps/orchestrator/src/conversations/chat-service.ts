@@ -313,6 +313,16 @@ export class ChatService {
           for (const call of calls) {
             if (signal.aborted) break;
             const result = await this.runToolCall(turn, call, agentTools, allTools, session, state, emit, signal);
+            await store.archive.append({
+              ...turn.owner,
+              kind: 'tool_call',
+              conversationId: turn.conversation.id,
+              messageId: turn.assistantMessageId,
+              correlationId: turn.correlationId,
+              agent: turn.agent.id,
+              at: new Date().toISOString(),
+              data: { toolCallId: call.id, tool: call.name, arguments: call.arguments, result: result.content, ...(result.isError && { isError: true }) },
+            });
             messages.push({ role: 'tool', toolCallId: call.id, name: call.name, content: result.content, ...(result.isError && { isError: true }) });
           }
           if (canUseFiori && !toolSpecs.some((t) => isBrowserTool(t.name)) && state.tools.some((t) => t.tool === FIORI_OPEN_TOOL && t.status === 'success')) {
