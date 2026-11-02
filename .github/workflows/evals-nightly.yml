@@ -1,0 +1,46 @@
+name: Agent evals on SAP AI Core
+
+# Runs the eval cases against the real model every night and fails on a regression against
+# tests/evals/baseline/env-default.json. SAP stays mocked; every run costs real model calls, so it never
+# runs on pull requests. The AI Core credentials are in the `qa` environment; a required reviewer on `qa`
+# would hold this run until approved. Schedules only run from the default branch.
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-nightly
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    name: Evals on AI Core
+    runs-on: ubuntu-latest
+    environment: qa
+    timeout-minutes: 30
+    env:
+      DEFAULT_LLM_PROVIDER: sap-ai-core
+      AICORE_AUTH_URL: ${{ vars.AI_CORE_URL }}
+      AICORE_CLIENT_ID: ${{ vars.AI_CORE_CLIENT_ID }}
+      AICORE_CLIENT_SECRET: ${{ secrets.AI_CORE_CLIENTSECRET }}
+      AICORE_API_URL: ${{ vars.AI_CORE_AI_API_URL }}
+      AICORE_MODE: orchestration
+      AICORE_ORCHESTRATION_DEPLOYMENT_ID: ${{ vars.AICORE_ORCHESTRATION_DEPLOYMENT_ID }}
+      SAP_MODE: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      - name: Evals against the baseline
+        run: npm run eval -- --provider env
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: test-results/evals/
+          retention-days: 30

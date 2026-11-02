@@ -36,6 +36,8 @@ jobs:
         run: npm run typecheck
       - name: Unit, API, authorization, MCP contract and LLM adapter tests
         run: npm test
+      - name: Agent evals (mock model, fails on a regression against the baseline)
+        run: npm run eval
 
   security:
     name: Security scan
