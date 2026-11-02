@@ -1,12 +1,15 @@
 import {
+  BrowserActionResultSchema,
   ChatRequestSchema,
   ConfirmActionSchema,
   FeedbackRequestSchema,
   RenameConversationSchema,
   StartRunSchema,
+  type EmployeeMap,
   type HelpOverview,
   type VendorMap,
   type WorkspaceConfig,
+  uiLocale,
 } from '@prowess/contracts';
 import { metrics } from '@prowess/observability';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -27,6 +30,13 @@ declare module 'fastify' {
 const IdParam = z.object({ id: z.string().regex(/^[a-z]_[A-Za-z0-9_-]{16,40}$/) });
 const WorkflowParam = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,39}$/) });
 const MessageParams = IdParam.extend({ messageId: z.string().regex(/^m_[A-Za-z0-9_-]{16,40}$/) });
+const ArchiveQuery = z.object({
+  userId: z.string().min(1).max(200).optional(),
+  conversationId: IdParam.shape.id.optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+});
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const r = schema.safeParse(value);
@@ -72,11 +82,12 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
   /* ---------------- workspace ---------------- */
   app.get('/api/v1/workspace', async (req): Promise<WorkspaceConfig> => {
     const { user } = auth(req);
+    const locale = uiLocale(req.headers['accept-language']);
     s.audit.record({ type: 'USER_LOGIN', userId: user.id, tenantId: user.tenantId, status: 'success', details: { authMode: s.config.auth.mode } });
-    const agents = s.agents.describeAgents(user);
+    const agents = s.agents.describeAgents(user, locale);
     const agentIds = new Set(agents.map((a) => a.id));
     const defaultAgent = agentIds.has(s.agents.defaultAgentId) ? s.agents.defaultAgentId : (agents[0]?.id ?? s.agents.defaultAgentId);
-    const tiers = s.agents.describeTiers(user);
+    const tiers = s.agents.describeTiers(user, locale);
     return {
       product: { name: 'Prowess AI', subtitle: 'Enterprise Intelligence Workspace' },
       environment: s.config.environment,
@@ -85,19 +96,20 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       modelTiers: tiers,
       defaultAgent,
       defaultModelTier: tiers[0]?.id ?? 'standard',
-      starters: s.agents.starters.filter((st) => agentIds.has(st.agent)),
+      starters: s.agents.describeStarters(locale).filter((st) => agentIds.has(st.agent)),
       features: {
         attachments: s.config.uploads.enabled,
         feedback: true,
         technicalPanel: hasAnyRole(user, ['AI_POWER_USER', 'AI_ADMIN']),
         admin: hasRole(user, 'AI_ADMIN'),
         audit: hasAnyRole(user, ['AI_AUDITOR', 'AI_ADMIN']),
+        archive: hasRole(user, 'AI_AUDITOR'),
       },
       uploads: { maxBytes: s.config.uploads.maxBytes, accept: s.config.uploads.allowedTypes.map((t) => `.${t}`) },
     };
   });
-  app.get('/api/v1/agents', async (req) => s.agents.describeAgents(auth(req).user));
-  app.get('/api/v1/models', async (req) => s.agents.describeTiers(auth(req).user));
+  app.get('/api/v1/agents', async (req) => s.agents.describeAgents(auth(req).user, uiLocale(req.headers['accept-language'])));
+  app.get('/api/v1/models', async (req) => s.agents.describeTiers(auth(req).user, uiLocale(req.headers['accept-language'])));
 
   /* ---------------- chat (SSE) ---------------- */
   app.post('/api/v1/chat', async (req, reply) => {
@@ -106,7 +118,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     s.rateLimiter.take(a.user.id);
     const release = s.streams.acquire(a.user.id);
     try {
-      const turn = await s.chat.prepare(a, body);
+      const turn = await s.chat.prepare(a, body, uiLocale(req.headers['accept-language']));
       reply.hijack();
       const sse = new SSEStream(reply.raw, { 'x-correlation-id': turn.correlationId });
       try {
@@ -117,6 +129,14 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     } finally {
       release();
     }
+  });
+
+  /* ---------------- Fiori pane ---------------- */
+  // What the user's browser did with an action the agent sent down the chat stream.
+  app.post('/api/v1/browser/results', async (req, reply) => {
+    const { user } = auth(req);
+    const result = parse(BrowserActionResultSchema, req.body);
+    return reply.code(s.browser.resolve({ userId: user.id, tenantId: user.tenantId }, result) ? 204 : 404).send();
   });
 
   /* ---------------- conversations ---------------- */
@@ -180,6 +200,15 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     return s.vendorMap.locations(a);
   });
 
+  /* ---------------- employee map ---------------- */
+  app.get('/api/v1/employees/locations', perAddress, async (req): Promise<EmployeeMap> => {
+    const a = auth(req);
+    // The same role that opens the HCM agent; SuccessFactors still decides which employees come back.
+    if (!hasRole(a.user, 'AI_HR_USER')) throw AppError.forbidden('You do not have access to the employee map.');
+    s.rateLimiter.take(a.user.id);
+    return s.employeeMap.locations(a);
+  });
+
   /* ---------------- help: what the user's agents can do, and the user's own activity ---------------- */
   app.get('/api/v1/help', perAddress, async (req): Promise<HelpOverview> => {
     const { user } = auth(req);
@@ -191,9 +220,9 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       agents: s.agents.forUser(user).map((a) => ({
         id: a.id,
         name: a.name,
-        description: a.description,
+        description: a.i18n[uiLocale(req.headers['accept-language'])]?.description ?? a.description,
         icon: a.icon,
-        capabilities: s.agents.toolsFor(a, tools).map((t) => {
+        capabilities: s.agents.toolsFor(a, tools, user).map((t) => {
           const risk = s.policy.effectiveRisk(t.name, t.risk);
           return { title: t.title, description: firstSentence(t.description), risk, needsConfirmation: risk !== 'READ' };
         }),
@@ -241,6 +270,7 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
       usage,
       settings: {
         retentionDays: s.config.retentionDays,
+        archiveRetentionDays: s.config.archiveRetentionDays,
         uploads: { enabled: s.config.uploads.enabled, maxBytes: s.config.uploads.maxBytes, allowedTypes: s.config.uploads.allowedTypes, scanner: s.config.uploads.scanner },
         limits: s.config.limits,
         confirmationTtlSeconds: s.config.confirmations.ttlSeconds,
@@ -255,5 +285,14 @@ export function registerRoutes(app: FastifyInstance, s: Services): void {
     if (!hasAnyRole(a.user, ['AI_AUDITOR', 'AI_ADMIN'])) throw AppError.forbidden();
     s.audit.record({ type: 'ADMIN_ACCESS', userId: a.user.id, tenantId: a.user.tenantId, status: 'success', details: { view: 'audit' } });
     return { events: s.auditBuffer.events.slice(0, 200) };
+  });
+
+  // Conversation content is for auditors only, not administrators (separation of duties). Every lookup is audited.
+  app.get('/api/v1/admin/archive', async (req) => {
+    const a = auth(req);
+    if (!hasRole(a.user, 'AI_AUDITOR')) throw AppError.forbidden();
+    const q = parse(ArchiveQuery, req.query);
+    s.audit.record({ type: 'ADMIN_ACCESS', userId: a.user.id, tenantId: a.user.tenantId, status: 'success', details: { view: 'archive', ...q } });
+    return { entries: await s.store.archive.list({ ...q, tenantId: a.user.tenantId }) };
   });
 }

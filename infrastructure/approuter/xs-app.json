@@ -2,6 +2,7 @@
   "welcomeFile": "/index.html",
   "authenticationMethod": "route",
   "sessionTimeout": 30,
+  "websockets": { "enabled": true },
   "logout": { "logoutEndpoint": "/logout", "logoutPage": "/logged-out.html" },
   "responseHeaders": [
     { "name": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://maps.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https://*.googleapis.com https://*.gstatic.com https://*.google.com https://*.ggpht.com; connect-src 'self' https://*.googleapis.com https://*.gstatic.com; font-src 'self' https://fonts.gstatic.com; worker-src blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
@@ -19,6 +20,14 @@
       "authenticationType": "xsuaa",
       "csrfProtection": false,
       "scope": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_ADMIN", "$XSAPPNAME.AI_AUDITOR"]
+    },
+    {
+      "source": "^/sap/(.*)$",
+      "target": "/sap/$1",
+      "destination": "S4HANA_2023_PP",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false,
+      "scope": ["$XSAPPNAME.AI_USER", "$XSAPPNAME.AI_ADMIN"]
     },
     { "source": "^/admin/?(.*)$", "target": "/admin/$1", "localDir": "resources", "authenticationType": "xsuaa", "scope": ["$XSAPPNAME.AI_ADMIN", "$XSAPPNAME.AI_AUDITOR"] },
     { "source": "^/(.*)$", "target": "$1", "localDir": "resources", "authenticationType": "xsuaa", "cacheControl": "no-cache" }

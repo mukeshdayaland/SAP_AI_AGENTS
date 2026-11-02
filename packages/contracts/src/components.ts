@@ -129,6 +129,139 @@ export const EquipmentComponent = z.object({
   }),
 });
 
+/** A SuccessFactors employee profile. */
+export const EmployeeComponent = z.object({
+  type: z.literal('employee'),
+  data: z.object({
+    userId: text(100),
+    displayName: text(),
+    email: text(254).optional(),
+    jobTitle: text().optional(),
+    department: text().optional(),
+    division: text().optional(),
+    location: text().optional(),
+    managerId: text(100).optional(),
+    managerName: text().optional(),
+    hireDate: text(20).optional(),
+    status: z.enum(['ACTIVE', 'INACTIVE']),
+  }),
+});
+
+const person = z.object({ userId: text(100), displayName: text(), jobTitle: text().optional(), department: text().optional(), location: text().optional() });
+
+/** An employee and the chain of managers above them, nearest first. */
+export const ReportingLineComponent = z.object({
+  type: z.literal('reporting_line'),
+  data: z.object({ employee: person, managers: z.array(person).max(12) }),
+});
+
+const absence = z.object({
+  timeType: text(80),
+  startDate: text(20),
+  endDate: text(20),
+  days: z.number().nonnegative().optional(),
+  status: z.enum(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']),
+});
+
+/** Time account balances of an employee and their upcoming absences. */
+export const TimeOffComponent = z.object({
+  type: z.literal('time_off'),
+  data: z.object({
+    userId: text(100),
+    displayName: text(),
+    balances: z.array(z.object({ account: text(80), balance: z.number().finite(), unit: z.enum(['DAYS', 'HOURS']) })).max(12),
+    upcoming: z.array(absence).max(20),
+  }),
+});
+
+/** A manager's team at a glance. Figures SuccessFactors did not provide are left out. */
+export const TeamOverviewComponent = z.object({
+  type: z.literal('team_overview'),
+  data: z.object({
+    managerId: text(100),
+    managerName: text(),
+    headcount: z.number().int().nonnegative(),
+    outToday: z.number().int().nonnegative().optional(),
+    openRoles: z.number().int().nonnegative().optional(),
+    members: z
+      .array(person.extend({ note: text(60).optional(), noteTone: z.enum(['neutral', 'positive', 'warning']).optional() }))
+      .max(200),
+    openPositions: z.array(z.object({ code: text(40), title: text().optional(), location: text().optional() })).max(20).optional(),
+  }),
+});
+
+/** Workflow requests waiting for the user's decision. Deciding one goes through the confirmation card. */
+export const ApprovalsComponent = z.object({
+  type: z.literal('approvals'),
+  data: z.object({
+    items: z
+      .array(z.object({ id: text(20), subjectName: text().optional(), title: text(120), detail: text(300).optional(), requestedOn: text(20).optional() }))
+      .max(50),
+  }),
+});
+
+const mailAddress = z.object({ name: text().optional(), address: text(254) });
+/** Links Outlook and Teams return; nothing else is opened from a mail or calendar card. */
+const officeLink = z.string().max(2_000).regex(/^https:\/\/([a-z0-9-]+\.)*(office\.com|office365\.com|outlook\.com|microsoft\.com|live\.com)\//i);
+
+const mailItem = z.object({
+  id: text(400),
+  subject: text(255),
+  from: mailAddress.optional(),
+  receivedAt: text(40),
+  preview: text(255),
+  isRead: z.boolean(),
+  hasAttachments: z.boolean(),
+  importance: z.enum(['low', 'normal', 'high']),
+  webLink: officeLink.optional(),
+});
+
+/** Messages of the user's own mailbox, newest first. */
+export const MailListComponent = z.object({
+  type: z.literal('mail_list'),
+  data: z.object({ title: text(), items: z.array(mailItem).max(50) }),
+});
+
+/** One message as plain text: received, saved as a draft or just sent. Never rendered as HTML. */
+export const MailMessageComponent = z.object({
+  type: z.literal('mail_message'),
+  data: mailItem.extend({
+    status: z.enum(['received', 'draft', 'sent']),
+    to: z.array(mailAddress).max(50),
+    cc: z.array(mailAddress).max(50),
+    body: text(8_000),
+    attachments: z.array(z.object({ name: text(), size: z.number().int().nonnegative().optional() })).max(20),
+  }),
+});
+
+/** The user's own calendar for a day or a range. Times are local to `timeZone`. */
+export const CalendarComponent = z.object({
+  type: z.literal('calendar'),
+  data: z.object({
+    from: text(10),
+    to: text(10),
+    timeZone: text(80),
+    events: z
+      .array(
+        z.object({
+          id: text(400),
+          subject: text(255),
+          start: text(20),
+          end: text(20),
+          isAllDay: z.boolean(),
+          location: text().optional(),
+          organizer: mailAddress.optional(),
+          attendees: z.number().int().nonnegative(),
+          joinUrl: officeLink.optional(),
+          showAs: z.enum(['free', 'tentative', 'busy', 'oof', 'workingElsewhere', 'unknown']),
+          isCancelled: z.boolean(),
+          webLink: officeLink.optional(),
+        }),
+      )
+      .max(100),
+  }),
+});
+
 export const GoodsReceiptComponent = z.object({
   type: z.literal('goods_receipt'),
   data: z.object({
@@ -337,7 +470,7 @@ export const KPIBlockComponent = z.object({
   }),
 });
 
-export const NOTICE_KINDS = ['NOT_AUTHORIZED', 'NOT_FOUND', 'BUSINESS_RULE', 'UNAVAILABLE', 'NOT_SUPPORTED', 'INVALID_INPUT', 'OTHER'] as const;
+export const NOTICE_KINDS = ['NOT_AUTHORIZED', 'NOT_FOUND', 'BUSINESS_RULE', 'UNAVAILABLE', 'NOT_SUPPORTED', 'INVALID_INPUT', 'OUTCOME_UNKNOWN', 'OTHER'] as const;
 
 /** A failed SAP call, told to the user: what happened, what to do, and a reference for support. */
 export const NoticeComponent = z.object({
@@ -382,7 +515,46 @@ export const VendorMapComponent = z.object({
   }),
 });
 
+/** A map of employees by work location. Carries only the filter: the page loads the employees itself, as the signed-in user. */
+export const EmployeeMapComponent = z.object({
+  type: z.literal('employee_map'),
+  data: z.object({
+    title: text(120),
+    /** Employees SuccessFactors holds for this filter, before any are dropped for lack of a location. */
+    employees: z.number().int().nonnegative(),
+    location: text(60).optional(),
+  }),
+});
+
+/** A Fiori launchpad address: under `/sap/` on the workspace's own address, or https. */
+export const FIORI_ADDRESS = /^(https:\/\/|\/sap\/)[^\s"'<>\\]+$/;
+
+/**
+ * A guided walk through a task in an SAP Fiori app, for what the agent cannot do itself.
+ * The steps and the address come from the tool's catalogue and configuration, never from the model.
+ */
+export const FioriGuideComponent = z.object({
+  type: z.literal('fiori_guide'),
+  data: z.object({
+    guide: text(40),
+    title: text(120),
+    app: text(120),
+    /** The business object the app is opened for. */
+    objectId: text(40).optional(),
+    /**
+     * The app in the Fiori launchpad: a path on the workspace's own address (`/sap/…`), where the agent can point
+     * and act in the page, or an https address, where it cannot. Absent when no launchpad is connected.
+     */
+    url: z.string().max(600).regex(FIORI_ADDRESS).optional(),
+    /** Whether the workspace may show the app in its built-in browser instead of a separate window. */
+    embed: z.boolean(),
+    steps: z.array(z.object({ title: text(120), detail: text(400).optional() })).min(1).max(12),
+  }),
+});
+
 export const UIComponentSchema = z.discriminatedUnion('type', [
+  FioriGuideComponent,
+  EmployeeMapComponent,
   InvoiceComponent,
   PurchaseOrderComponent,
   PurchaseRequisitionComponent,
@@ -390,6 +562,14 @@ export const UIComponentSchema = z.discriminatedUnion('type', [
   GLBalanceComponent,
   WorkOrderComponent,
   EquipmentComponent,
+  EmployeeComponent,
+  ReportingLineComponent,
+  TimeOffComponent,
+  TeamOverviewComponent,
+  ApprovalsComponent,
+  MailListComponent,
+  MailMessageComponent,
+  CalendarComponent,
   GoodsReceiptComponent,
   SalesOrderComponent,
   OutboundDeliveryComponent,

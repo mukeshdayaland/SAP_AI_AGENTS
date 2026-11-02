@@ -33,7 +33,8 @@ test.describe('Prowess AI workspace', () => {
   test('keyboard: Enter sends and Shift+Enter adds a line; tools are scoped to the agent', async ({ page }) => {
     await page.goto('/');
     // Tools are scoped per agent: PM tools belong to MM.
-    await page.getByLabel('Agent').selectOption('mm');
+    await page.getByRole('button', { name: /^Agent:/ }).click();
+    await page.getByRole('menuitemradio', { name: /^MM/ }).click();
     const input = page.getByLabel(/Message/);
     await input.fill('Analyze maintenance history');
     await input.press('Shift+Enter');

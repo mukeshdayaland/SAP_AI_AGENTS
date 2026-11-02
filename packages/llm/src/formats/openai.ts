@@ -1,6 +1,6 @@
 import { ProviderError } from '../errors.js';
 import type { SSEMessage } from '../sse.js';
-import { safeJsonObject, type FinishReason, type LLMChunk, type LLMMessage, type ToolSpec } from '../types.js';
+import { safeJsonObject, type FinishReason, type LLMChunk, type LLMMessage, type TokenUsage, type ToolSpec } from '../types.js';
 
 /**
  * OpenAI Chat Completions wire format. Used by Azure AI Foundry (Azure
@@ -80,7 +80,7 @@ export interface OpenAIStreamChunk {
     };
     finish_reason?: string | null;
   }[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } | null } | null;
   error?: { message?: string; code?: string | number };
 }
 
@@ -99,7 +99,7 @@ export async function* fromOpenAIStream(
   let finish: FinishReason | undefined;
   // OpenAI reports usage once at the end; Gemini repeats the running total on
   // every chunk. Keeping the last report is right for both — summing is not.
-  let usage = { inputTokens: 0, outputTokens: 0 };
+  let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
   for await (const msg of messages) {
     if (msg.data === '[DONE]') break;
@@ -130,7 +130,12 @@ export async function* fromOpenAIStream(
       finish = mapOpenAIFinish(choice.finish_reason) ?? finish;
     }
     if (chunk.usage && (chunk.usage.prompt_tokens || chunk.usage.completion_tokens)) {
-      usage = { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0 };
+      const cached = chunk.usage.prompt_tokens_details?.cached_tokens;
+      usage = {
+        inputTokens: chunk.usage.prompt_tokens ?? 0,
+        outputTokens: chunk.usage.completion_tokens ?? 0,
+        ...(cached && { cachedInputTokens: cached }),
+      };
     }
   }
 

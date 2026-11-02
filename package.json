@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:wtco": "node scripts/dev.mjs --brand=wtco",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
@@ -21,7 +22,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:sap": "vitest run --config tests/sap-integration/vitest.config.ts",
-    "build:cf": "npm run build -w @prowess/orchestrator && npm run build -w @prowess/sap-mcp && npm run build -w @prowess/web && node scripts/package-web.mjs"
+    "build:cf": "npm run build -w @prowess/orchestrator && npm run build -w @prowess/sap-mcp && npm run build -w @prowess/web && node scripts/package-web.mjs",
+    "eval": "tsx tests/evals/run.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",

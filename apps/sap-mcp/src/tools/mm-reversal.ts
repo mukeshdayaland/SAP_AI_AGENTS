@@ -11,7 +11,7 @@ export const mmReversalTools = [
     domain: 'mm',
     title: 'Reverse goods receipt',
     description:
-      'Reverse the latest goods receipt of a purchase order (MIGO cancellation). The stock is reduced again and the GR/IR posting is reversed. Not possible while the order has a supplier invoice. Consequential: always requires explicit user confirmation.',
+      'Reverse the latest goods receipt of a purchase order (MIGO cancellation). The stock is reduced again and the GR/IR posting is reversed. Not possible while the order has a supplier invoice.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Reversing goods receipt',
@@ -44,7 +44,7 @@ export const mmReversalTools = [
     name: 'mm_reverseSupplierInvoice',
     domain: 'mm',
     title: 'Reverse supplier invoice',
-    description: 'Reverse a posted supplier invoice (transaction MR8M). SAP posts a reversal document that removes the payable. Not possible once the invoice is paid. Consequential: always requires explicit user confirmation.',
+    description: 'Reverse a posted supplier invoice (transaction MR8M). SAP posts a reversal document that removes the payable. Not possible once the invoice is paid.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Reversing supplier invoice',

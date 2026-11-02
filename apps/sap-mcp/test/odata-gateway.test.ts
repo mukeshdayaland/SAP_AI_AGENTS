@@ -387,6 +387,17 @@ describe('OData V2: finance analysis services', () => {
     document = '';
     await expect(gateway.postJournalEntry(ctx, entry)).rejects.toMatchObject({ code: 'BUSINESS_RULE', message: 'SAP did not post journal entry in company code 1030. Check the document in SAP for the reason.' });
   });
+
+  it('reports a write that timed out as having an unknown result, not as retryable', async () => {
+    const entry = { companyCode: '1030', currency: 'SAR', postingDate: '2026-10-02', lines: [{ glAccount: '200041', debitCredit: 'D' as const, amount: 750 }, { glAccount: '200040', debitCredit: 'C' as const, amount: 750 }] };
+    const timedOut = () => Object.assign(new Error('timeout of 20000ms exceeded'), { code: 'ECONNABORTED' });
+    sdk.reply = () => {
+      throw timedOut();
+    };
+    await expect(gateway.postJournalEntry(ctx, entry)).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', retryable: false, message: expect.stringMatching(/not known whether the change was made/) });
+    // A read that times out changed nothing, so it stays a temporary failure.
+    await expect(gateway.getGLBalance(ctx, '200041', '1030', '2026')).rejects.toMatchObject({ code: 'UNAVAILABLE', retryable: true });
+  });
 });
 
 describe('OData V2: purchase-to-pay postings', () => {
@@ -484,6 +495,36 @@ describe('OData V2: purchase-to-pay postings', () => {
     // The block SAP sets during invoice verification is reported, not hidden.
     expect(invoice).toMatchObject({ number: '5105600003', status: 'PAYMENT_BLOCKED', paymentBlock: { code: 'R' } });
     expect(sdk.sent.some((s) => s.request.params?.$expand === 'to_SuplrInvcItemPurOrdRef')).toBe(true);
+  });
+
+  it('gives the terms of payment of the order, else of the supplier, else the configured ones (M8 169)', async () => {
+    const reply = (order: unknown, supplierTerms: string) => (r: SentRequest) => {
+      if (r.method === 'post') return { d: { SupplierInvoice: '5105600004', FiscalYear: '2026' } };
+      if (r.url.includes('A_MaterialDocumentItem')) return { d: { results: [{ ...receipt('5000000011', '10', '3'), TotalGoodsMvtAmtInCCCrcy: '3000.00', CompanyCodeCurrency: 'SAR' }] } };
+      if (r.url.includes('A_PurchaseOrder')) return order;
+      if (r.url.includes('A_SupplierCompany')) return { d: { PaymentTerms: supplierTerms } };
+      if (r.url.includes('A_SupplierInvoice')) return { d: { SupplierInvoice: '5105600004', FiscalYear: '2026', CompanyCode: '1030', InvoicingParty: '7002200010', InvoiceGrossAmount: '3360.00', DocumentCurrency: 'SAR' } };
+      return { d: { Supplier: '7002200010', SupplierName: 'AL-QASSIM' } };
+    };
+    const terms = () => (posted().request.data as { PaymentTerms?: string }).PaymentTerms;
+    const invoice = { purchaseOrder: '4200000403', reference: 'VEN004', grossAmount: 3360 };
+
+    sdk.reply = reply({ d: { ...purchaseOrder.d, PaymentTerms: '0002' } }, '0004');
+    await gateway.createSupplierInvoice(ctx, invoice);
+    expect(terms()).toBe('0002');
+
+    sdk.sent.length = 0;
+    sdk.reply = reply(purchaseOrder, '0004');
+    await gateway.createSupplierInvoice(ctx, invoice);
+    expect(sdk.sent.find((s) => s.request.url.includes('A_SupplierCompany'))!.request.url).toBe("/sap/opu/odata/sap/API_BUSINESS_PARTNER/A_SupplierCompany(Supplier='7002200010',CompanyCode='1030')");
+    expect(terms()).toBe('0004');
+
+    sdk.sent.length = 0;
+    sdk.reply = reply(purchaseOrder, '');
+    const configured = new ODataSapGateway({ destinationName: 'S4HANA', systemId: 'S4-DEV', allowTechnicalUser: false, logger: createLogger({ service: 't', level: 'error', sink: () => {} }), defaultPaymentTerms: '0001' });
+    await configured.createSupplierInvoice(ctx, invoice);
+    expect(terms()).toBe('0001');
+    expect(await configured.getGoodsReceipts(ctx, '4200000403')).toEqual([expect.objectContaining({ value: { amount: 3000, currency: 'SAR' } })]);
   });
 
   it('refuses an invoice before any goods receipt', async () => {

@@ -148,7 +148,7 @@ export const mmInvoiceTools = [
     domain: 'mm',
     title: 'Release invoice payment block',
     description:
-      'Release the payment block of a blocked supplier invoice so it can be paid. Consequential: always requires explicit user confirmation and SAP release authorization.',
+      'Release the payment block of a blocked supplier invoice so it can be paid. Needs SAP release authorization.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Releasing payment block',

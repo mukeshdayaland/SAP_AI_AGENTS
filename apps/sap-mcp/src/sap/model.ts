@@ -75,6 +75,8 @@ export interface PurchaseOrder {
   createdOn: string;
   purchasingGroup?: string;
   companyCode: string;
+  /** Terms of payment key of the order, e.g. 0001. */
+  paymentTerms?: string;
   items: PurchaseOrderItem[];
 }
 
@@ -602,10 +604,13 @@ export interface SapCallContext {
   principal: PrincipalAssertion;
   /** End-user XSUAA token for principal propagation (absent in local dev). */
   userJwt?: string;
+  /** End-user Identity Authentication token, exchanged by the outlook domain for the user's Microsoft Graph token. */
+  iasToken?: string;
   correlationId: string;
 }
 
-export type SapErrorCode = 'NOT_FOUND' | 'NOT_AUTHORIZED' | 'UNAVAILABLE' | 'NOT_SUPPORTED' | 'BUSINESS_RULE' | 'INVALID_INPUT';
+/** `OUTCOME_UNKNOWN`: a change was sent but SAP did not answer in time, so it may or may not have been made. */
+export type SapErrorCode = 'NOT_FOUND' | 'NOT_AUTHORIZED' | 'UNAVAILABLE' | 'NOT_SUPPORTED' | 'BUSINESS_RULE' | 'INVALID_INPUT' | 'OUTCOME_UNKNOWN';
 
 /** Raised by gateways. `message` is safe to show to the user. */
 export class SapError extends Error {

@@ -1,11 +1,34 @@
 'use client';
 
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
+import { useT } from '@/lib/i18n';
 import { Badge, cx, type Tone } from '../ui/primitives';
 
 /** Lets cards offer follow-up prompts (e.g. "Analyze vendor") without knowing about chat state. */
 export const AskContext = createContext<(prompt: string) => void>(() => undefined);
 export const useAsk = () => useContext(AskContext);
+
+/**
+ * Long lists in a card start short, so an answer stays readable; the rest is
+ * one click away. `toggle` is null when everything already fits.
+ */
+export function useShowMore<T>(items: readonly T[], limit: number) {
+  const [open, setOpen] = useState(false);
+  const hidden = items.length - limit;
+  return {
+    visible: open || hidden <= 0 ? items : items.slice(0, limit),
+    toggle: hidden > 0 ? <ShowMoreButton open={open} hidden={hidden} onClick={() => setOpen((o) => !o)} /> : null,
+  };
+}
+
+function ShowMoreButton({ open, hidden, onClick }: { open: boolean; hidden: number; onClick: () => void }) {
+  const t = useT();
+  return (
+    <button type="button" aria-expanded={open} onClick={onClick} className="mt-2 rounded-lg px-1.5 py-0.5 text-xs font-semibold text-brand hover:bg-brand-soft">
+      {open ? t('card.showLess') : t('card.showMore', { count: hidden })}
+    </button>
+  );
+}
 
 export function SapCard({
   kind,

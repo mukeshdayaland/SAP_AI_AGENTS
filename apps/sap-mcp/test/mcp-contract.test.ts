@@ -24,6 +24,9 @@ const cfg: McpConfig = {
   assertionSecret: SECRET,
   domains: new Set(BUSINESS_DOMAINS),
   sap: { mode: 'mock', destinationName: 'S4', systemId: 'S4-MOCK', allowTechnicalUser: false, mockLatencyMs: 0 },
+  sf: { mode: 'mock', destinationName: 'SF_ODATA', systemId: 'SF-MOCK', userMapping: 'email' },
+  outlook: { mode: 'mock', systemId: 'M365-MOCK', timeZone: 'Arab Standard Time', allowedRecipientDomains: [] },
+  documentAi: { mode: 'mock', clientId: 'default' },
   toolTimeoutMs: 5_000,
   logLevel: 'error',
 };
@@ -116,6 +119,26 @@ describe('SAP MCP contract', () => {
     const replay = await ok.callTool({ name: 'mm_releaseInvoicePaymentBlock', arguments: args });
     expect(JSON.stringify(replay.structuredContent)).toContain('already been used');
     await ok.close();
+  });
+
+  it('publishes the role a tool asks for, and refuses the tool to anyone without it', async () => {
+    const plain = await connect({ [HEADERS.principal]: principal() });
+    const { tools } = await plain.listTools();
+    expect(tools.find((t) => t.name === 'sf_runBusinessCase')?._meta?.[MCP_META.requiredRole]).toBe('AI_POWER_USER');
+    expect(tools.find((t) => t.name === 'sf_getMyProfile')?._meta?.[MCP_META.requiredRole]).toBeUndefined();
+    const refused = await plain.callTool({ name: 'sf_listBusinessCases', arguments: {} });
+    expect(refused.isError).toBe(true);
+    expect(JSON.stringify(refused.structuredContent)).toContain('NOT_PERMITTED');
+    await plain.close();
+
+    const power = signAssertion<PrincipalAssertion>(
+      { typ: 'principal', sub: 'alex.morgan@prowess.example', name: 'Alex', tenant: 't1', roles: ['AI_USER', 'AI_POWER_USER'], env: 'DEV', agent: 'hcm', cid: 'PRW-TEST', aud: MCP_AUDIENCE },
+      SECRET,
+      60,
+    );
+    const client = await connect({ [HEADERS.principal]: power });
+    expect((await client.callTool({ name: 'sf_listBusinessCases', arguments: { module: 'Recruiting' } })).isError).toBeFalsy();
+    await client.close();
   });
 
   it('previews write actions without executing them', async () => {

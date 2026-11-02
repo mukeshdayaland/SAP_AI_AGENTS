@@ -15,3 +15,8 @@ modules:
       instances: 2
     properties:
       PROWESS_ENV: PROD
+  - name: prowess-sf-mcp
+    parameters:
+      instances: 2
+    properties:
+      PROWESS_ENV: PROD

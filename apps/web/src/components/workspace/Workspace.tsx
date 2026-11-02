@@ -1,21 +1,26 @@
 'use client';
 
-import type { AttachmentRef, ConversationSummary, PublicError, StarterAction, WorkspaceConfig } from '@prowess/contracts';
+import type { AttachmentRef, BrowserAction, ConversationSummary, PublicError, StarterAction, WorkspaceConfig } from '@prowess/contracts';
 import { Workflow, Wrench, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiError} from '@/lib/api';
 import { api } from '@/lib/api';
+import { formatTime } from '@/lib/format';
+import { translateServer, useDocumentTitle, useI18n } from '@/lib/i18n';
 import { prefs, type SendKey, type ThemePref } from '@/lib/prefs';
 import { useChat } from '@/lib/use-chat';
 import { AssistantMessage, TechnicalDetailsList, UserMessage } from '../chat/Message';
 import { AskContext } from '../sap/card';
 import { SapComponent } from '../sap/cards';
+import { FioriContext, FioriPane, sameGuide, type FioriGuide, type FioriPaneHandle } from '../sap/fiori-guide';
 import { Button, ProwessMark, Spinner, cx } from '../ui/primitives';
 import { Composer, type ComposerHandle } from './Composer';
 import { Header } from './Header';
 import { Landing } from './Landing';
 import { SettingsDialog } from './SettingsDialog';
 import { Sidebar } from './Sidebar';
+import { brand } from '@/lib/brand';
+import { Backdrop } from './Backdrop';
 
 const WINDOW = 60;
 
@@ -45,6 +50,8 @@ function useWideScreen(): boolean {
 }
 
 export function Workspace() {
+  const { t, locale } = useI18n();
+  useDocumentTitle();
   const [config, setConfig] = useState<WorkspaceConfig | null>(null);
   const [bootError, setBootError] = useState<PublicError | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -57,6 +64,8 @@ export function Workspace() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [detailsId, setDetailsId] = useState<string | null>(null);
+  const [guide, setGuide] = useState<FioriGuide | null>(null);
+  const fiori = useMemo(() => ({ open: setGuide, ...(guide && { active: guide }) }), [guide]);
   const wide = useWideScreen();
   const composer = useRef<ComposerHandle>(null);
   const bottom = useRef<HTMLDivElement>(null);
@@ -67,7 +76,15 @@ export function Workspace() {
   const refreshConversations = useCallback(() => {
     api.conversations().then(setConversations, () => undefined);
   }, []);
-  const chat = useChat(refreshConversations);
+  // The agent's steps in the Fiori pane arrive on the chat stream; the pane carries them out and the result goes back.
+  const pane = useRef<FioriPaneHandle>(null);
+  const onBrowserAction = useCallback(async (action: BrowserAction) => {
+    // A guide opened in this same answer may still be mounting its pane.
+    for (let waited = 0; !pane.current && waited < 3_000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+    const result = pane.current ? await pane.current.perform(action) : { id: action.id, ok: false, message: 'The Fiori pane is closed. Open the app again with shared_showFioriGuide.' };
+    await api.browserResult(result).catch(() => undefined);
+  }, []);
+  const chat = useChat(refreshConversations, onBrowserAction);
 
   useEffect(() => {
     setTheme(prefs.theme());
@@ -88,6 +105,14 @@ export function Workspace() {
     );
   }, []);
 
+  // Agent names, starters and model tiers come from the server in the user's language: fetch them again when it changes.
+  const shownLocale = useRef(locale);
+  useEffect(() => {
+    if (!booted.current || shownLocale.current === locale) return;
+    shownLocale.current = locale;
+    api.workspace().then(setConfig, () => undefined);
+  }, [locale]);
+
   useEffect(() => {
     // Don't clear a deep link (?c=…) before it has been read at boot.
     if (booted.current) writeConversationParam(chat.conversationId);
@@ -97,6 +122,12 @@ export function Workspace() {
   useEffect(() => {
     if (stick.current) bottom.current?.scrollIntoView({ block: 'end' });
   }, [chat.messages]);
+
+  // A guide the agent opens while answering goes straight into the pane on the right.
+  const opened = chat.messages.findLast((m) => m.status === 'streaming')?.components.findLast((c) => c.type === 'fiori_guide')?.data;
+  useEffect(() => {
+    if (opened) setGuide((current) => (sameGuide(current, opened) ? current : opened));
+  }, [opened]);
 
   const agentsById = useMemo(() => new Map((config?.agents ?? []).map((a) => [a.id, a])), [config]);
 
@@ -120,6 +151,7 @@ export function Workspace() {
     chat.reset();
     setMobileOpen(false);
     setShowAll(false);
+    setGuide(null);
     if (config) setAgent(config.defaultAgent);
     requestAnimationFrame(() => composer.current?.focus());
   };
@@ -127,6 +159,7 @@ export function Workspace() {
   const select = (id: string) => {
     setMobileOpen(false);
     setShowAll(false);
+    setGuide(null);
     stick.current = true;
     void chat.load(id);
   };
@@ -157,9 +190,9 @@ export function Workspace() {
     return (
       <main className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
         <ProwessMark size={44} />
-        <p className="max-w-md text-ink">{bootError.message}</p>
-        {bootError.reference && <p className="font-mono text-xs text-ink-3">Reference: {bootError.reference}</p>}
-        <Button onClick={() => window.location.reload()}>Reload</Button>
+        <p className="max-w-md text-ink">{translateServer(bootError.message)}</p>
+        {bootError.reference && <p className="text-xs text-ink-3">{t('common.reference', { reference: bootError.reference })}</p>}
+        <Button onClick={() => window.location.reload()}>{t('common.reload')}</Button>
       </main>
     );
   }
@@ -167,7 +200,7 @@ export function Workspace() {
     return (
       <main className="flex min-h-full items-center justify-center" aria-busy="true">
         <Spinner className="h-6 w-6 text-brand" />
-        <span className="sr-only">Loading Prowess AI</span>
+        <span className="sr-only">{t('workspace.loading', { name: brand.name })}</span>
       </main>
     );
   }
@@ -176,17 +209,20 @@ export function Workspace() {
   const hidden = chat.messages.length - messages.length;
   const lastAssistant = [...chat.messages].reverse().find((m) => m.role === 'assistant');
   // The context panel: the latest workflow run of the conversation and, once asked for, the technical details of one answer.
-  const process = [...chat.messages]
-    .reverse()
-    .flatMap((m) => [...m.components].reverse())
-    .find((c) => c.type === 'workflow_run');
+  const process = brand.processPanel
+    ? [...chat.messages]
+        .reverse()
+        .flatMap((m) => [...m.components].reverse())
+        .find((c) => c.type === 'workflow_run')
+    : undefined;
   const detailsFor = chat.messages.find((m) => m.id === detailsId && m.execution);
-  const agentName = (id?: string) => agentsById.get(id ?? agent)?.name ?? 'Prowess AI';
+  const agentName = (id?: string) => agentsById.get(id ?? agent)?.name ?? brand.name;
 
   return (
     <AskContext.Provider value={ask}>
+      <FioriContext.Provider value={fiori}>
       <a href="#prowess-prompt" className="skip-link">
-        Skip to message input
+        {t('workspace.skip')}
       </a>
       <div className={cx('flex h-full', config.environment === 'PROD' && 'border-t-[3px] border-error')}>
         <Sidebar
@@ -216,7 +252,8 @@ export function Workspace() {
           onSettings={() => setSettingsOpen(true)}
         />
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="relative isolate flex min-w-0 flex-1 flex-col">
+          <Backdrop />
           <Header
             config={config}
             agent={agent}
@@ -243,8 +280,8 @@ export function Workspace() {
               </div>
             ) : chat.loadError ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-                <p className="text-ink">{chat.loadError.message}</p>
-                <Button onClick={startNew}>Start a new conversation</Button>
+                <p className="text-ink">{translateServer(chat.loadError.message)}</p>
+                <Button onClick={startNew}>{t('workspace.startNew')}</Button>
               </div>
             ) : chat.messages.length === 0 ? (
               <Landing config={config} onStarter={onStarter} />
@@ -253,7 +290,7 @@ export function Workspace() {
                 {hidden > 0 && (
                   <div className="text-center">
                     <Button size="sm" variant="ghost" onClick={() => setShowAll(true)}>
-                      Show {hidden} earlier messages
+                      {t('workspace.earlier', { count: hidden })}
                     </Button>
                   </div>
                 )}
@@ -286,7 +323,7 @@ export function Workspace() {
             )}
           </main>
 
-          <div className="shrink-0 bg-gradient-to-t from-bg via-bg to-transparent px-3 pb-3 pt-2 md:px-6">
+          <div className="brand-clear shrink-0 bg-gradient-to-t from-bg via-bg to-transparent px-3 pb-3 pt-2 md:px-6">
             <Composer
               ref={composer}
               streaming={chat.streaming}
@@ -300,12 +337,14 @@ export function Workspace() {
           </div>
         </div>
 
-        {wide && (process || (config.features.technicalPanel && detailsFor?.execution)) && (
-          <aside aria-label="Context" className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-surface">
+        {guide && <FioriPane ref={pane} key={`${guide.guide}:${guide.objectId ?? ''}`} guide={guide} onClose={() => setGuide(null)} />}
+
+        {wide && !guide && (process || (config.features.technicalPanel && detailsFor?.execution)) && (
+          <aside aria-label={t('workspace.context')} className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-s border-line bg-surface">
             {process && (
               <section className="border-b border-line p-3">
                 <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-3">
-                  <Workflow size={13} aria-hidden /> Current process
+                  <Workflow size={13} aria-hidden /> {t('workspace.currentProcess')}
                 </h2>
                 <SapComponent component={process} />
               </section>
@@ -313,12 +352,12 @@ export function Workspace() {
             {config.features.technicalPanel && detailsFor?.execution && (
               <section className="p-3">
                 <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink-3">
-                  <Wrench size={13} aria-hidden /> Technical details
-                  <button type="button" onClick={() => setDetailsId(null)} aria-label="Close technical details" className="ml-auto rounded p-0.5 text-ink-3 hover:bg-muted hover:text-ink">
+                  <Wrench size={13} aria-hidden /> {t('workspace.technical')}
+                  <button type="button" onClick={() => setDetailsId(null)} aria-label={t('workspace.closeTechnical')} className="ms-auto rounded p-0.5 text-ink-3 hover:bg-muted hover:text-ink">
                     <X size={13} aria-hidden />
                   </button>
                 </h2>
-                <p className="mb-2 text-[10px] text-ink-3">{detailsFor.id === lastAssistant?.id ? 'Latest answer' : `Answer of ${new Date(detailsFor.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</p>
+                <p className="mb-2 text-[10px] text-ink-3">{detailsFor.id === lastAssistant?.id ? t('workspace.latestAnswer') : t('workspace.answerOf', { time: formatTime(detailsFor.createdAt) })}</p>
                 <TechnicalDetailsList execution={detailsFor.execution} />
               </section>
             )}
@@ -326,7 +365,7 @@ export function Workspace() {
         )}
       </div>
       <div aria-live="polite" className="sr-only">
-        {chat.streaming ? 'Prowess AI is responding' : lastAssistant?.status === 'complete' ? 'Response complete' : ''}
+        {chat.streaming ? t('workspace.responding', { name: brand.name }) : lastAssistant?.status === 'complete' ? t('workspace.complete') : ''}
       </div>
       <SettingsDialog
         open={settingsOpen}
@@ -339,6 +378,7 @@ export function Workspace() {
           setSendKey(k);
         }}
       />
+      </FioriContext.Provider>
     </AskContext.Provider>
   );
 }

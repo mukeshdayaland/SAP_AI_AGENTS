@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { MCP_META, TOOL_RISKS, type DeploymentEnvironment, type ToolRisk, type UserProfile } from '@prowess/contracts';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { APP_ROLES, MCP_META, TOOL_RISKS, type AppRole, type DeploymentEnvironment, type ToolChoices, type ToolRisk, type UserProfile } from '@prowess/contracts';
 import { M, propagationHeaders, type Logger } from '@prowess/observability';
 import { HEADERS, MCP_AUDIENCE, sha256Hex, signAssertion, type PrincipalAssertion } from '@prowess/security';
 import type { McpServerConfig } from '../config/env.js';
@@ -22,7 +23,22 @@ export interface McpToolInfo {
   operation: string;
   statusLabel: string;
   internal: boolean;
+  /** Offered only to users who hold this role. */
+  requiredRole?: AppRole;
+  /** Argument options that each agent is offered only for its own domains. */
+  choices?: ToolChoices;
   serverId: string;
+}
+
+/** Choices metadata as a server published it, or undefined when it is not well-formed. */
+function parseChoices(value: unknown): ToolChoices | undefined {
+  const c = value as Partial<ToolChoices> | undefined;
+  const ok =
+    typeof c?.param === 'string' &&
+    typeof c.intro === 'string' &&
+    Array.isArray(c.options) &&
+    c.options.every((o) => typeof o?.value === 'string' && typeof o.text === 'string' && Array.isArray(o.domains) && o.domains.every((d) => typeof d === 'string'));
+  return ok ? (c as ToolChoices) : undefined;
 }
 
 export interface CallerIdentity {
@@ -31,6 +47,8 @@ export interface CallerIdentity {
   environment: DeploymentEnvironment;
   correlationId: string;
   userToken?: string;
+  /** Identity Authentication token for the outlook domain's Graph token exchange. */
+  iasToken?: string;
 }
 
 export interface ToolCallOutcome {
@@ -68,6 +86,7 @@ export class McpGateway {
         cid: identity.correlationId,
         aud: MCP_AUDIENCE,
         ...(identity.userToken && { utk: sha256Hex(identity.userToken) }),
+        ...(identity.iasToken && { itk: sha256Hex(identity.iasToken) }),
       },
       this.secret,
       120,
@@ -76,6 +95,7 @@ export class McpGateway {
       ...propagationHeaders(),
       [HEADERS.principal]: principal,
       ...(identity.userToken && { [HEADERS.userToken]: identity.userToken }),
+      ...(identity.iasToken && { [HEADERS.iasToken]: identity.iasToken }),
       ...(confirmationToken && { [HEADERS.confirmation]: confirmationToken }),
     };
   }
@@ -110,6 +130,8 @@ export class McpGateway {
               operation: String(meta[MCP_META.operation] ?? 'UNKNOWN'),
               statusLabel: String(meta[MCP_META.statusLabel] ?? `Running ${t.name}`),
               internal: meta['prowess/internal'] === true,
+              ...(APP_ROLES.includes(meta[MCP_META.requiredRole] as AppRole) && { requiredRole: meta[MCP_META.requiredRole] as AppRole }),
+              ...(parseChoices(meta[MCP_META.choices]) && { choices: parseChoices(meta[MCP_META.choices])! }),
               serverId: server.id,
             };
           });
@@ -126,11 +148,13 @@ export class McpGateway {
         return;
       }
       for (const t of r.value) {
-        if (seen.has(t.name)) {
+        // Every server has its own internal tools (the write preview); only tools offered to agents must be unique.
+        const key = t.internal ? `${t.serverId}:${t.name}` : t.name;
+        if (seen.has(key)) {
           this.logger.error('mcp.duplicate_tool', { tool: t.name, server: t.serverId });
           continue;
         }
-        seen.add(t.name);
+        seen.add(key);
         tools.push(t);
       }
     });
@@ -170,6 +194,10 @@ export class McpGateway {
         } catch (err) {
           const durationMs = Date.now() - started;
           this.logger.warn('mcp.call_failed', { tool: tool.name, error: (err as Error).message });
+          // The call reached the tool service but no answer came back: a write may still have been made.
+          if (err instanceof McpError && err.code === ErrorCode.RequestTimeout) {
+            return { ok: false, structured: undefined, errorCode: 'TOOL_TIMEOUT', errorMessage: 'The SAP tool service did not answer in time.', retryable: false, durationMs };
+          }
           return { ok: false, structured: undefined, errorCode: 'TOOL_UNAVAILABLE', errorMessage: 'The SAP tool service is not reachable.', retryable: true, durationMs };
         }
       },

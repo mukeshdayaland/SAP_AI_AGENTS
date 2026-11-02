@@ -81,6 +81,8 @@ export interface ODataGatewayConfig {
   /** Allows calls without an end-user token (technical user). Off by default. */
   allowTechnicalUser: boolean;
   logger: Logger;
+  /** Terms of payment for a supplier invoice when neither the order nor the supplier's company code data has any. */
+  defaultPaymentTerms?: string;
 }
 
 const SERVICES = {
@@ -189,7 +191,7 @@ function odataDate(v: unknown): string | undefined {
 const toODataDate = (isoDate: string) => `/Date(${Date.parse(`${isoDate}T00:00:00Z`)})/`;
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
-const encodeParameterValues = (params: Record<string, unknown>) => Object.fromEntries(Object.entries(params).map(([key, value]) => [key, encodeURIComponent(String(value))]));
+export const encodeParameterValues = (params: Record<string, unknown>) => Object.fromEntries(Object.entries(params).map(([key, value]) => [key, encodeURIComponent(String(value))]));
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 const isTrue = (v: unknown) => v === true || v === 'true' || v === 'X';
@@ -202,7 +204,18 @@ const MAX_ASSETS = 20;
 
 const num = (v: unknown) => (typeof v === 'number' ? v : Number.parseFloat(String(v ?? '0')) || 0);
 
-function statusOf(err: unknown): number | undefined {
+/** Whether the request gave up waiting for an answer (a client timeout), as opposed to being refused. */
+export function isTimeout(err: unknown): boolean {
+  let e: unknown = err;
+  for (let i = 0; i < 6 && e; i++) {
+    const { code, message } = e as { code?: unknown; message?: unknown };
+    if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || (typeof message === 'string' && /\btimeout\b.*\bexceeded\b/i.test(message))) return true;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+export function statusOf(err: unknown): number | undefined {
   let e: unknown = err;
   for (let i = 0; i < 6 && e; i++) {
     const status = (e as { response?: { status?: number } }).response?.status ?? (e as { status?: number }).status;
@@ -319,6 +332,8 @@ export class ODataSapGateway implements SapGateway {
       // A rejected posting is a business outcome the user must be able to act on, so SAP's reason is passed on.
       if (status === 400 && method !== 'get' && sapMessage) throw new SapError('BUSINESS_RULE', `SAP rejected ${what}: ${sapMessage}`);
       if (status === 400) throw new SapError('INVALID_INPUT', `SAP rejected the request for ${what}.`);
+      // SAP may still have made a change it did not answer for in time, so the user must check before trying again.
+      if (method !== 'get' && isTimeout(err)) throw new SapError('OUTCOME_UNKNOWN', `SAP did not answer in time for ${what}, so it is not known whether the change was made.`);
       throw new SapError('UNAVAILABLE', `SAP is not reachable right now (${what}).`, true);
     } finally {
       M.sapDuration().observe({ system: this.systemId, method }, Date.now() - started);
@@ -474,6 +489,7 @@ export class ODataSapGateway implements SapGateway {
       createdOn: odataDate(e.CreationDate) ?? '',
       ...(e.PurchasingGroup ? { purchasingGroup: String(e.PurchasingGroup) } : {}),
       companyCode: String(e.CompanyCode ?? ''),
+      ...(str(e.PaymentTerms) && { paymentTerms: str(e.PaymentTerms) }),
       items,
     };
   }
@@ -510,7 +526,21 @@ export class ODataSapGateway implements SapGateway {
       postingDate: odataDate(i.PostingDate) ?? '',
       quantity: num(i.QuantityInEntryUnit),
       unit: String(i.EntryUnit ?? ''),
+      // The value of the movement in company code currency, where the service returns it.
+      ...(num(i.TotalGoodsMvtAmtInCCCrcy) > 0 && { value: { amount: num(i.TotalGoodsMvtAmtInCCCrcy), currency: str(i.CompanyCodeCurrency) } }),
     }));
+  }
+
+  /** Terms of payment of the supplier in a company code, if maintained. */
+  private async supplierPaymentTerms(ctx: SapCallContext, supplier: string, companyCode: string): Promise<string | undefined> {
+    try {
+      const e = (await this.request(ctx, `Supplier ${supplier} in company code ${companyCode}`, 'get', `${SERVICES.bp}/A_SupplierCompany(Supplier=${lit(supplier)},CompanyCode=${lit(companyCode)})`, {
+        $select: 'PaymentTerms',
+      })) as ODataEntity;
+      return str(e.PaymentTerms) || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async getEquipment(ctx: SapCallContext, number: string): Promise<Equipment> {
@@ -984,6 +1014,8 @@ export class ODataSapGateway implements SapGateway {
       .map((i) => ({ ...i, received: received.filter((g) => g.item === i.item).reduce((sum, g) => sum + g.quantity, 0) }))
       .filter((i) => i.received > 0);
     if (!items.length) throw new SapError('BUSINESS_RULE', `No goods receipt has been posted for purchase order ${invoice.purchaseOrder}, so there is nothing to invoice.`);
+    // MIRO takes the terms of payment from the order; without them (M8 169) the supplier's or the configured ones are given.
+    const paymentTerms = po.paymentTerms ?? (await this.supplierPaymentTerms(ctx, po.vendorId, po.companyCode)) ?? this.cfg.defaultPaymentTerms;
 
     const created = (await this.request(ctx, `Supplier invoice for purchase order ${invoice.purchaseOrder}`, 'post', `${SERVICES.invoice}/A_SupplierInvoice`, undefined, {
       body: {
@@ -994,6 +1026,7 @@ export class ODataSapGateway implements SapGateway {
         DocumentCurrency: currency,
         InvoiceGrossAmount: String(invoice.grossAmount),
         SupplierInvoiceIDByInvcgParty: invoice.reference,
+        ...(paymentTerms && { PaymentTerms: paymentTerms }),
         TaxIsCalculatedAutomatically: true,
         to_SuplrInvcItemPurOrdRef: {
           results: items.map((i, index) => ({

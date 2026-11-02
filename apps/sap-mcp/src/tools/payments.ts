@@ -3,12 +3,14 @@ import type { NewPaymentRequest, PaymentRequest } from '../sap/model.js';
 import { companyCode, partnerNumber } from './line-items.js';
 import { defineTool, fmt, now, type ToolContext, type ToolResultPayload } from './types.js';
 
-const paymentId = z.string().uuid().describe('Id of the payment request, as shown in the payment request list');
-const amount = z.coerce.number().positive().max(1_000_000_000).describe('Payment amount');
-const currency = z.string().regex(/^[A-Z]{3}$/).default('SAR').describe('Currency, e.g. SAR');
-const bankAccount = z.string().regex(/^\d{6,10}$/).describe('Bank G/L account the payment is posted to, e.g. 220001');
-const reference = z.string().trim().min(1).max(16).optional().describe('Reference, e.g. the bank statement or cheque number');
-const text = z.string().trim().min(1).max(25).optional().describe('Short text for the document header');
+// A refinement instead of .uuid(): the same check, without a 150-character pattern in every schema the model reads.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const paymentId = z.string().refine((s) => UUID.test(s), 'Invalid payment request id').describe('Payment request id from gl_listPaymentRequests');
+const amount = z.coerce.number().positive().max(1_000_000_000);
+const currency = z.string().regex(/^[A-Z]{3}$/).default('SAR');
+const bankAccount = z.string().regex(/^\d{6,10}$/).describe('Bank G/L account, e.g. 220001');
+const reference = z.string().trim().min(1).max(16).optional().describe('e.g. bank statement or cheque number');
+const text = z.string().trim().min(1).max(25).optional().describe('Document header text');
 
 const STATUS_LABEL: Record<PaymentRequest['status'], string> = { NEW: 'Waiting for approval', APPROVED: 'Approved', POSTED: 'Posted', REJECTED: 'Rejected' };
 const partnerLabel = (p: Pick<PaymentRequest, 'direction'>) => (p.direction === 'INCOMING' ? 'customer' : 'supplier');
@@ -55,8 +57,8 @@ function requestTool(direction: NewPaymentRequest['direction']) {
     domain: incoming ? 'ar' : 'ap',
     title,
     description: incoming
-      ? 'Create a request to post an incoming customer payment on account (transaction F-28). Nothing is posted yet: a second person must approve the request before it can be posted. Requires user confirmation.'
-      : 'Create a request to post an outgoing supplier payment on account (transaction F-53). Nothing is posted yet: a second person must approve the request before it can be posted. Requires user confirmation.',
+      ? 'Request an incoming customer payment on account (F-28). Posts nothing: a second person must approve the request before it is posted.'
+      : 'Request an outgoing supplier payment on account (F-53). Posts nothing: a second person must approve the request before it is posted.',
     risk: 'BUSINESS_WRITE',
     operation: 'SAP_WRITE',
     statusLabel: 'Creating payment request',
@@ -175,7 +177,7 @@ export const paymentTools = [
     name: 'gl_approvePaymentRequest',
     domain: 'gl',
     title: 'Approve payment request',
-    description: 'Approve a payment request that another person created, so it can be posted. SAP refuses approval by the person who created the request. Consequential: always requires explicit user confirmation.',
+    description: 'Approve a payment request so it can be posted. SAP refuses approval by the person who created it.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Approving payment request',
@@ -201,7 +203,7 @@ export const paymentTools = [
     name: 'gl_rejectPaymentRequest',
     domain: 'gl',
     title: 'Reject payment request',
-    description: 'Reject a payment request that is waiting for approval or approved but not yet posted. A rejected request can no longer be posted. Requires user confirmation.',
+    description: 'Reject a payment request that is not yet posted; it can then no longer be posted.',
     risk: 'BUSINESS_WRITE',
     operation: 'SAP_WRITE',
     statusLabel: 'Rejecting payment request',
@@ -225,8 +227,7 @@ export const paymentTools = [
     name: 'gl_postPaymentRequest',
     domain: 'gl',
     title: 'Post payment',
-    description:
-      'Post an approved payment request to accounting as a payment on account (document type DZ for incoming, KZ for outgoing). The payment is not cleared against invoices. Consequential: always requires explicit user confirmation.',
+    description: 'Post an approved payment request as a payment on account (DZ incoming, KZ outgoing), not cleared against invoices.',
     risk: 'HIGH_IMPACT',
     operation: 'SAP_WRITE',
     statusLabel: 'Posting payment',

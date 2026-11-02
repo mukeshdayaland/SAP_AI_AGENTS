@@ -4,14 +4,14 @@
 
 | Instance | Service / plan | Used by | Why |
 | --- | --- | --- | --- |
-| `prowess-xsuaa` | `xsuaa` / `application` (from `infrastructure/btp/xs-security.json`) | web, orchestrator, MCP | Login, JWT validation, token exchange |
-| `prowess-destination` | `destination` / `lite` | MCP | S/4HANA destination |
+| `prowess-xsuaa` | `xsuaa` / `application` (from `infrastructure/btp/xs-security.json`) | web, orchestrator, both MCP services | Login, JWT validation, token exchange |
+| `prowess-destination` | `destination` / `lite` | both MCP services | S/4HANA and SuccessFactors destinations |
 | `prowess-connectivity` | `connectivity` / `lite` | MCP | Cloud Connector tunnel (on-premise S/4) |
 | `prowess-aicore` | `aicore` / `extended` (existing) | orchestrator | SAP AI Core inference |
 | `prowess-postgres` | `postgresql-db` (existing) | orchestrator | Conversations, actions, usage |
 | `prowess-auditlog` | `auditlog` / `oauth2` | orchestrator | Business audit trail |
 | `prowess-logging` | `cloud-logging` / `standard` | all | Logs and metrics (OpenTelemetry-ready) |
-| `prowess-secrets` | user-provided | orchestrator, MCP | Assertion secret and non-SAP provider credentials |
+| `prowess-secrets` | user-provided | orchestrator, both MCP services | Assertion secret and non-SAP provider credentials |
 
 Nothing else is provisioned. Object storage isn't needed while uploads stay short-lived (see operations).
 
@@ -32,6 +32,8 @@ cat > /tmp/prowess-secrets.json <<'JSON'
 JSON
 cf cups prowess-secrets -p /tmp/prowess-secrets.json && rm /tmp/prowess-secrets.json
 # 4. Destination "S4HANA" in the subaccount (see sap-connectivity.md).
+# 5. Destination "SF_ODATA" for SuccessFactors: set the API host and the OAuth client key in the template, then
+btp create connectivity/destination -c infrastructure/btp/sf-odata-destination.json --subaccount <subaccount-id>
 ```
 
 Values in `prowess-secrets` are merged into the environment at startup. Any variable from `.env.example` can be
@@ -53,9 +55,15 @@ Alternatively, use `cf push -f infrastructure/cloudfoundry/manifest.yml`. It giv
 routes only (`apps.internal`) plus container-to-container network policies. This is recommended where possible:
 only the approuter is publicly reachable.
 
+## MCP services
+
+The MTA deploys `apps/sap-mcp` twice: `prowess-sap-mcp` serves the S/4HANA domains and `prowess-sf-mcp` serves
+only `sf` (`MCP_DOMAINS=sf`, `SF_MODE=odata`). The orchestrator reaches both through `MCP_SERVERS`. A tool
+name may be served by one of them only, so `sf` must not be in the `MCP_DOMAINS` of `prowess-sap-mcp`.
+
 ## After deployment
 
-1. Assign role collections (`Prowess_AI_User`, `…PowerUser`, `…Admin`, `…Auditor`) to IdP groups.
+1. Assign role collections (`Prowess_AI_User`, `…PowerUser`, `…Admin`, `…Auditor`, `…HRUser`) to IdP groups.
 2. Check `https://<web-route>/api/readiness` (through the approuter): store, MCP and at least one provider must be healthy.
 3. Open the admin console (**Administration → Overview**) to confirm the provider routing.
 

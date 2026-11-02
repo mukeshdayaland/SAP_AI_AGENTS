@@ -13,6 +13,12 @@ export interface Session {
   rt?: string;
   /** Access-token expiry, epoch seconds. */
   exp: number;
+  /** IAS ID token of the sign-in (IAS login only), forwarded for the Outlook tools' Graph token exchange. */
+  it?: string;
+  /** IAS refresh token. */
+  irt?: string;
+  /** IAS ID token expiry, epoch seconds. */
+  iexp?: number;
 }
 
 export interface LoginState {

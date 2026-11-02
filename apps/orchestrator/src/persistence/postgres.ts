@@ -1,5 +1,8 @@
+import { currentContext } from '@prowess/observability';
 import pg from 'pg';
 import type {
+  ArchiveEntry,
+  ArchiveQuery,
   AttachmentRecord,
   ConversationRecord,
   MessageRecord,
@@ -105,6 +108,42 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 CREATE INDEX IF NOT EXISTS workflow_runs_owner_idx ON workflow_runs (tenant_id, user_id, updated_at DESC);
 `,
   },
+  {
+    id: 3,
+    sql: `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS cached_input_tokens INTEGER NOT NULL DEFAULT 0;`,
+  },
+  {
+    id: 4,
+    // No foreign key to conversations: the archive outlives deleted and purged conversations.
+    sql: `
+CREATE TABLE IF NOT EXISTS conversation_archive (
+  id BIGSERIAL PRIMARY KEY,
+  at TIMESTAMPTZ NOT NULL,
+  user_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  message_id TEXT,
+  correlation_id TEXT,
+  agent TEXT,
+  data JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS conversation_archive_tenant_idx ON conversation_archive (tenant_id, at DESC);
+CREATE INDEX IF NOT EXISTS conversation_archive_user_idx ON conversation_archive (tenant_id, user_id, at DESC);
+CREATE INDEX IF NOT EXISTS conversation_archive_conversation_idx ON conversation_archive (tenant_id, conversation_id, at DESC);
+
+-- Append-only: updates and truncation always fail; deletes only inside the retention purge, which sets prowess.archive_purge.
+CREATE OR REPLACE FUNCTION conversation_archive_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND current_setting('prowess.archive_purge', true) = 'on' THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'conversation_archive is append-only (%)', TG_OP;
+END $$;
+CREATE TRIGGER conversation_archive_append_only BEFORE UPDATE OR DELETE ON conversation_archive FOR EACH ROW EXECUTE FUNCTION conversation_archive_guard();
+CREATE TRIGGER conversation_archive_no_truncate BEFORE TRUNCATE ON conversation_archive FOR EACH STATEMENT EXECUTE FUNCTION conversation_archive_guard();
+`,
+  },
 ];
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : String(v));
@@ -141,6 +180,21 @@ function toMessage(r: Row): MessageRecord {
 function messageData(m: Partial<MessageRecord>): Partial<MessageRecord> {
   const { id: _id, conversationId: _c, role: _r, content: _ct, status: _s, createdAt: _d, ...rest } = m;
   return rest;
+}
+
+function toArchiveEntry(r: Row): ArchiveEntry {
+  return {
+    id: String(r.id),
+    at: iso(r.at),
+    userId: String(r.user_id),
+    tenantId: String(r.tenant_id),
+    kind: r.kind as ArchiveEntry['kind'],
+    conversationId: String(r.conversation_id),
+    ...(r.message_id ? { messageId: String(r.message_id) } : {}),
+    ...(r.correlation_id ? { correlationId: String(r.correlation_id) } : {}),
+    ...(r.agent ? { agent: String(r.agent) } : {}),
+    data: r.data as Record<string, unknown>,
+  };
 }
 
 function toAttachment(r: Row): AttachmentRecord {
@@ -238,15 +292,13 @@ export class PostgresStore implements Store {
 
   messages = {
     add: async (m: MessageRecord) => {
-      await this.q('INSERT INTO messages (id,conversation_id,role,content,status,created_at,data) VALUES ($1,$2,$3,$4,$5,$6,$7)', [
-        m.id,
-        m.conversationId,
-        m.role,
-        m.content,
-        m.status,
-        m.createdAt,
-        JSON.stringify(messageData(m)),
-      ]);
+      // One statement, so a message is never stored without its archive entry.
+      await this.q(
+        `WITH m AS (INSERT INTO messages (id,conversation_id,role,content,status,created_at,data) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING conversation_id)
+         INSERT INTO conversation_archive (at,user_id,tenant_id,conversation_id,kind,message_id,correlation_id,agent,data)
+         SELECT $6::timestamptz, c.user_id, c.tenant_id, m.conversation_id, 'message', $1::text, $8::text, $9::text, $10::jsonb FROM m JOIN conversations c ON c.id = m.conversation_id`,
+        [m.id, m.conversationId, m.role, m.content, m.status, m.createdAt, JSON.stringify(messageData(m)), currentContext()?.correlationId ?? null, m.agent ?? null, JSON.stringify(m)],
+      );
     },
     list: async (conversationId: string) => {
       const { rows } = await this.q('SELECT * FROM messages WHERE conversation_id=$1 ORDER BY created_at, id', [conversationId]);
@@ -337,8 +389,8 @@ export class PostgresStore implements Store {
   usage = {
     record: async (u: UsageRecord) => {
       await this.q(
-        'INSERT INTO usage_events (user_id,tenant_id,agent,provider,model,model_tier,input_tokens,output_tokens,duration_ms,day,at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-        [u.userId, u.tenantId, u.agent, u.provider, u.model, u.modelTier, u.inputTokens, u.outputTokens, u.durationMs, u.day, u.at],
+        'INSERT INTO usage_events (user_id,tenant_id,agent,provider,model,model_tier,input_tokens,output_tokens,cached_input_tokens,duration_ms,day,at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+        [u.userId, u.tenantId, u.agent, u.provider, u.model, u.modelTier, u.inputTokens, u.outputTokens, u.cachedInputTokens ?? 0, u.durationMs, u.day, u.at],
       );
     },
     totalsForUser: (userId: string, day: string) => this.totals('user_id', userId, day),
@@ -361,12 +413,56 @@ export class PostgresStore implements Store {
     },
   };
 
+  archive = {
+    append: async (e: Omit<ArchiveEntry, 'id'>) => {
+      await this.q(
+        'INSERT INTO conversation_archive (at,user_id,tenant_id,conversation_id,kind,message_id,correlation_id,agent,data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [e.at, e.userId, e.tenantId, e.conversationId, e.kind, e.messageId ?? null, e.correlationId ?? null, e.agent ?? null, JSON.stringify(e.data)],
+      );
+    },
+    list: async (q: ArchiveQuery) => {
+      const where = ['tenant_id=$1'];
+      const params: unknown[] = [q.tenantId];
+      const add = (sql: string, v: unknown) => {
+        params.push(v);
+        where.push(`${sql}$${params.length}`);
+      };
+      if (q.userId) add('user_id=', q.userId);
+      if (q.conversationId) add('conversation_id=', q.conversationId);
+      if (q.from) add('at>=', q.from);
+      if (q.to) add('at<=', q.to);
+      params.push(q.limit);
+      const { rows } = await this.q(`SELECT * FROM conversation_archive WHERE ${where.join(' AND ')} ORDER BY at DESC, id DESC LIMIT $${params.length}`, params);
+      return rows.map(toArchiveEntry);
+    },
+    purgeBefore: async (cutoff: string) => {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SET LOCAL prowess.archive_purge = 'on'");
+        const res = await client.query('DELETE FROM conversation_archive WHERE at < $1', [cutoff]);
+        await client.query('COMMIT');
+        return res.rowCount ?? 0;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+  };
+
   private async totals(col: 'user_id' | 'agent', value: string, day: string): Promise<UsageTotals> {
     const { rows } = await this.q(
-      `SELECT COALESCE(SUM(input_tokens),0)::int AS i, COALESCE(SUM(output_tokens),0)::int AS o, COUNT(*)::int AS n FROM usage_events WHERE ${col}=$1 AND day=$2`,
+      `SELECT COALESCE(SUM(input_tokens),0)::int AS i, COALESCE(SUM(output_tokens),0)::int AS o, COALESCE(SUM(cached_input_tokens),0)::int AS c, COUNT(*)::int AS n FROM usage_events WHERE ${col}=$1 AND day=$2`,
       [value, day],
     );
-    return { inputTokens: Number(rows[0]?.i ?? 0), outputTokens: Number(rows[0]?.o ?? 0), requests: Number(rows[0]?.n ?? 0) };
+    return {
+      inputTokens: Number(rows[0]?.i ?? 0),
+      outputTokens: Number(rows[0]?.o ?? 0),
+      cachedInputTokens: Number(rows[0]?.c ?? 0),
+      requests: Number(rows[0]?.n ?? 0),
+    };
   }
 
   async healthCheck(): Promise<boolean> {

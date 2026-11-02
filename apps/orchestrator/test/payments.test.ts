@@ -13,7 +13,7 @@ async function confirmed(user: string, message: string) {
   const { events } = await stack.chat(user, { message, agent: 'fico' });
   const confirmation = ofType(events, 'confirmation.required')[0]!.confirmation;
   const res = await stack.request('POST', `/api/v1/actions/${confirmation.id}/confirm`, user, {});
-  return { confirmation, status: res.status, body: res.json as { confirmation?: { status: string }; message?: { content: string }; error?: { message: string } } };
+  return { confirmation, status: res.status, body: res.json as { confirmation?: { status: string }; message?: { content: string; response?: { components?: { type: string; data: Record<string, unknown> }[] } }; error?: { message: string } } };
 }
 
 async function queue(user: string) {
@@ -44,7 +44,9 @@ describe('payment requests with second-person approval', () => {
     const { status, body } = await confirmed(USERS.jordan, `Approve payment request ${id}.`);
     expect(status).toBe(200);
     expect(body.confirmation!.status).toBe('failed');
-    expect(body.message!.content).toMatch(/was not completed.*second person must approve/);
+    expect(body.message!.content).toMatch(/was not completed/);
+    // The reason is shown as an error notice with a reference to quote to support.
+    expect(body.message!.response!.components![0]).toMatchObject({ type: 'notice', data: { kind: 'BUSINESS_RULE', message: expect.stringMatching(/second person must approve/), reference: expect.stringMatching(/^PRW-/) } });
     expect(await queue(USERS.alex)).toHaveLength(1);
   });
 
@@ -66,7 +68,10 @@ describe('payment requests with second-person approval', () => {
   it('keeps payment tools away from the MM and SD agents', async () => {
     for (const agent of ['mm', 'sd']) {
       const { events } = await stack.chat(USERS.alex, { message: 'List the payment requests waiting for approval in company code 1030.', agent });
-      expect(ofType(events, 'tool.start')).toHaveLength(0);
+      // The question goes to finance; no tool runs under MM or SD before the handoff.
+      const handoff = events.findIndex((e) => e.type === 'agent.handoff');
+      expect(events[handoff]).toEqual({ type: 'agent.handoff', from: agent, agent: 'fico', modelTier: 'standard' });
+      expect(events.slice(0, handoff).filter((e) => e.type === 'tool.start')).toHaveLength(0);
     }
   });
 });

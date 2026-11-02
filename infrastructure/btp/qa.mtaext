@@ -15,3 +15,8 @@ modules:
       instances: 1
     properties:
       PROWESS_ENV: QA
+  - name: prowess-sf-mcp
+    parameters:
+      instances: 1
+    properties:
+      PROWESS_ENV: QA

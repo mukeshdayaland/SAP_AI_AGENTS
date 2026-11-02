@@ -1,24 +1,30 @@
 import { UIComponentSchema } from '@prowess/contracts';
 import { describe, expect, it } from 'vitest';
+import { MockMailGateway } from '../src/outlook/mock-gateway.js';
 import { MockSapGateway } from '../src/sap/mock-gateway.js';
+import { MockSfGateway } from '../src/sf/mock-gateway.js';
+import { EntityPolicy } from '../src/sf/policy.js';
 import { SapError, type SapCallContext } from '../src/sap/model.js';
 import { buildRegistry } from '../src/tools/registry.js';
 import { BUSINESS_DOMAINS, type ToolResultPayload } from '../src/tools/types.js';
+
+const outlook = { gateway: new MockMailGateway(0), allowedRecipientDomains: [] as string[] };
 
 const as = (sub: string) => ({ principal: { sub }, correlationId: 't' }) as unknown as SapCallContext;
 const jordan = as('jordan.lee@prowess.example'); // no release authorizations in SAP
 const alex = as('alex.morgan@prowess.example'); // may release invoices and credit blocks
 const sap = () => new MockSapGateway(0);
 const registry = buildRegistry(new Set(BUSINESS_DOMAINS));
+const sf = { gateway: new MockSfGateway(0), policy: new EntityPolicy() };
 
 /** Runs a tool the way the MCP server does, without the HTTP layer and its confirmation token. */
 async function run(gateway: MockSapGateway, ctx: SapCallContext, name: string, args: Record<string, unknown>): Promise<ToolResultPayload> {
   const tool = registry.get(name)!;
-  const result = await tool.run(args as never, { sap: ctx, gateway });
+  const result = await tool.run(args as never, { sap: ctx, gateway, sf, outlook });
   for (const c of result.components ?? []) expect(UIComponentSchema.safeParse(c).error?.issues, `${name} component ${c.type}`).toBeUndefined();
   return result;
 }
-const preview = (gateway: MockSapGateway, ctx: SapCallContext, name: string, args: Record<string, unknown>) => registry.get(name)!.preview!(args as never, { sap: ctx, gateway });
+const preview = (gateway: MockSapGateway, ctx: SapCallContext, name: string, args: Record<string, unknown>) => registry.get(name)!.preview!(args as never, { sap: ctx, gateway, sf, outlook });
 const openTotal = async (s: MockSapGateway, accountType: 'CUSTOMER' | 'SUPPLIER', account: string) =>
   (await s.listOpenItems(alex, { accountType, account, companyCode: '1030', status: 'OPEN' })).reduce((sum, i) => sum + i.amount.amount, 0);
 

@@ -163,6 +163,71 @@ describe('BFF API proxy', () => {
   });
 });
 
+describe('BFF Fiori proxy', () => {
+  const fiori = { ...env, FIORI_URL: 'https://approuter.example' };
+
+  it('forwards /sap to the approuter as the user, with SAP cookies but never the session cookie', async () => {
+    const upstream = vi.fn(async (req: Request) => {
+      expect(req.url).toBe('https://approuter.example/sap/bc/ui2/flp?sap-client=100');
+      expect(req.headers.get('x-approuter-authorization')).toBe('Bearer access-1');
+      expect(req.headers.get('authorization')).toBeNull();
+      expect(req.headers.get('origin')).toBeNull();
+      expect(req.headers.get('cookie')).toBe('sap-usercontext=sap-client=100');
+      const res = new Response('<html>launchpad</html>', { status: 200, headers: { 'content-type': 'text/html', 'content-security-policy': "default-src 'none'" } });
+      res.headers.append('set-cookie', 'SAP_SESSIONID_A4H_100=abc; path=/; secure; HttpOnly; Domain=.example.com');
+      res.headers.append('set-cookie', 'JSESSIONID=approuter; path=/');
+      return res;
+    });
+    vi.stubGlobal('fetch', upstream);
+    const res = await handle(
+      new Request(`${ORIGIN}/sap/bc/ui2/flp?sap-client=100`, { headers: { cookie: `${await sessionCookie({ at: 'access-1', exp: 9e9 })}; sap-usercontext=sap-client=100; JSESSIONID=old` } }),
+      fiori,
+      page,
+    );
+    expect(await res.text()).toBe('<html>launchpad</html>');
+    expect(res.headers.get('content-security-policy')).toBe("frame-ancestors 'self'");
+    expect(res.headers.getSetCookie()).toEqual(['SAP_SESSIONID_A4H_100=abc; path=/; secure; HttpOnly']);
+  });
+
+  it('keeps a redirect inside Fiori on this address', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 302, headers: { location: 'https://approuter.example/sap/bc/ui2/flp/' } })));
+    const res = await handle(new Request(`${ORIGIN}/sap/bc/ui2/flp`, { headers: { cookie: await sessionCookie({ at: 'a', exp: 9e9 }) } }), fiori, page);
+    expect(res.headers.get('location')).toBe('/sap/bc/ui2/flp/');
+  });
+
+  it('accepts a same-origin form POST that carries Origin: null, as when the launchpad starts SAP GUI for HTML', async () => {
+    const upstream = vi.fn(async () => new Response('<html>webgui</html>', { headers: { 'content-type': 'text/html' } }));
+    vi.stubGlobal('fetch', upstream);
+    const cookie = await sessionCookie({ at: 'a', exp: 9e9 });
+    const post = (headers: Record<string, string>) => handle(new Request(`${ORIGIN}/sap/bc/gui/sap/its/webgui`, { method: 'POST', body: 'x', headers: { cookie, ...headers } }), fiori, page);
+    expect((await post({ origin: 'null', 'sec-fetch-site': 'same-origin' })).status).toBe(200);
+    expect((await post({ origin: 'null', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+    expect((await post({ origin: 'null' })).status).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes a WebSocket upgrade back untouched, so SAP GUI for HTML keeps its channel', async () => {
+    const upgraded = Object.assign(new Response(null, { status: 200 }), { webSocket: {} });
+    vi.stubGlobal('fetch', vi.fn(async () => upgraded));
+    const res = await handle(
+      new Request(`${ORIGIN}/sap/bc/apc/sap/webgui_services`, { headers: { cookie: await sessionCookie({ at: 'a', exp: 9e9 }), origin: ORIGIN, upgrade: 'websocket' } }),
+      fiori,
+      page,
+    );
+    expect(res).toBe(upgraded);
+  });
+
+  it('asks an unsigned visitor to sign in, refuses another site, and serves nothing under /sap when not configured', async () => {
+    const upstream = vi.fn();
+    vi.stubGlobal('fetch', upstream);
+    expect((await handle(new Request(`${ORIGIN}/sap/bc/ui2/flp`), fiori, page)).status).toBe(302);
+    const cookie = await sessionCookie({ at: 'a', exp: 9e9 });
+    expect((await handle(new Request(`${ORIGIN}/sap/x`, { method: 'POST', body: 'x', headers: { cookie, origin: 'https://evil.example' } }), fiori, page)).status).toBe(403);
+    expect(await (await handle(new Request(`${ORIGIN}/sap/bc/ui2/flp`, { headers: { cookie } }), env, page)).text()).toBe(html);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
 describe('BFF pages', () => {
   it('serves pages with security headers and the inline script pinned by hash', async () => {
     const res = await handle(new Request(`${ORIGIN}/`, { headers: { cookie: await sessionCookie({ at: jwt([]), exp: 9e9 }) } }), env, page);
@@ -171,6 +236,14 @@ describe('BFF pages', () => {
     expect(csp.match(/script-src [^;]*/)![0]).not.toContain('unsafe-inline');
     expect(res.headers.get('strict-transport-security')).toContain('max-age=');
     expect(await res.text()).toBe(html);
+  });
+
+  it('allows only the configured Fiori launchpad as a frame', async () => {
+    const get = async (extra: Partial<BffEnv>) =>
+      (await handle(new Request(`${ORIGIN}/`, { headers: { cookie: await sessionCookie({ at: jwt([]), exp: 9e9 }) } }), { ...env, ...extra }, page)).headers.get('content-security-policy')!;
+    expect(await get({})).not.toContain('frame-src');
+    expect(await get({ FIORI_ORIGIN: 'https://s4.example.com:44300' })).toContain("frame-src https://s4.example.com:44300; frame-ancestors 'none'");
+    expect(await get({ FIORI_ORIGIN: "https://s4.example.com; script-src 'unsafe-inline'" })).not.toContain('frame-src');
   });
 
   it('serves the signed-out page without a session, at both URLs Pages uses', async () => {
@@ -184,5 +257,108 @@ describe('BFF pages', () => {
     expect(user.status).toBe(403);
     const admin = await handle(new Request(`${ORIGIN}/admin/`, { headers: { cookie: await sessionCookie({ at: jwt(['app!t1.AI_ADMIN']), exp: 9e9 }) } }), env, page);
     expect(admin.status).toBe(200);
+  });
+});
+
+describe('BFF with IAS sign-in', () => {
+  const iasEnv: BffEnv = { ...env, IAS_URL: 'https://tenant.accounts.ondemand.com/', IAS_CLIENT_ID: 'ias-app', IAS_CLIENT_SECRET: 'ias$secret' };
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const idToken = (n = 1) => `h.${btoa(JSON.stringify({ email: 'alex@prowess.example', exp, n })).replace(/=+$/, '')}.s`;
+
+  it('signs in at IAS and turns the IAS login into an XSUAA session, keeping the IAS token sealed', async () => {
+    const login = await handle(new Request(`${ORIGIN}/login`), iasEnv, page);
+    const authorize = new URL(login.headers.get('location')!);
+    expect(authorize.origin + authorize.pathname).toBe('https://tenant.accounts.ondemand.com/oauth2/authorize');
+    expect(authorize.searchParams.get('client_id')).toBe('ias-app');
+    expect(authorize.searchParams.get('scope')).toBe('openid email profile');
+
+    const calls: { url: string; form: URLSearchParams; auth: string | null }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        const form = new URLSearchParams(String(init.body));
+        calls.push({ url, form, auth: new Headers(init.headers).get('authorization') });
+        if (url.startsWith('https://tenant.accounts.ondemand.com')) return Response.json({ id_token: idToken(), refresh_token: 'ias-rt', expires_in: 3600 });
+        return Response.json({ access_token: jwt(['app!t1.AI_USER']), refresh_token: 'xs-rt', expires_in: 1800 });
+      }),
+    );
+    const callback = await handle(new Request(`${ORIGIN}/callback?code=c1&state=${authorize.searchParams.get('state')}`, { headers: { cookie: cookieHeader(login) } }), iasEnv, page);
+    expect(callback.status).toBe(302);
+    expect(calls[0]!.url).toBe('https://tenant.accounts.ondemand.com/oauth2/token');
+    expect(calls[0]!.auth).toBe(`Basic ${btoa('ias-app:ias$secret')}`);
+    expect(calls[0]!.form.get('code')).toBe('c1');
+    expect(calls[1]!.url).toBe('https://tenant.authentication.eu10.hana.ondemand.com/oauth/token');
+    expect(calls[1]!.form.get('grant_type')).toBe('urn:ietf:params:oauth:grant-type:jwt-bearer');
+    expect(calls[1]!.form.get('assertion')).toBe(idToken());
+
+    const sealed = cookieHeader(callback).split('; ').find((c) => c.startsWith(`${SESSION_COOKIE}.0=`))!.split('=')[1]!;
+    const session = (await open<Session>(sealed, env.SESSION_SECRET))!;
+    expect(session).toMatchObject({ rt: 'xs-rt', it: idToken(), irt: 'ias-rt', iexp: exp });
+    expect(cookieHeader(callback)).not.toContain('ias-rt');
+  });
+
+  it('fails the sign-in when XSUAA does not accept the IAS login', async () => {
+    const login = await handle(new Request(`${ORIGIN}/login`), iasEnv, page);
+    const state = new URL(login.headers.get('location')!).searchParams.get('state');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => (url.startsWith('https://tenant.accounts') ? Response.json({ id_token: idToken() }) : Response.json({ error: 'unauthorized' }, { status: 401 }))),
+    );
+    const callback = await handle(new Request(`${ORIGIN}/callback?code=c1&state=${state}`, { headers: { cookie: cookieHeader(login) } }), iasEnv, page);
+    expect(callback.status).toBe(502);
+  });
+
+  it('forwards the IAS token to the orchestrator and never one the browser sent', async () => {
+    const upstream = vi.fn(async (req: Request) => {
+      expect(req.headers.get('x-prowess-ias-token')).toBe(idToken());
+      return Response.json({});
+    });
+    vi.stubGlobal('fetch', upstream);
+    const cookie = await sessionCookie({ at: 'access-1', exp: 9e9, it: idToken(), irt: 'ias-rt', iexp: exp });
+    await handle(new Request(`${ORIGIN}/api/v1/workspace`, { headers: { cookie, 'x-prowess-ias-token': 'forged' } }), iasEnv, page);
+    expect(upstream).toHaveBeenCalledOnce();
+
+    const plain = vi.fn(async (req: Request) => {
+      expect(req.headers.get('x-prowess-ias-token')).toBeNull();
+      return Response.json({});
+    });
+    vi.stubGlobal('fetch', plain);
+    await handle(new Request(`${ORIGIN}/api/v1/workspace`, { headers: { cookie: await sessionCookie({ at: 'access-1', exp: 9e9 }), 'x-prowess-ias-token': 'forged' } }), iasEnv, page);
+    expect(plain).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes an expiring IAS token and keeps the XSUAA session when IAS refuses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | Request) => {
+        if (typeof input === 'string') return Response.json({ id_token: idToken(2), expires_in: 3600 });
+        expect(input.headers.get('x-prowess-ias-token')).toBe(idToken(2));
+        return Response.json({});
+      }),
+    );
+    const stale = await sessionCookie({ at: 'access-1', exp: 9e9, it: idToken(), irt: 'ias-rt', iexp: 1 });
+    const res = await handle(new Request(`${ORIGIN}/api/v1/workspace`, { headers: { cookie: stale } }), iasEnv, page);
+    expect(res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}.0=`))).toBe(true);
+
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | Request) => {
+        if (typeof input === 'string') return Response.json({ error: 'invalid_grant' }, { status: 400 });
+        expect(input.headers.get('authorization')).toBe('Bearer access-1');
+        expect(input.headers.get('x-prowess-ias-token')).toBeNull();
+        return Response.json({});
+      }),
+    );
+    const still = await handle(new Request(`${ORIGIN}/api/v1/workspace`, { headers: { cookie: stale } }), iasEnv, page);
+    expect(still.status).toBe(200);
+  });
+
+  it('logs out at IAS', async () => {
+    const res = await handle(new Request(`${ORIGIN}/logout`), iasEnv, page);
+    const target = new URL(res.headers.get('location')!);
+    expect(target.origin + target.pathname).toBe('https://tenant.accounts.ondemand.com/oauth2/logout');
+    expect(target.searchParams.get('post_logout_redirect_uri')).toBe(`${ORIGIN}/logged-out`);
   });
 });

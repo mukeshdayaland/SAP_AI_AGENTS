@@ -4,6 +4,7 @@
 # Secrets (once per project, never committed):
 #   npx wrangler pages secret put XSUAA_CLIENT_SECRET --project-name prowess-ai
 #   npx wrangler pages secret put SESSION_SECRET      --project-name prowess-ai
+#   npx wrangler pages secret put IAS_CLIENT_SECRET   --project-name prowess-ai   (IAS sign-in; without it the site signs in at XSUAA)
 name = "prowess-ai"
 pages_build_output_dir = "dist"
 compatibility_date = "2026-09-01"
@@ -14,3 +15,10 @@ ORCHESTRATOR_URL = "https://prowess-ai-orchestrator-sap-ai-agent.cfapps.eu10-005
 # From the prowess-xsuaa service key (`url` and `clientid`). Not secret.
 XSUAA_URL = "https://joule-sbx.authentication.eu10.hana.ondemand.com"
 XSUAA_CLIENT_ID = "sb-prowess-ai-sap-ai-agent!t699998"
+# The approuter on BTP that forwards /sap/* to S/4HANA as the signed-in user (Fiori pane).
+FIORI_URL = "https://fiori-sap-ai-agent.cfapps.eu10-005.hana.ondemand.com"
+# Sign-in through SAP Cloud Identity Services (Entra ID as its OIDC corporate IdP), so the Outlook agent can act as the
+# user without a second login. IAS_CLIENT_ID is the IAS application the subaccount's XSUAA trusts (docs/outlook.md).
+# A project without the IAS_CLIENT_SECRET secret keeps signing in at XSUAA.
+IAS_URL = "https://atpuewibz.accounts.ondemand.com"
+IAS_CLIENT_ID = "56d85a1a-4d58-497b-bdba-7303108e0105"

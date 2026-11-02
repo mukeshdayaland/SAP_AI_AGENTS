@@ -1,5 +1,6 @@
 import type {
   AgentResponse,
+  ArchiveEntry,
   AttachmentRef,
   ConfirmationRequest,
   DeploymentEnvironment,
@@ -125,6 +126,8 @@ export interface UsageRecord {
   modelTier: string;
   inputTokens: number;
   outputTokens: number;
+  /** Part of `inputTokens` served from the provider's prompt cache. */
+  cachedInputTokens?: number;
   durationMs: number;
   day: string;
   at: string;
@@ -133,7 +136,19 @@ export interface UsageRecord {
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
   requests: number;
+}
+
+export type { ArchiveEntry };
+
+export interface ArchiveQuery {
+  tenantId: string;
+  userId?: string;
+  conversationId?: string;
+  from?: string;
+  to?: string;
+  limit: number;
 }
 
 export interface Store {
@@ -146,6 +161,7 @@ export interface Store {
     purgeUpdatedBefore(cutoff: string): Promise<number>;
   };
   messages: {
+    /** Also appends the message to the archive, with the correlation ID of the current request. */
     add(m: MessageRecord): Promise<void>;
     /** Caller must have verified conversation ownership. */
     list(conversationId: string): Promise<MessageRecord[]>;
@@ -175,6 +191,12 @@ export interface Store {
     totalsForUser(userId: string, day: string): Promise<UsageTotals>;
     totalsForAgent(agent: string, day: string): Promise<UsageTotals>;
     summary(sinceDay: string): Promise<{ day: string; provider: string; modelTier: string; agent: string; inputTokens: number; outputTokens: number; requests: number }[]>;
+  };
+  archive: {
+    append(e: Omit<ArchiveEntry, 'id'>): Promise<void>;
+    /** Newest first, within one tenant. */
+    list(q: ArchiveQuery): Promise<ArchiveEntry[]>;
+    purgeBefore(cutoff: string): Promise<number>;
   };
   healthCheck(): Promise<boolean>;
   close(): Promise<void>;

@@ -5,6 +5,7 @@ import { Check, Copy, FileText, RefreshCw, ThumbsDown, ThumbsUp, Wrench, X } fro
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { formatDateTime, formatTime } from '@/lib/format';
+import { translateServer, useT } from '@/lib/i18n';
 import type { ChatMessage } from '@/lib/use-chat';
 import { SapComponent } from '../sap/cards';
 import { useAsk } from '../sap/card';
@@ -18,8 +19,10 @@ const Markdown = dynamic(() => import('./Markdown'), { ssr: false, loading: () =
 export function UserMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[min(85%,48rem)] rounded-2xl rounded-br-md border border-area-nonsap/25 bg-area-nonsap-fill px-4 py-2.5 text-[14px] text-ink" title={formatDateTime(message.createdAt)}>
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+      <div className="max-w-[min(85%,48rem)] rounded-2xl rounded-ee-md border border-area-nonsap/25 bg-area-nonsap-fill px-4 py-2.5 text-[14px] text-ink" title={formatDateTime(message.createdAt)}>
+        <p dir="auto" className="whitespace-pre-wrap break-words">
+          {message.content}
+        </p>
         {message.attachments && (
           <ul className="mt-2 flex flex-wrap gap-1.5">
             {message.attachments.map((a) => (
@@ -56,6 +59,7 @@ export function AssistantMessage({
   onShowDetails?: () => void;
   detailsShown?: boolean;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const [details, setDetails] = useState(false);
   const ask = useAsk();
@@ -69,13 +73,13 @@ export function AssistantMessage({
   };
 
   return (
-    <article className="flex gap-3" aria-label={`${agentName} response`} aria-busy={streaming}>
+    <article className="flex gap-3" aria-label={t('message.response', { agent: agentName })} aria-busy={streaming}>
       <ProwessMark size={28} className="mt-0.5 shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center gap-2 text-xs text-ink-3">
           <span className="font-semibold text-ink-2">{agentName}</span>
           {!streaming && <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>}
-          {mock && <Badge tone="warning">Mock data</Badge>}
+          {mock && <Badge tone="warning">{t('message.mock')}</Badge>}
         </div>
 
         <ExecutionStatus steps={message.steps} streaming={streaming} {...(message.execution && { durationMs: message.execution.durationMs })} />
@@ -90,10 +94,10 @@ export function AssistantMessage({
 
         {message.content && (
           <div className={cx('prose-prowess max-w-3xl text-ink', streaming && 'streaming-caret')}>
-            <Markdown text={message.content} />
+            <Markdown text={streaming ? message.content : translateServer(message.content)} />
           </div>
         )}
-        {streaming && !message.content && !message.components.length && <p className="streaming-caret text-sm text-ink-3" aria-label="Generating" />}
+        {streaming && !message.content && !message.components.length && <p className="streaming-caret text-sm text-ink-3" aria-label={t('message.generating')} />}
 
         {message.confirmations.length > 0 && (
           <div className="my-3 space-y-3">
@@ -105,17 +109,17 @@ export function AssistantMessage({
 
         {message.error && (
           <div role="alert" className="mt-2 rounded-area border border-error/60 bg-error-soft px-4 py-3 text-sm">
-            <p className="text-ink">{message.error.message}</p>
+            <p className="text-ink">{translateServer(message.error.message)}</p>
             {message.error.reference && (
               <p className="mt-1 text-xs text-ink-2">
-                Reference: <span className="font-mono">{message.error.reference}</span>
+                {t('common.referenceLabel')}: <span className="font-mono">{message.error.reference}</span>
               </p>
             )}
           </div>
         )}
 
         {!streaming && message.actions.length > 0 && (
-          <div className="mt-3 flex max-w-3xl flex-wrap gap-2" aria-label="Suggested follow-ups">
+          <div className="mt-3 flex max-w-3xl flex-wrap gap-2" aria-label={t('message.followUps')}>
             {message.actions.map((a) => (
               <button
                 key={a.id}
@@ -123,7 +127,7 @@ export function AssistantMessage({
                 onClick={() => ask(a.prompt)}
                 className="rounded-full border border-brand/40 bg-surface px-3 py-1 text-[12px] font-medium text-brand transition-colors hover:bg-brand-soft"
               >
-                {a.label}
+                {translateServer(a.label)}
               </button>
             ))}
           </div>
@@ -132,26 +136,26 @@ export function AssistantMessage({
         {!streaming && (
           <div className="mt-1.5 flex items-center gap-0.5">
             {message.content && (
-              <IconButton label={copied ? 'Copied' : 'Copy'} onClick={copy}>
+              <IconButton label={t(copied ? 'common.copied' : 'common.copy')} onClick={copy}>
                 {copied ? <Check size={15} /> : <Copy size={15} />}
               </IconButton>
             )}
             {isLast && (
-              <IconButton label={message.status === 'error' ? 'Retry' : 'Regenerate'} onClick={onRegenerate}>
+              <IconButton label={t(message.status === 'error' ? 'message.retry' : 'message.regenerate')} onClick={onRegenerate}>
                 <RefreshCw size={15} />
               </IconButton>
             )}
             {technical && message.execution && (
-              <IconButton label="Technical details" active={detailsShown ?? details} onClick={() => (onShowDetails ? onShowDetails() : setDetails(true))} {...(!onShowDetails && { 'aria-haspopup': 'dialog' as const })}>
+              <IconButton label={t('workspace.technical')} active={detailsShown ?? details} onClick={() => (onShowDetails ? onShowDetails() : setDetails(true))} {...(!onShowDetails && { 'aria-haspopup': 'dialog' as const })}>
                 <Wrench size={15} />
               </IconButton>
             )}
             {message.status !== 'error' && !message.id.startsWith('__') && (
               <>
-                <IconButton label="Helpful" active={message.feedback === 'up'} onClick={() => onRate('up')} aria-pressed={message.feedback === 'up'}>
+                <IconButton label={t('message.helpful')} active={message.feedback === 'up'} onClick={() => onRate('up')} aria-pressed={message.feedback === 'up'}>
                   <ThumbsUp size={15} />
                 </IconButton>
-                <IconButton label="Not helpful" active={message.feedback === 'down'} onClick={() => onRate('down')} aria-pressed={message.feedback === 'down'}>
+                <IconButton label={t('message.notHelpful')} active={message.feedback === 'down'} onClick={() => onRate('down')} aria-pressed={message.feedback === 'down'}>
                   <ThumbsDown size={15} />
                 </IconButton>
               </>
@@ -166,16 +170,17 @@ export function AssistantMessage({
 
 /** How a response was produced: agent, model, tokens, duration and the SAP tool calls. */
 export function TechnicalDetailsList({ execution }: { execution: NonNullable<ChatMessage['execution']> }) {
+  const t = useT();
   return (
     <dl className="space-y-2 font-mono text-[10px] leading-snug text-ink-2">
       {(
         [
-          ['Agent', execution.agent],
-          ['Model tier', execution.modelTier],
-          ...(execution.provider ? [['Provider', `${execution.provider} · ${execution.model}`]] : []),
-          ...(execution.usage ? [['Tokens', `${execution.usage.inputTokens} in / ${execution.usage.outputTokens} out`]] : []),
-          ['Duration', `${execution.durationMs} ms`],
-          ['Correlation ID', execution.correlationId],
+          [t('tech.agent'), execution.agent],
+          [t('tech.tier'), execution.modelTier],
+          ...(execution.provider ? [[t('tech.provider'), `${execution.provider} · ${execution.model}`]] : []),
+          ...(execution.usage ? [[t('tech.tokens'), t('tech.tokensValue', { input: execution.usage.inputTokens, output: execution.usage.outputTokens })]] : []),
+          [t('tech.duration'), t('tech.ms', { ms: execution.durationMs })],
+          [t('tech.correlation'), execution.correlationId],
         ] as [string, string][]
       ).map(([label, value]) => (
         <div key={label}>
@@ -185,11 +190,11 @@ export function TechnicalDetailsList({ execution }: { execution: NonNullable<Cha
       ))}
       {execution.tools.length > 0 && (
         <div>
-          <dt className="text-ink-3">SAP tool calls</dt>
-          {execution.tools.map((t) => (
-            <dd key={t.id} className="mt-1 rounded border border-line px-2 py-1">
-              <span className="block break-all text-ink">{t.tool}</span>
-              {t.system} · {t.durationMs} ms · {t.status} · {t.risk}
+          <dt className="text-ink-3">{t('tech.tools')}</dt>
+          {execution.tools.map((call) => (
+            <dd key={call.id} className="mt-1 rounded border border-line px-2 py-1">
+              <span className="block break-all text-ink">{call.tool}</span>
+              {call.system} · {t('tech.ms', { ms: call.durationMs })} · {call.status} · {call.risk}
             </dd>
           ))}
         </div>
@@ -200,6 +205,7 @@ export function TechnicalDetailsList({ execution }: { execution: NonNullable<Cha
 
 /** Panel over the right edge with the technical details, for screens without the context panel. */
 function TechnicalDetails({ execution, onClose }: { execution: NonNullable<ChatMessage['execution']>; onClose: () => void }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('keydown', onKey);
@@ -208,12 +214,12 @@ function TechnicalDetails({ execution, onClose }: { execution: NonNullable<ChatM
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden />
-      <aside role="dialog" aria-label="Technical details" className="fixed inset-y-0 right-0 z-50 flex w-[272px] max-w-[85vw] flex-col border-l border-line bg-surface shadow-lift">
+      <aside role="dialog" aria-label={t('workspace.technical')} className="fixed inset-y-0 end-0 z-50 flex w-[272px] max-w-[85vw] flex-col border-s border-line bg-surface shadow-lift">
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-line px-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
-            <Wrench size={14} aria-hidden /> Technical details
+            <Wrench size={14} aria-hidden /> {t('workspace.technical')}
           </h2>
-          <IconButton label="Close" onClick={onClose} autoFocus>
+          <IconButton label={t('common.close')} onClick={onClose} autoFocus>
             <X size={16} />
           </IconButton>
         </div>

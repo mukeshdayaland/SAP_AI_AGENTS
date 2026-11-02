@@ -62,6 +62,25 @@ describe('SAP AI Core', () => {
     expect(body.config.modules.prompt_templating.prompt.template[0]!.content).not.toContain('{{?');
   });
 
+  it('sends tool-call turns with string content and the original call id in orchestration mode', () => {
+    const provider = new SapAiCoreProvider({ ...base, mode: 'orchestration', orchestrationDeploymentId: 'd123' });
+    // Gemini via orchestration carries its thought signature inside the call id, so the id must round-trip unchanged.
+    const id = `vertex_tool_${'s'.repeat(380)}`;
+    const { body } = provider.buildRequest({
+      model: 'gemini-3.8-flash',
+      messages: [
+        { role: 'user', content: 'Why is invoice 5100012345 blocked?' },
+        { role: 'assistant', content: '', toolCalls: [{ id, name: 'mm_analyzeInvoice', arguments: { invoiceNumber: '5100012345' } }] },
+        { role: 'tool', toolCallId: id, name: 'mm_analyzeInvoice', content: '{"blocked":true}' },
+      ],
+      tools,
+    });
+    const template = (body as { config: { modules: { prompt_templating: { prompt: { template: { content: unknown; tool_calls?: { id: string }[] }[] } } } } })
+      .config.modules.prompt_templating.prompt.template;
+    expect(template[1]!.content).toBe('');
+    expect(template[1]!.tool_calls![0]!.id).toBe(id);
+  });
+
   it('calls a foundation-model deployment in foundation mode', async () => {
     const { impl, calls } = stubFetch(() => sseResponse(openAIToolStream(), { done: true }));
     const provider = new SapAiCoreProvider({ ...base, apiUrl: `${base.apiUrl}/v2`, mode: 'foundation', fetchImpl: impl });
@@ -207,6 +226,60 @@ describe('OpenAI-compatible', () => {
     const assistant = (body.messages as { tool_calls?: { extra_content?: unknown }[] }[])[1]!;
     expect(assistant.tool_calls![0]!.extra_content).toEqual(sig);
     expect(assistant.tool_calls![1]).not.toHaveProperty('extra_content');
+  });
+
+  it('asks a model again without the reasoning effort it refuses, and remembers that', async () => {
+    const refusal = JSON.stringify([{ error: { code: 400, message: 'Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.', status: 'INVALID_ARGUMENT' } }]);
+    let n = 0;
+    const { impl, calls } = stubFetch(() => (n++ === 0 ? new Response(refusal, { status: 400 }) : sseResponse([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }], { done: true })));
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: 'k', reasoningEffort: 'minimal', fetchImpl: impl, policy: fastPolicy });
+    const ask = (model: string) => drain(provider.stream({ model, messages: [{ role: 'user', content: 'x' }] }));
+
+    expect((await ask('gemini-3.8-flash')).some((c) => c.type === 'text')).toBe(true);
+    expect((calls[0]!.body as Record<string, unknown>).reasoning_effort).toBe('minimal');
+    // The next level up keeps the model quick; leaving the setting out would let it think at length.
+    expect((calls[1]!.body as Record<string, unknown>).reasoning_effort).toBe('low');
+    // The same model is asked with what it accepted; another model still gets the configured level.
+    await ask('gemini-3.8-flash');
+    expect(calls).toHaveLength(3);
+    expect((calls[2]!.body as Record<string, unknown>).reasoning_effort).toBe('low');
+    await ask('gemini-3.5-flash-lite');
+    expect((calls[3]!.body as Record<string, unknown>).reasoning_effort).toBe('minimal');
+  });
+
+  it('leaves the reasoning effort out for a model that accepts none', async () => {
+    const refusal = JSON.stringify({ error: { message: 'Unsupported parameter: reasoning_effort.' } });
+    const { impl, calls } = stubFetch(() => new Response(refusal, { status: 400 }));
+    let attempts = 0;
+    const fetchImpl = (async (input: string | URL | Request, init: RequestInit = {}) =>
+      attempts++ < 2 ? impl(input, init) : sseResponse([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }], { done: true })) as typeof fetch;
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://api.example.com/v1', reasoningEffort: 'minimal', fetchImpl, policy: fastPolicy });
+    const chunks = await drain(provider.stream({ model: 'plain-model', messages: [{ role: 'user', content: 'x' }] }));
+    expect(chunks.some((c) => c.type === 'text')).toBe(true);
+    expect(calls.map((c) => (c.body as Record<string, unknown>).reasoning_effort)).toEqual(['minimal', 'low']);
+  });
+
+  it('keeps an overloaded model from closing the circuit for the other models of the endpoint', async () => {
+    const busy = JSON.stringify([{ error: { code: 503, message: 'This model is currently experiencing high demand.', status: 'UNAVAILABLE' } }]);
+    const { impl } = stubFetch(() => new Response(busy, { status: 503 }));
+    let healthy = false;
+    const fetchImpl = (async (input: string | URL | Request, init: RequestInit = {}) =>
+      healthy ? sseResponse([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }], { done: true }) : impl(input, init)) as typeof fetch;
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', fetchImpl, policy: fastPolicy });
+    const ask = (model: string) => drain(provider.stream({ model, messages: [{ role: 'user', content: 'x' }] }));
+
+    // Enough failed requests to open the circuit of the busy model.
+    for (let i = 0; i < 3; i++) await expect(ask('gemini-3.8-flash')).rejects.toMatchObject({ retryable: true });
+    await expect(ask('gemini-3.8-flash')).rejects.toMatchObject({ kind: 'circuit_open' });
+    healthy = true;
+    expect((await ask('gemini-3.5-flash-lite')).some((c) => c.type === 'text')).toBe(true);
+  });
+
+  it('does not retry a bad request that is about something else', async () => {
+    const { impl, calls } = stubFetch(() => new Response(JSON.stringify({ error: { message: 'Unknown model.' } }), { status: 400 }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', reasoningEffort: 'minimal', fetchImpl: impl, policy: fastPolicy });
+    await expect(drain(provider.stream({ model: 'nope', messages: [{ role: 'user', content: 'x' }] }))).rejects.toMatchObject({ kind: 'bad_request' });
+    expect(calls).toHaveLength(1);
   });
 
   it('reports cumulative per-chunk usage (Gemini) once, not summed', async () => {

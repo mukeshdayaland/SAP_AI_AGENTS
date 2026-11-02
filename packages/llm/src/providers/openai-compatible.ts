@@ -28,15 +28,22 @@ export interface OpenAICompatibleConfig {
   fetchImpl?: typeof fetch;
 }
 
+/** Tried when a model refuses the configured reasoning effort. */
+const FALLBACK_EFFORT = 'low';
+
 export class OpenAICompatibleProvider implements LLMProvider {
   readonly id = 'openai-compatible' as const;
   readonly private = false;
-  private readonly breaker = new CircuitBreaker();
+  // One breaker per model: a model that is overloaded must not close the door on the others behind the same endpoint.
+  private readonly breakers = new Map<string, CircuitBreaker>();
   private readonly policy: ResiliencePolicy;
   private readonly baseUrl: string;
+  /** The reasoning effort of models that refused the configured one; undefined when a model takes none. */
+  private readonly effortFor = new Map<string, string | undefined>();
 
   constructor(private readonly cfg: OpenAICompatibleConfig) {
-    if (!/^https:\/\//.test(cfg.baseUrl)) {
+    // Plain http only for a gateway on this machine (e.g. a local model router); the key never leaves the host.
+    if (!/^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))/.test(cfg.baseUrl)) {
       throw new ProviderError(this.id, 'configuration', 'OPENAI_COMPAT_BASE_URL must be an https URL');
     }
     this.baseUrl = cfg.baseUrl.replace(/\/+$/, '');
@@ -63,9 +70,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
   }
 
-  async *stream(req: LLMRequest): AsyncGenerator<LLMChunk> {
-    const { url, body } = this.buildRequest(req);
-    const res = await resilientFetch({
+  private breakerFor(model: string): CircuitBreaker {
+    let breaker = this.breakers.get(model);
+    if (!breaker) this.breakers.set(model, (breaker = new CircuitBreaker()));
+    return breaker;
+  }
+
+  private send(req: LLMRequest, url: string, body: Record<string, unknown>): Promise<Response> {
+    return resilientFetch({
       provider: this.id,
       url,
       init: {
@@ -78,11 +90,35 @@ export class OpenAICompatibleProvider implements LLMProvider {
         body: JSON.stringify(body),
       },
       policy: this.policy,
-      breaker: this.breaker,
+      breaker: this.breakerFor(req.model),
       headers: () => this.headers(),
       ...(req.signal && { signal: req.signal }),
       ...(this.cfg.fetchImpl && { fetchImpl: this.cfg.fetchImpl }),
     });
+  }
+
+  async *stream(req: LLMRequest): AsyncGenerator<LLMChunk> {
+    const { url, body } = this.buildRequest(req);
+    const setEffort = (effort: string | undefined) => {
+      if (effort) body.reasoning_effort = effort;
+      else delete body.reasoning_effort;
+    };
+    if (this.effortFor.has(req.model)) setEffort(this.effortFor.get(req.model));
+    let res: Response | undefined;
+    // One reasoning effort is configured for the provider, but models accept different levels: a larger
+    // Gemini model refuses "minimal". Such a model is asked again with "low", which still keeps it quick,
+    // and only then without any; what it accepted is remembered.
+    while (!res) {
+      try {
+        res = await this.send(req, url, body);
+      } catch (err) {
+        const refused = err instanceof ProviderError && err.kind === 'bad_request' && 'reasoning_effort' in body && /thinking level|reasoning[ _]effort/i.test(err.message);
+        if (!refused) throw err;
+        const next = body.reasoning_effort === FALLBACK_EFFORT ? undefined : FALLBACK_EFFORT;
+        this.effortFor.set(req.model, next);
+        setEffort(next);
+      }
+    }
     yield* fromOpenAIStream(this.id, parseSSE(readBody(res, this.id, this.policy.idleTimeoutMs, req.signal)));
   }
 

@@ -20,7 +20,11 @@ export interface OrchestratorConfig {
   port: number;
   environment: DeploymentEnvironment;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
-  auth: { mode: 'dev' | 'xsuaa' };
+  auth: {
+    mode: 'dev' | 'xsuaa';
+    /** Identity Authentication tenant whose user tokens the edge BFF forwards for the Outlook tools, e.g. https://<tenant>.accounts.ondemand.com. */
+    iasUrl?: string;
+  };
   assertionSecret: string;
   mcpServers: McpServerConfig[];
   llm: {
@@ -31,6 +35,8 @@ export interface OrchestratorConfig {
   };
   persistence: { mode: 'memory' | 'postgres'; postgresUrl?: string };
   retentionDays: number;
+  /** Days the conversation archive keeps entries; independent of `retentionDays`. */
+  archiveRetentionDays: number;
   limits: {
     requestsPerMinute: number;
     dailyTokensPerUser: number;
@@ -145,7 +151,7 @@ export function loadConfig(rawEnv: Env = process.env): OrchestratorConfig {
     port: int(env.PORT, 4000),
     environment,
     logLevel: (env.LOG_LEVEL as OrchestratorConfig['logLevel']) ?? 'info',
-    auth: { mode: authMode },
+    auth: { mode: authMode, ...(env.IAS_URL && { iasUrl: env.IAS_URL.replace(/\/+$/, '') }) },
     assertionSecret,
     mcpServers,
     llm: {
@@ -156,6 +162,7 @@ export function loadConfig(rawEnv: Env = process.env): OrchestratorConfig {
     },
     persistence: { mode: persistenceMode, ...(postgresUrl && { postgresUrl }) },
     retentionDays: int(env.CONVERSATION_RETENTION_DAYS, 90),
+    archiveRetentionDays: int(env.ARCHIVE_RETENTION_DAYS, 3650),
     limits: {
       requestsPerMinute: int(env.RATE_LIMIT_PER_MINUTE, 30),
       dailyTokensPerUser: int(env.DAILY_TOKENS_PER_USER, 400_000),

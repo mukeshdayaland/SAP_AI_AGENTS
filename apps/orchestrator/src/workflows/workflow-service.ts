@@ -12,7 +12,7 @@ import type { ToolSpec } from '@prowess/llm';
 import type { Logger } from '@prowess/observability';
 import type { AgentRegistry } from '../agents/registry.js';
 import type { AuditTrail } from '../audit/audit.js';
-import type { AuthContext } from '../auth/types.js';
+import { tokensOf, type AuthContext } from '../auth/types.js';
 import type { AgentDefinition, WorkflowCatalog, WorkflowDefinition, WorkflowStepDefinition } from '../config/catalog.js';
 import type { OrchestratorConfig } from '../config/env.js';
 import { newId, toConfirmation } from '../conversations/mappers.js';
@@ -397,7 +397,7 @@ export class WorkflowService {
 
         // The step runs as its module agent: that agent's roles and tool allow-list apply.
         const agent = agents.resolve(ctx.auth.user, d.agent);
-        const tool = agents.toolsFor(agent, tools).find((t) => t.name === d.tool);
+        const tool = agents.toolsFor(agent, tools, ctx.auth.user).find((t) => t.name === d.tool);
         if (!tool) {
           audit.record({ type: 'SECURITY_DENIAL', ...owner, agent: agent.id, tool: d.tool, status: 'denied', details: { reason: 'tool_not_permitted', runId: run.id } });
           fail(step, tools.length ? `The ${agent.name} may not use the tool for this step.` : 'SAP tools are temporarily unavailable.');
@@ -406,11 +406,11 @@ export class WorkflowService {
 
         let session = sessions.get(agent.id);
         if (!session) {
-          session = mcp.session({ user: ctx.auth.user, agent: agent.id, environment: config.environment, correlationId: ctx.correlationId, ...(ctx.auth.token && { userToken: ctx.auth.token }) });
+          session = mcp.session({ user: ctx.auth.user, agent: agent.id, environment: config.environment, correlationId: ctx.correlationId, ...tokensOf(ctx.auth) });
           sessions.set(agent.id, session);
         }
         const risk = policy.effectiveRisk(tool.name, tool.risk);
-        const meta = { id: `${run.id}-${step.id}`, agent: agent.id, tool: tool.name, system: tool.targetSystem, risk };
+        const meta = { id: `${run.id}-${step.id}`, agent: agent.id, tool: tool.name, system: tool.targetSystem, risk, label: tool.statusLabel };
         sink.toolStart(meta, tool.statusLabel);
 
         if (policy.requiresConfirmation(risk, config.environment)) {

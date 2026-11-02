@@ -2,14 +2,26 @@
 
 import type { DeploymentEnvironment } from '@prowess/contracts';
 import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { brand } from '@/lib/brand';
+import { useT } from '@/lib/i18n';
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 export { cx };
 
 /* ------------------------------ Logo ------------------------------ */
 
-/** Prowess mark: an ascending facet "P" with a spark — original artwork. */
+/**
+ * Brand mark. Prowess: an ascending facet "P" with a spark — original artwork.
+ * A brand with its own logo shows the organization's symbol on its color tile.
+ */
 export function ProwessMark({ size = 28, className }: { size?: number; className?: string }) {
+  if (brand.logo) {
+    return (
+      <span aria-hidden="true" className={cx('inline-flex items-center justify-center', className)} style={{ width: size, height: size, borderRadius: size * 0.28, background: '#fff', boxShadow: '0 0 0 1px var(--border)' }}>
+        <img src={brand.logo} alt="" style={{ width: '82%', height: 'auto' }} />
+      </span>
+    );
+  }
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className={className}>
       <rect x="0.5" y="0.5" width="31" height="31" rx="9" fill="var(--brand-primary)" />
@@ -129,11 +141,12 @@ export function Badge({ tone = 'neutral', children, className }: { tone?: Tone; 
 }
 
 export function EnvironmentBadge({ env }: { env: DeploymentEnvironment }) {
+  const t = useT();
   const tone: Tone = env === 'PROD' ? 'critical' : env === 'QA' ? 'warning' : 'info';
   return (
     <Badge tone={tone} className="normal-case tracking-normal">
       <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
-      {env === 'PROD' ? 'Production' : env === 'QA' ? 'Quality' : 'Development'}
+      {t(env === 'PROD' ? 'env.PROD' : env === 'QA' ? 'env.QA' : 'env.DEV')}
     </Badge>
   );
 }
@@ -142,6 +155,7 @@ export function EnvironmentBadge({ env }: { env: DeploymentEnvironment }) {
 
 /** Native <dialog>: focus trapping, Escape and inert background come from the platform. */
 export function Dialog({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+  const t = useT();
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
@@ -162,8 +176,8 @@ export function Dialog({ open, onClose, title, children, wide }: { open: boolean
         <h2 id={titleId} className="text-base font-semibold">
           {title}
         </h2>
-        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-ink-3 hover:bg-muted hover:text-ink" aria-label="Close dialog">
-          Esc
+        <button type="button" onClick={onClose} className="rounded-md px-2 py-1 text-sm text-ink-3 hover:bg-muted hover:text-ink" aria-label={t('common.dialogClose')}>
+          {t('common.esc')}
         </button>
       </div>
       <div className="px-5 py-4">{children}</div>
@@ -173,20 +187,28 @@ export function Dialog({ open, onClose, title, children, wide }: { open: boolean
 
 /* ------------------------------ Menu ------------------------------ */
 
+const MENU_ITEMS = '[role=menuitem], [role=menuitemradio]';
+
 /** Minimal accessible popover menu (button + role=menu, Escape/outside click closes). */
 export function Menu({
   trigger,
   label,
   children,
-  align = 'right',
+  align = 'end',
   side = 'bottom',
+  disabled,
+  compact,
   triggerClassName = 'inline-flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-muted',
 }: {
   trigger: ReactNode;
   label: string;
   children: (close: () => void) => ReactNode;
-  align?: 'left' | 'right';
+  /** Which edge of the trigger the menu lines up with: its start (left in English, right in Arabic) or its end. */
+  align?: 'start' | 'end';
   side?: 'top' | 'bottom';
+  disabled?: boolean;
+  /** As wide as its items, for a short list of short names. */
+  compact?: boolean;
   triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -198,7 +220,8 @@ export function Menu({
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
-    ref.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+    // A choice list opens on the current choice; any other menu on its first item.
+    (ref.current?.querySelector<HTMLElement>('[aria-checked=true]') ?? ref.current?.querySelector<HTMLElement>(MENU_ITEMS))?.focus();
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
@@ -212,6 +235,7 @@ export function Menu({
         aria-expanded={open}
         aria-controls={id}
         aria-label={label}
+        disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className={triggerClassName}
       >
@@ -223,12 +247,12 @@ export function Menu({
           role="menu"
           aria-label={label}
           onKeyDown={(e) => {
-            const items = [...(ref.current?.querySelectorAll<HTMLElement>('[role=menuitem]') ?? [])];
+            const items = [...(ref.current?.querySelectorAll<HTMLElement>(MENU_ITEMS) ?? [])];
             const i = items.indexOf(document.activeElement as HTMLElement);
             if (e.key === 'ArrowDown') items[(i + 1) % items.length]?.focus();
             if (e.key === 'ArrowUp') items[(i - 1 + items.length) % items.length]?.focus();
           }}
-          className={cx('absolute z-40 min-w-56 rounded-area border border-line bg-elevated p-1.5 shadow-lift', side === 'top' ? 'bottom-full mb-1' : 'mt-1', align === 'right' ? 'right-0' : 'left-0')}
+          className={cx('absolute z-40 rounded-area', compact ? 'min-w-32' : 'min-w-56', ' border border-line bg-elevated p-1.5 shadow-lift', side === 'top' ? 'bottom-full mb-1' : 'mt-1', align === 'end' ? 'end-0' : 'start-0')}
         >
           {children(() => setOpen(false))}
         </div>
@@ -238,7 +262,7 @@ export function Menu({
 }
 
 export function MenuItem({ children, onSelect, danger, href }: { children: ReactNode; onSelect?: () => void; danger?: boolean; href?: string }) {
-  const cls = cx('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted focus:bg-muted focus:outline-none', danger ? 'text-error' : 'text-ink');
+  const cls = cx('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-start text-sm hover:bg-muted focus:bg-muted focus:outline-none', danger ? 'text-error' : 'text-ink');
   return href ? (
     <a role="menuitem" href={href} className={cls}>
       {children}

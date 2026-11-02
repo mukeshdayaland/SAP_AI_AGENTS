@@ -4,6 +4,7 @@
  * offline mock model:
  *   sap-mcp :4100 → orchestrator :4000 → web :3000
  * Real provider credentials can be placed in `.env` (see .env.example).
+ * `--brand=<id>` serves another organization's front end (apps/web/src/lib/brand.ts).
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -18,10 +19,15 @@ const shared = {
   LOG_LEVEL: process.env.LOG_LEVEL ?? 'info',
 };
 
+const brand = process.argv.find((a) => a.startsWith('--brand='))?.slice('--brand='.length);
+
+// With mocked SAP the sap-mcp service also serves a mock Fiori page, which the web dev server forwards /sap/* to.
+const mockSap = (process.env.SAP_MODE ?? 'mock') === 'mock';
+
 const apps = [
-  { name: 'sap-mcp', color: 35, cmd: ['run', 'dev', '-w', '@prowess/sap-mcp'], env: { PORT: '4100', SAP_MODE: process.env.SAP_MODE ?? 'mock' } },
+  { name: 'sap-mcp', color: 35, cmd: ['run', 'dev', '-w', '@prowess/sap-mcp'], env: { PORT: '4100', SAP_MODE: process.env.SAP_MODE ?? 'mock', ...(mockSap && { SAP_FIORI_LAUNCHPAD_URL: process.env.SAP_FIORI_LAUNCHPAD_URL ?? '/sap/bc/ui2/flp' }) } },
   { name: 'orchestrator', color: 36, cmd: ['run', 'dev', '-w', '@prowess/orchestrator'], env: { PORT: '4000', AUTH_MODE: 'dev', SAP_MCP_URL: 'http://localhost:4100/mcp' } },
-  { name: 'web', color: 33, cmd: ['run', 'dev', '-w', '@prowess/web'], env: { ORCHESTRATOR_URL: 'http://localhost:4000' } },
+  { name: 'web', color: 33, cmd: ['run', 'dev', '-w', '@prowess/web'], env: { ORCHESTRATOR_URL: 'http://localhost:4000', ...(brand && { NEXT_PUBLIC_BRAND: brand }) } },
 ];
 
 // On Windows npm is `npm.cmd`, which Node can only start through a shell.

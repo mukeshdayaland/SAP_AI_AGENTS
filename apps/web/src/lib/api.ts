@@ -1,8 +1,11 @@
 import type {
+  ArchiveEntry,
   AttachmentRef,
+  BrowserActionResult,
   ConfirmationRequest,
   ConversationDetail,
   ConversationSummary,
+  EmployeeMap,
   HelpOverview,
   MessageDTO,
   PublicError,
@@ -10,7 +13,9 @@ import type {
   VendorMap,
   WorkspaceConfig,
 } from '@prowess/contracts';
+import { getLocale } from './i18n';
 import { prefs } from './prefs';
+import { brand } from './brand';
 
 /**
  * Browser API client. Talks only to same-origin `/api/v1/*` (the Cloudflare
@@ -33,6 +38,8 @@ function headers(json: boolean): HeadersInit {
   const devUser = prefs.devUser();
   return {
     'x-requested-with': 'prowess',
+    // The backend answers configuration text (agents, starters, model tiers) in this language.
+    'accept-language': getLocale(),
     ...(json && { 'content-type': 'application/json' }),
     ...(devUser && { 'x-prowess-dev-user': devUser }),
   };
@@ -40,7 +47,7 @@ function headers(json: boolean): HeadersInit {
 
 const fallbackError = (status: number): PublicError => ({
   code: status === 401 ? 'UNAUTHENTICATED' : 'NETWORK',
-  message: status === 401 ? 'Your session has expired. Please reload the page to sign in again.' : 'Prowess AI could not be reached. Check your connection and try again.',
+  message: status === 401 ? 'Your session has expired. Please reload the page to sign in again.' : `${brand.name} could not be reached. Check your connection and try again.`,
   correlationId: '',
   reference: '',
   retryable: status !== 401,
@@ -71,6 +78,8 @@ export const api = {
   conversation: (id: string) => request<ConversationDetail>('GET', `/conversations/${encodeURIComponent(id)}`),
   rename: (id: string, title: string) => request<ConversationSummary>('PATCH', `/conversations/${encodeURIComponent(id)}`, { title }),
   remove: (id: string) => request<void>('DELETE', `/conversations/${encodeURIComponent(id)}`),
+  /** What the Fiori pane did with an action the agent sent. */
+  browserResult: (result: BrowserActionResult) => request<void>('POST', '/browser/results', result),
   feedback: (conversationId: string, messageId: string, rating: 'up' | 'down') =>
     request<void>('POST', `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/feedback`, { rating }),
   confirm: (id: string, acknowledgeEnvironment?: string) =>
@@ -78,8 +87,13 @@ export const api = {
   cancel: (id: string) => request<{ confirmation: ConfirmationRequest; followUp?: MessageDTO[] }>('POST', `/actions/${encodeURIComponent(id)}/cancel`, {}),
   help: () => request<HelpOverview>('GET', '/help'),
   vendorLocations: () => request<VendorMap>('GET', '/vendors/locations'),
+  employeeLocations: () => request<EmployeeMap>('GET', '/employees/locations'),
   adminOverview: () => request<Record<string, unknown>>('GET', '/admin/overview'),
   audit: () => request<{ events: Record<string, unknown>[] }>('GET', '/admin/audit'),
+  archive: (filter: { userId?: string; conversationId?: string }) => {
+    const query = new URLSearchParams(Object.entries(filter).filter((e): e is [string, string] => Boolean(e[1]))).toString();
+    return request<{ entries: ArchiveEntry[] }>('GET', `/admin/archive${query ? `?${query}` : ''}`);
+  },
 
   async upload(file: File): Promise<AttachmentRef> {
     const form = new FormData();

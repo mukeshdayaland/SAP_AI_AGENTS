@@ -5,6 +5,8 @@ import { PROVIDER_IDS, type ModelCatalog } from '@prowess/llm';
 import { z } from 'zod';
 
 const role = z.enum(APP_ROLES);
+/** The same business-facing text in other interface languages, keyed by language code. Missing text falls back to English. */
+const translations = <S extends z.ZodRawShape>(shape: S) => z.record(z.string().regex(/^[a-z]{2}$/), z.object(shape).partial()).default({});
 
 const TierSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{1,31}$/),
@@ -15,8 +17,10 @@ const TierSchema = z.object({
   privateOnly: z.boolean().optional(),
   maxOutputTokens: z.number().int().positive().max(64_000),
   maxContextTokens: z.number().int().positive().max(1_000_000),
+  maxHistoryTokens: z.number().int().positive().max(1_000_000).optional(),
   temperature: z.number().min(0).max(2).optional(),
   targets: z.array(z.object({ provider: z.enum(PROVIDER_IDS), model: z.string().min(1).max(200) })).min(1),
+  i18n: translations({ label: z.string().min(1).max(40), description: z.string().max(200) }),
 });
 
 export const ModelCatalogSchema = z.object({ tiers: z.array(TierSchema).min(1) });
@@ -34,6 +38,7 @@ const AgentSchema = z.object({
   enabled: z.boolean().default(true),
   /** Former ids of this agent. Stored conversations that reference one resolve to this agent. */
   aliases: z.array(z.string().regex(/^[a-z][a-z0-9-]{1,31}$/)).default([]),
+  i18n: translations({ name: z.string().min(1).max(60), description: z.string().max(200) }),
 });
 
 const StarterSchema = z.object({
@@ -43,6 +48,8 @@ const StarterSchema = z.object({
   prompt: z.string().max(500),
   agent: z.string(),
   icon: z.string().max(30),
+  /** Label, description and the prompt the card sends, so the conversation reads in the user's language. */
+  i18n: translations({ label: z.string().max(60), description: z.string().max(120), prompt: z.string().max(500) }),
 });
 
 export const AgentCatalogSchema = z

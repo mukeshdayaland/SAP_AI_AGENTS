@@ -1,8 +1,10 @@
 'use client';
 
 import type { StarterAction, WorkspaceConfig } from '@prowess/contracts';
-import { Activity, BookOpen, Building2, Coins, FileText, Package, ShieldCheck, Sparkles, Truck, Wrench, type LucideIcon } from 'lucide-react';
+import { Activity, BookOpen, Building2, CalendarDays, ClipboardCheck, Coins, FileText, Mail, Package, ShieldCheck, Sparkles, Truck, Users, Wrench, type LucideIcon } from 'lucide-react';
 import { ProwessMark } from '../ui/primitives';
+import { brand } from '@/lib/brand';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 
 const ICONS: Record<string, LucideIcon> = {
   receipt: FileText,
@@ -14,26 +16,35 @@ const ICONS: Record<string, LucideIcon> = {
   coins: Coins,
   book: BookOpen,
   activity: Activity,
+  users: Users,
+  calendar: CalendarDays,
+  clipboard: ClipboardCheck,
+  mail: Mail,
 };
 
-function greeting(now = new Date()) {
+function greeting(now = new Date()): MessageKey {
   const h = now.getHours();
-  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  return h < 12 ? 'landing.morning' : h < 18 ? 'landing.afternoon' : 'landing.evening';
 }
 
 /** Empty state. Starter actions come from server configuration, not code. */
 export function Landing({ config, onStarter }: { config: WorkspaceConfig; onStarter: (s: StarterAction) => void }) {
-  const first = config.user.displayName.split(' ')[0];
+  const { t, locale } = useI18n();
+  const first = config.user.displayName.split(' ')[0] ?? '';
   return (
     <div className="mx-auto my-auto flex w-full max-w-3xl flex-col items-center px-4 py-10 text-center">
-      <ProwessMark size={52} />
-      <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.18em] text-brand">{config.product.name}</p>
-      <p className="mt-1 text-sm text-ink-3">{config.product.subtitle}</p>
+      {brand.logo ? (
+        <img src={brand.logo} alt="" className="h-20 w-auto" />
+      ) : (
+        <ProwessMark size={52} />
+      )}
+      <p className="mt-5 text-[12px] font-semibold uppercase tracking-[0.18em] text-brand">{brand.name}</p>
+      <p className="mt-1 text-sm text-ink-3">{(locale === 'ar' && brand.i18n?.ar?.subtitle) || brand.subtitle}</p>
       <h2 className="mt-6 text-2xl font-bold tracking-tight text-ink sm:text-3xl">
-        {greeting()}, {first}. How can I help you today?
+        {t('landing.question', { greeting: t(greeting()), name: first })}
       </h2>
       {config.starters.length > 0 && (
-        <ul className="mt-8 grid w-full grid-cols-1 gap-3 text-left sm:grid-cols-2">
+        <ul className="mt-8 grid w-full grid-cols-1 gap-3 text-start sm:grid-cols-2">
           {config.starters.map((s) => {
             const Icon = ICONS[s.icon] ?? Sparkles;
             return (
@@ -41,7 +52,7 @@ export function Landing({ config, onStarter }: { config: WorkspaceConfig; onStar
                 <button
                   type="button"
                   onClick={() => onStarter(s)}
-                  className="group flex h-full w-full items-start gap-3 rounded-area border border-line bg-surface p-4 text-left shadow-soft transition-all hover:-translate-y-px hover:border-area-sap hover:bg-area-sap-fill hover:shadow-lift"
+                  className="group flex h-full w-full items-start gap-3 rounded-area border border-line bg-surface p-4 text-start shadow-soft transition-all hover:-translate-y-px hover:border-area-sap hover:bg-area-sap-fill hover:shadow-lift"
                 >
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-area-nonsap-fill text-brand">
                     <Icon size={18} aria-hidden />

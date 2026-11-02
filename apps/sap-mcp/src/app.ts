@@ -4,10 +4,19 @@ import { createContext, createLogger, metrics, runWithContext, type Logger } fro
 import type { AssertionError} from '@prowess/security';
 import { sha256Hex } from '@prowess/security';
 import type { McpConfig } from './config.js';
+import { MOCK_FIORI_PAGE, MOCK_FIORI_PATH } from './sap/mock-fiori.js';
 import { MockSapGateway } from './sap/mock-gateway.js';
 import type { SapGateway } from './sap/model.js';
 import { ODataSapGateway } from './sap/odata-gateway.js';
 import { authenticateCaller, buildMcpServer, type ServerDeps } from './server.js';
+import { GRAPH_SCOPES, GraphMailGateway, IasGraphTokens } from './outlook/graph-gateway.js';
+import { DocumentAiExtractor, MockDocumentExtractor, type DocumentExtractor } from './outlook/document-ai.js';
+import { MOCK_SCANS, MockMailGateway } from './outlook/mock-gateway.js';
+import type { MailGateway } from './outlook/model.js';
+import { MockSfGateway } from './sf/mock-gateway.js';
+import type { SfGateway } from './sf/model.js';
+import { SfODataGateway } from './sf/odata-gateway.js';
+import { EntityPolicy } from './sf/policy.js';
 import { buildRegistry } from './tools/registry.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -34,15 +43,40 @@ function send(res: ServerResponse, status: number, body: unknown, type = 'applic
 
 export function createGateway(cfg: McpConfig, logger: Logger): SapGateway {
   return cfg.sap.mode === 'odata'
-    ? new ODataSapGateway({ destinationName: cfg.sap.destinationName, systemId: cfg.sap.systemId, allowTechnicalUser: cfg.sap.allowTechnicalUser, logger })
+    ? new ODataSapGateway({ destinationName: cfg.sap.destinationName, systemId: cfg.sap.systemId, allowTechnicalUser: cfg.sap.allowTechnicalUser, logger, ...(cfg.sap.defaultPaymentTerms && { defaultPaymentTerms: cfg.sap.defaultPaymentTerms }) })
     : new MockSapGateway(cfg.sap.mockLatencyMs);
 }
 
-export function createMcpHttpServer(cfg: McpConfig, overrides: { gateway?: SapGateway; logger?: Logger } = {}): Server {
+export function createSfGateway(cfg: McpConfig, logger: Logger): SfGateway {
+  return cfg.sf.mode === 'odata'
+    ? new SfODataGateway({ destinationName: cfg.sf.destinationName, systemId: cfg.sf.systemId, userMapping: cfg.sf.userMapping, logger })
+    : new MockSfGateway(cfg.sap.mockLatencyMs);
+}
+
+export function createMailGateway(cfg: McpConfig, logger: Logger): MailGateway {
+  const ias = cfg.outlook.ias;
+  if (cfg.outlook.mode !== 'graph' || !ias) return new MockMailGateway(cfg.sap.mockLatencyMs);
+  const tokens = new IasGraphTokens({ iasUrl: ias.url, clientId: ias.clientId, clientSecret: ias.clientSecret, scopes: GRAPH_SCOPES, logger });
+  return new GraphMailGateway({ systemId: cfg.outlook.systemId, timeZone: cfg.outlook.timeZone, tokens, logger });
+}
+
+export function createDocumentExtractor(cfg: McpConfig, logger: Logger): DocumentExtractor | undefined {
+  if (cfg.documentAi.mode === 'mock') return new MockDocumentExtractor(MOCK_SCANS);
+  if (cfg.documentAi.mode === 'service' && cfg.documentAi.credentials) return new DocumentAiExtractor({ credentials: cfg.documentAi.credentials, clientId: cfg.documentAi.clientId, logger });
+  return undefined;
+}
+
+export function createMcpHttpServer(cfg: McpConfig, overrides: { gateway?: SapGateway; sfGateway?: SfGateway; mailGateway?: MailGateway; logger?: Logger } = {}): Server {
   const logger = overrides.logger ?? createLogger({ service: 'prowess-sap-mcp', level: cfg.logLevel });
   const deps: ServerDeps = {
     registry: buildRegistry(cfg.domains),
     gateway: overrides.gateway ?? createGateway(cfg, logger),
+    sf: { gateway: overrides.sfGateway ?? createSfGateway(cfg, logger), policy: EntityPolicy.fromJson(cfg.sf.allowlistJson) },
+    outlook: (() => {
+      const documents = createDocumentExtractor(cfg, logger);
+      return { gateway: overrides.mailGateway ?? createMailGateway(cfg, logger), allowedRecipientDomains: cfg.outlook.allowedRecipientDomains, ...(documents && { documents }) };
+    })(),
+    ...(cfg.fiori && { fiori: cfg.fiori }),
     secret: cfg.assertionSecret,
     logger,
     toolTimeoutMs: cfg.toolTimeoutMs,
@@ -59,9 +93,18 @@ export function createMcpHttpServer(cfg: McpConfig, overrides: { gateway?: SapGa
       try {
         if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { status: 'ok' });
         if (req.method === 'GET' && url.pathname === '/readiness') {
-          return send(res, 200, { status: 'ready', system: deps.gateway.systemId, mock: deps.gateway.mock, tools: deps.registry.size });
+          return send(res, 200, {
+            status: 'ready',
+            system: deps.gateway.systemId,
+            mock: deps.gateway.mock,
+            ...(cfg.domains.has('sf') && { successFactors: { system: deps.sf.gateway.systemId, mock: deps.sf.gateway.mock } }),
+            ...(cfg.domains.has('outlook') && { outlook: { system: deps.outlook.gateway.systemId, mock: deps.outlook.gateway.mock, documentAi: cfg.documentAi.mode } }),
+            tools: deps.registry.size,
+          });
         }
         if (req.method === 'GET' && url.pathname === '/metrics') return send(res, 200, metrics.render(), 'text/plain; version=0.0.4');
+        // In mock mode this service also stands in for the Fiori launchpad the guides open.
+        if (req.method === 'GET' && cfg.sap.mode === 'mock' && url.pathname === MOCK_FIORI_PATH) return send(res, 200, MOCK_FIORI_PAGE, 'text/html; charset=utf-8');
         if (url.pathname !== '/mcp') return send(res, 404, { error: 'not_found' });
         if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
 

@@ -1,3 +1,4 @@
+import type { BrowserAction } from './browser.js';
 import type { UIComponent } from './components.js';
 import type {
   AgentAction,
@@ -34,6 +35,8 @@ export type StreamEvent =
   | { type: 'component'; component: UIComponent }
   | { type: 'source'; source: SourceReference }
   | { type: 'confirmation.required'; confirmation: ConfirmationRequest }
+  /** Something for the Fiori pane to do in the page the user has open. */
+  | { type: 'browser.action'; action: BrowserAction }
   | {
       type: 'message.complete';
       messageId: string;

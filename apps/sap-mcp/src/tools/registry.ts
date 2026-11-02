@@ -4,13 +4,17 @@ import { arTools } from './ar.js';
 import { creditTools } from './credit.js';
 import { financeTools } from './finance.js';
 import { glTools } from './gl.js';
+import { mmInvoiceCheckTools } from './mm-invoice-check.js';
 import { mmInvoiceTools } from './mm-invoice.js';
 import { mmReversalTools } from './mm-reversal.js';
 import { mmTools } from './mm.js';
+import { outlookTools } from './outlook.js';
 import { paymentTools } from './payments.js';
 import { pmTools } from './pm.js';
 import { sdProcessTools } from './sd-process.js';
 import { sdTools } from './sd.js';
+import { sfCaseTools } from './sf-cases.js';
+import { sfTools } from './sf.js';
 import { sharedTools } from './shared.js';
 import { defineTool, type Domain, type ToolDefinition } from './types.js';
 
@@ -28,10 +32,14 @@ const ALL: ToolDefinition[] = [
   ...glTools,
   ...mmTools,
   ...mmInvoiceTools,
+  ...mmInvoiceCheckTools,
   ...mmReversalTools,
   ...paymentTools,
   ...financeTools,
   ...pmTools,
+  ...sfTools,
+  ...sfCaseTools,
+  ...outlookTools,
   ...sharedTools,
 ] as unknown as ToolDefinition[];
 
@@ -67,7 +75,9 @@ export function buildRegistry(domains: ReadonlySet<Domain>): Map<string, ToolDef
         });
       }
       const p = await target.preview(parsed.data, ctx);
-      return { data: { preview: p, normalizedArguments: parsed.data, risk: target.risk, targetSystem: ctx.gateway.systemId, mock: ctx.gateway.mock } };
+      // The system the change goes to: SuccessFactors for the sf domain, Microsoft 365 for outlook, S/4HANA for everything else.
+      const backend = target.domain === 'sf' ? ctx.sf.gateway : target.domain === 'outlook' ? ctx.outlook.gateway : ctx.gateway;
+      return { data: { preview: p, normalizedArguments: parsed.data, risk: target.risk, targetSystem: backend.systemId, mock: backend.mock } };
     },
   });
   registry.set(PREVIEW_TOOL, preview as unknown as ToolDefinition);

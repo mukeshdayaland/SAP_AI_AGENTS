@@ -5,6 +5,8 @@ import { ChevronsUpDown, CircleHelp, LayoutDashboard, LogOut, MapPin, MoreHorizo
 import { useMemo, useState } from 'react';
 import { groupConversations } from '@/lib/format';
 import { IconButton, Menu, MenuItem, ProwessMark, cx } from '../ui/primitives';
+import { brand } from '@/lib/brand';
+import { useT, type MessageKey } from '@/lib/i18n';
 
 interface Props {
   conversations: ConversationSummary[];
@@ -22,14 +24,15 @@ interface Props {
   onSettings: () => void;
 }
 
-function roleLabel(user: UserProfile) {
-  if (user.roles.includes('AI_ADMIN')) return 'Administrator';
-  if (user.roles.includes('AI_POWER_USER')) return 'Power user';
-  if (user.roles.includes('AI_AUDITOR')) return 'Auditor';
-  return 'Business user';
+function roleLabel(user: UserProfile): MessageKey {
+  if (user.roles.includes('AI_ADMIN')) return 'role.admin';
+  if (user.roles.includes('AI_POWER_USER')) return 'role.power';
+  if (user.roles.includes('AI_AUDITOR')) return 'role.auditor';
+  return 'role.business';
 }
 
 export function Sidebar(p: Props) {
+  const t = useT();
   const groups = useMemo(() => groupConversations(p.conversations), [p.conversations]);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -45,47 +48,56 @@ export function Sidebar(p: Props) {
     <>
       {p.mobileOpen && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={p.onCloseMobile} aria-hidden />}
       <nav
-        aria-label="Conversations"
+        aria-label={t('sidebar.conversations')}
         className={cx(
-          'fixed inset-y-0 left-0 z-40 flex flex-col border-r border-line bg-surface transition-[width,transform] duration-200 md:static md:translate-x-0',
-          p.mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          'brand-nav fixed inset-y-0 start-0 z-40 flex flex-col border-e border-line bg-surface transition-[width,transform] duration-200 md:static',
+          // Off-screen on small screens only: past the left edge in English, past the right edge in Arabic.
+          !p.mobileOpen && 'max-md:-translate-x-full max-md:rtl:translate-x-full',
           collapsed ? 'w-[64px]' : 'w-[272px]',
         )}
       >
         <div className={cx('flex h-14 items-center border-b border-line px-3', collapsed ? 'justify-center' : 'justify-between')}>
+          {/* The mark stays when the sidebar is collapsed; only the name goes. */}
+          <div className="flex items-center gap-2.5">
+            <ProwessMark size={collapsed ? 30 : 26} />
+            {!collapsed && <span className="text-[14px] font-semibold tracking-tight text-ink">{brand.name}</span>}
+          </div>
           {!collapsed && (
-            <div className="flex items-center gap-2.5">
-              <ProwessMark size={26} />
-              <span className="text-[14px] font-semibold tracking-tight text-ink">Prowess AI</span>
-            </div>
+            <span className="hidden md:inline-flex">
+              <IconButton label={t('sidebar.collapse')} onClick={p.onToggle}>
+                <PanelLeftClose size={17} className="rtl:-scale-x-100" />
+              </IconButton>
+            </span>
           )}
-          <span className="hidden md:inline-flex">
-            <IconButton label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={p.onToggle}>
-              {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-            </IconButton>
-          </span>
         </div>
 
-        <div className="p-3">
+        <div className={cx('p-3', collapsed && 'flex flex-col items-center gap-2')}>
+          {collapsed && (
+            <span className="hidden md:inline-flex">
+              <IconButton label={t('sidebar.expand')} onClick={p.onToggle}>
+                <PanelLeftOpen size={17} className="rtl:-scale-x-100" />
+              </IconButton>
+            </span>
+          )}
           <button
             type="button"
             onClick={p.onNew}
-            aria-label="New conversation"
+            aria-label={t('sidebar.new')}
             className={cx(
               'flex w-full items-center gap-2 rounded-lg border border-line bg-surface text-sm font-medium text-ink transition-colors hover:border-brand hover:text-brand',
               collapsed ? 'h-10 justify-center' : 'h-10 px-3',
             )}
           >
             <Plus size={16} aria-hidden />
-            {!collapsed && 'New conversation'}
+            {!collapsed && t('sidebar.new')}
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-2 pb-3">
           {!collapsed &&
             groups.map((g) => (
-              <section key={g.label} className="mt-3 first:mt-1" aria-label={g.label}>
-                <h3 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-3">{g.label}</h3>
+              <section key={g.id} className="mt-3 first:mt-1" aria-label={t(`sidebar.${g.id}`)}>
+                <h3 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-3">{t(`sidebar.${g.id}`)}</h3>
                 <ul>
                   {g.items.map((c) => (
                     <li key={c.id} className="group relative">
@@ -99,7 +111,8 @@ export function Sidebar(p: Props) {
                         >
                           <input
                             autoFocus
-                            aria-label="Conversation name"
+                            aria-label={t('sidebar.name')}
+                            dir="auto"
                             value={draft}
                             maxLength={120}
                             onChange={(e) => setDraft(e.target.value)}
@@ -115,14 +128,14 @@ export function Sidebar(p: Props) {
                             onClick={() => p.onSelect(c.id)}
                             aria-current={c.id === p.activeId ? 'page' : undefined}
                             className={cx(
-                              'w-full truncate rounded-lg py-1.5 pl-2 pr-8 text-left text-sm transition-colors',
-                              c.id === p.activeId ? 'bg-brand-soft font-semibold text-ink shadow-[inset_3px_0_0_var(--brand-primary)]' : 'text-ink-2 hover:bg-muted hover:text-ink',
+                              'w-full truncate rounded-lg py-1.5 ps-2 pe-8 text-start text-sm transition-colors',
+                              c.id === p.activeId ? 'bg-brand-soft font-semibold text-ink shadow-[inset_3px_0_0_var(--brand-primary)] rtl:shadow-[inset_-3px_0_0_var(--brand-primary)]' : 'text-ink-2 hover:bg-muted hover:text-ink',
                             )}
                           >
-                            {c.title}
+                            <bdi>{c.title}</bdi>
                           </button>
-                          <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-                            <Menu label={`Options for ${c.title}`} trigger={<MoreHorizontal size={15} className="text-ink-3" />}>
+                          <div className="absolute end-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                            <Menu label={t('sidebar.options', { title: c.title })} trigger={<MoreHorizontal size={15} className="text-ink-3" />}>
                               {(close) => (
                                 <>
                                   <MenuItem
@@ -132,16 +145,16 @@ export function Sidebar(p: Props) {
                                       close();
                                     }}
                                   >
-                                    <Pencil size={14} /> Rename
+                                    <Pencil size={14} /> {t('sidebar.rename')}
                                   </MenuItem>
                                   <MenuItem
                                     danger
                                     onSelect={() => {
                                       close();
-                                      if (window.confirm(`Delete “${c.title}”? This cannot be undone.`)) p.onDelete(c.id);
+                                      if (window.confirm(t('sidebar.confirmDelete', { title: c.title }))) p.onDelete(c.id);
                                     }}
                                   >
-                                    <Trash2 size={14} /> Delete
+                                    <Trash2 size={14} /> {t('sidebar.delete')}
                                   </MenuItem>
                                 </>
                               )}
@@ -154,16 +167,16 @@ export function Sidebar(p: Props) {
                 </ul>
               </section>
             ))}
-          {!collapsed && !groups.length && <p className="px-2 pt-2 text-[12px] text-ink-3">Your conversations will appear here.</p>}
+          {!collapsed && !groups.length && <p className="px-2 pt-2 text-[12px] text-ink-3">{t('sidebar.empty')}</p>}
         </div>
 
         <div className="border-t border-line p-2">
           <Menu
-            label="Account"
+            label={t('sidebar.account')}
             side="top"
-            align="left"
+            align="start"
             triggerClassName={cx(
-              'flex w-full items-center gap-2.5 rounded-lg border border-transparent text-left transition-colors hover:border-line hover:bg-muted aria-expanded:border-line aria-expanded:bg-muted',
+              'flex w-full items-center gap-2.5 rounded-lg border border-transparent text-start transition-colors hover:border-line hover:bg-muted aria-expanded:border-line aria-expanded:bg-muted',
               collapsed ? 'justify-center p-1.5' : 'px-2 py-2',
             )}
             trigger={
@@ -175,7 +188,7 @@ export function Sidebar(p: Props) {
                   <>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold text-ink">{p.user.displayName}</span>
-                      <span className="block truncate text-xs text-ink-3">{roleLabel(p.user)}</span>
+                      <span className="block truncate text-xs text-ink-3">{t(roleLabel(p.user))}</span>
                     </span>
                     <ChevronsUpDown size={15} aria-hidden className="shrink-0 text-ink-3" />
                   </>
@@ -196,21 +209,21 @@ export function Sidebar(p: Props) {
                       p.onSettings();
                     }}
                   >
-                    <Settings size={15} /> Settings
+                    <Settings size={15} /> {t('sidebar.settings')}
                   </MenuItem>
                   <MenuItem href="/vendors/">
-                    <MapPin size={15} /> Vendor map
+                    <MapPin size={15} /> {t('sidebar.vendorMap')}
                   </MenuItem>
                   <MenuItem href="/help/">
-                    <CircleHelp size={15} /> Help and my activity
+                    <CircleHelp size={15} /> {t('sidebar.help')}
                   </MenuItem>
                   {p.showAdmin && (
                     <MenuItem href="/admin/">
-                      <LayoutDashboard size={15} /> Administration
+                      <LayoutDashboard size={15} /> {t('sidebar.admin')}
                     </MenuItem>
                   )}
                   <MenuItem href="/logout">
-                    <LogOut size={15} /> Sign out
+                    <LogOut size={15} className="rtl:-scale-x-100" /> {t('sidebar.signOut')}
                   </MenuItem>
                 </div>
               </>

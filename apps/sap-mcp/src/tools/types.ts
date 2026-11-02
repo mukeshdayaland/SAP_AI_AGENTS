@@ -1,9 +1,14 @@
-import type { ToolRisk, UIComponent } from '@prowess/contracts';
+import type { AppRole, ToolChoices, ToolRisk, UIComponent } from '@prowess/contracts';
 import type { z } from 'zod';
+import type { FioriSettings } from '../sap/fiori-guides.js';
+import type { DocumentExtractor } from '../outlook/document-ai.js';
+import type { MailGateway } from '../outlook/model.js';
 import type { Amount, SapCallContext, SapGateway } from '../sap/model.js';
+import type { SfGateway } from '../sf/model.js';
+import type { EntityPolicy } from '../sf/policy.js';
 
 /** Tool domains follow SAP modules, so each module can be deployed as its own MCP service. */
-export const BUSINESS_DOMAINS = ['sd', 'credit', 'ar', 'ap', 'gl', 'mm', 'pm', 'shared'] as const;
+export const BUSINESS_DOMAINS = ['sd', 'credit', 'ar', 'ap', 'gl', 'mm', 'pm', 'sf', 'outlook', 'shared'] as const;
 export type Domain = (typeof BUSINESS_DOMAINS)[number] | 'system';
 
 /** What a tool returns. The orchestrator separates model-facing data from UI-facing parts. */
@@ -30,6 +35,25 @@ export interface ActionPreview {
 export interface ToolContext {
   sap: SapCallContext;
   gateway: SapGateway;
+  /** SuccessFactors, used by the `sf` domain. */
+  sf: SfBackend;
+  /** Microsoft 365 mail and calendar, used by the `outlook` domain. */
+  outlook: OutlookBackend;
+  /** The Fiori launchpad of the S/4HANA system, when one is connected. */
+  fiori?: FioriSettings;
+}
+
+export interface SfBackend {
+  gateway: SfGateway;
+  policy: EntityPolicy;
+}
+
+export interface OutlookBackend {
+  gateway: MailGateway;
+  /** Recipient domains mail may go to. Empty: any domain, with external recipients named on the confirmation. */
+  allowedRecipientDomains: string[];
+  /** SAP Document AI, for attachments without text (scans, photos). Absent: such files are refused. */
+  documents?: DocumentExtractor;
 }
 
 export interface ToolDefinition<S extends z.ZodRawShape = z.ZodRawShape> {
@@ -44,6 +68,10 @@ export interface ToolDefinition<S extends z.ZodRawShape = z.ZodRawShape> {
   input: S;
   /** Hidden from models; only the orchestrator may call it. */
   internal?: boolean;
+  /** Offered only to users with this role, and refused for anyone else. */
+  requiredRole?: AppRole;
+  /** Options of an argument that only some agents need; the orchestrator offers each agent its own. */
+  choices?: ToolChoices;
   /** Required for every non-READ tool. Must not change SAP state. */
   preview?: (args: z.infer<z.ZodObject<S>>, ctx: ToolContext) => Promise<ActionPreview>;
   run: (args: z.infer<z.ZodObject<S>>, ctx: ToolContext) => Promise<ToolResultPayload>;

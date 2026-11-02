@@ -2,7 +2,7 @@
 
 A conversational workspace where AI agents work with SAP S/4HANA through MCP tools, running on SAP BTP Cloud Foundry.
 Inference is provider-independent: the same agents run on **SAP AI Core** (generative AI hub), **Azure AI Foundry**,
-**AWS Bedrock** or **Google Vertex AI**. Business users pick *Standard / Advanced / Private*. Administrators map
+**AWS Bedrock** or **Google Vertex AI**. Business users pick *Standard / Advanced*. Administrators map
 those tiers to concrete deployments.
 
 ```mermaid
@@ -44,7 +44,7 @@ To use a real model, copy `.env.example` to `.env` and configure one or more pro
 apps/
   web/            Next.js + Tailwind UI (static export, served by the approuter)
   orchestrator/   Fastify API: chat/SSE, agents, model routing, MCP client, persistence, audit
-  sap-mcp/        MCP server: SD / Credit / AR / AP / GL / MM / PM / Shared tools, mock + OData S/4HANA gateways
+  sap-mcp/        MCP server: SD / Credit / AR / AP / GL / MM / PM / Shared tools on S/4HANA and SF tools on SuccessFactors, mock + OData gateways
 packages/
   contracts/      Shared types & zod schemas (UI components, SSE events, errors)
   llm/            Provider abstraction, adapters, resilient HTTP, model router
@@ -78,6 +78,7 @@ presentation/     Earlier static customer presentation (unchanged)
 - [Authentication & authorization](docs/authentication.md)
 - [MCP tool layer](docs/mcp.md)
 - [SAP connectivity](docs/sap-connectivity.md)
+- [Invoice intake: mail to posted invoice](docs/invoice-intake.md)
 - [LLM providers](docs/llm-providers.md)
 - [BTP deployment](docs/btp-deployment.md)
 - [Local development](docs/local-development.md)

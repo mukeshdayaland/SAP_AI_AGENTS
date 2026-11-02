@@ -114,10 +114,10 @@ tier's `maxContextTokens`, and the current turn. Turns that overflow are folded 
 ## Extending
 
 - **New agent**: add it to `apps/orchestrator/config/agents.json` (tools by name or `domain_*` wildcard, tiers, roles).
-  Agents follow SAP modules (SD, Credit, FI-AR, FI-AP, FI-GL, MM, PM) plus a read-only Controls agent. When an agent is
+  Agents follow SAP areas: FICO, MM, SD and HCM (SuccessFactors, for users with `AI_HR_USER`). When an agent is
   renamed, list its old id under `aliases` so stored conversations keep working.
 - **New tool/domain**: add a module under `apps/sap-mcp/src/tools/`, register it in `registry.ts`, and extend `SapGateway`.
-- **New MCP server** (HCM, Ariba, SuccessFactors…): deploy it and add it to `MCP_SERVERS`. Tool names must be unique.
+- **New MCP server** (Ariba, Concur…): deploy it and add it to `MCP_SERVERS`. Tool names must be unique.
 - **New workflow**: add it to `apps/orchestrator/config/workflows.json` (steps, module agents, tools). See [workflows.md](workflows.md).
 - **New model provider**: implement `LLMProvider`, add it to `factory.ts` and reference it in `models.json`.
 - **HANA Cloud persistence**: implement the `Store` port with `@sap/hana-client` (same queries, owner-scoped).

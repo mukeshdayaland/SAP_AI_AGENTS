@@ -1,7 +1,7 @@
 import type { VendorLocation, VendorMap } from '@prowess/contracts';
 import { currentContext, newCorrelationId, type Logger } from '@prowess/observability';
 import type { AuditTrail } from '../audit/audit.js';
-import type { AuthContext } from '../auth/types.js';
+import { tokensOf, type AuthContext } from '../auth/types.js';
 import type { OrchestratorConfig } from '../config/env.js';
 import { AppError } from '../errors/app-error.js';
 import type { McpGateway } from '../mcp/gateway.js';
@@ -41,7 +41,7 @@ export function geocodeQueryFor(v: VendorAddress): GeocodeQuery | null {
 const displayAddress = (v: VendorAddress) =>
   [[v.street, v.houseNumber].filter(Boolean).join(' '), [v.postalCode, v.city].filter(Boolean).join(' '), v.country].filter(Boolean).join(', ');
 
-async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+export async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   await Promise.all(
@@ -117,7 +117,7 @@ export class VendorMapService {
     const tool = (await mcp.listTools(config.environment)).find((t) => t.name === ADDRESS_TOOL);
     if (!tool) throw new AppError('TOOL_UNAVAILABLE', 'The SAP tool service is not reachable.', 'TOOL', true);
     const correlationId = currentContext()?.correlationId ?? newCorrelationId();
-    const session = mcp.session({ user: auth.user, agent: 'vendor-map', environment: config.environment, correlationId, ...(auth.token && { userToken: auth.token }) });
+    const session = mcp.session({ user: auth.user, agent: 'vendor-map', environment: config.environment, correlationId, ...tokensOf(auth) });
     try {
       const out = await session.callTool(tool, {});
       const denied = out.errorCode === 'SAP_NOT_AUTHORIZED';

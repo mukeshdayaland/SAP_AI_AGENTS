@@ -21,9 +21,31 @@ applications:
       SAP_DESTINATION: S4HANA
       SAP_SYSTEM_ID: S4-((ENV))
       SAP_ALLOW_TECHNICAL_USER: 'false'
+      MCP_DOMAINS: sd,credit,ar,ap,gl,mm,pm,shared
       NODE_ENV: production
     services: [prowess-xsuaa, prowess-destination, prowess-connectivity, prowess-logging, prowess-secrets]
 
+  # SuccessFactors: the same service, serving only the sf domain.
+  - name: prowess-sf-mcp
+    path: ../../apps/sap-mcp/dist
+    memory: 256M
+    instances: ((instances))
+    buildpacks: [nodejs_buildpack]
+    command: node --enable-source-maps server.mjs
+    health-check-type: http
+    health-check-http-endpoint: /health
+    routes:
+      - route: prowess-sf-mcp-((env)).apps.internal
+    env:
+      PROWESS_ENV: ((ENV))
+      MCP_DOMAINS: sf
+      SF_MODE: odata
+      SF_DESTINATION: SF_ODATA
+      SF_SYSTEM_ID: SF-((ENV))
+      SF_USER_MAPPING: email
+      SAP_MODE: odata
+      NODE_ENV: production
+    services: [prowess-xsuaa, prowess-destination, prowess-logging, prowess-secrets]
   - name: prowess-ai-orchestrator
     path: ../../apps/orchestrator/dist
     memory: 512M
@@ -41,7 +63,7 @@ applications:
       LLM_ALLOW_MOCK: 'false'
       DEFAULT_LLM_PROVIDER: sap-ai-core
       UPLOADS_ENABLED: 'false'
-      SAP_MCP_URL: http://prowess-sap-mcp-((env)).apps.internal:8080/mcp
+      MCP_SERVERS: '[{"id":"sap","url":"http://prowess-sap-mcp-((env)).apps.internal:8080/mcp"},{"id":"sf","url":"http://prowess-sf-mcp-((env)).apps.internal:8080/mcp"}]'
       NODE_ENV: production
     services: [prowess-xsuaa, prowess-aicore, prowess-postgres, prowess-auditlog, prowess-logging, prowess-secrets]
 
@@ -61,3 +83,4 @@ applications:
 # After the first push, allow internal traffic (orchestrator/MCP have no public route):
 #   cf add-network-policy prowess-ai-web prowess-ai-orchestrator --protocol tcp --port 8080
 #   cf add-network-policy prowess-ai-orchestrator prowess-sap-mcp --protocol tcp --port 8080
+#   cf add-network-policy prowess-ai-orchestrator prowess-sf-mcp --protocol tcp --port 8080

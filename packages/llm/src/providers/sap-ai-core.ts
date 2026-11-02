@@ -129,8 +129,9 @@ export class SapAiCoreProvider implements LLMProvider {
       };
     }
 
+    // Orchestration rejects `content: null` on assistant tool-call messages ("None is not of type 'string'").
     const template: OpenAIMessage[] = toOpenAIMessages(req.messages).map((m) =>
-      typeof m.content === 'string' ? { ...m, content: escapeTemplateSyntax(m.content) } : m,
+      typeof m.content === 'string' ? { ...m, content: escapeTemplateSyntax(m.content) } : m.content === null ? { ...m, content: '' } : m,
     );
     return {
       url: `${this.baseUrl}/inference/deployments/${encodeURIComponent(this.cfg.orchestrationDeploymentId!)}/v2/completion`,

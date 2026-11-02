@@ -132,6 +132,127 @@
   }
 }
 
+/* ------------------------------------------------------------------
+   Brand: WTCO (NEXT_PUBLIC_BRAND=wtco). The deep blue of the corporate templates;
+   only the brand and surface tokens change, semantic colors stay as above.
+   ------------------------------------------------------------------ */
+:root[data-brand='wtco'] {
+  --background: #f4f7fb;
+  --surface-muted: #f4f7fb;
+  --surface-sunken: #e6ecf4;
+  --border: #d3dce8;
+  --brand-primary: #1c4f90;
+  --brand-primary-hover: #163f75;
+  --brand-primary-soft: #e8eff8;
+  --brand-secondary: #2b7fb8;
+  --brand-secondary-soft: #e0edf6;
+  --area-sap: #1c4f90;
+  --area-sap-fill: #e8eff8;
+  --area-nonsap-fill: #f4f7fb;
+  --info: #1c4f90;
+  --info-soft: #e8eff8;
+  --focus: #1c4f90;
+  --code-bg: #f4f7fb;
+}
+
+:root[data-brand='wtco'][data-theme='dark'] {
+  --background: #0c1422;
+  --surface: #141d2e;
+  --surface-elevated: #1a2538;
+  --surface-muted: #202c42;
+  --surface-sunken: #0e1727;
+  --border: #2b3a55;
+  --brand-primary: #7fb2e6;
+  --brand-primary-hover: #a6caef;
+  --brand-primary-soft: #16294a;
+  --brand-secondary: #5f9bd4;
+  --brand-secondary-soft: #15284a;
+  --area-sap: #7fb2e6;
+  --area-sap-fill: #14274a;
+  --on-brand: #0b1a33;
+  --info: #7fb2e6;
+  --info-soft: #16294a;
+  --focus: #7fb2e6;
+  --code-bg: #0e1727;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-brand='wtco'][data-theme='system'] {
+    --background: #0c1422;
+    --surface: #141d2e;
+    --surface-elevated: #1a2538;
+    --surface-muted: #202c42;
+    --surface-sunken: #0e1727;
+    --border: #2b3a55;
+    --brand-primary: #7fb2e6;
+    --brand-primary-hover: #a6caef;
+    --brand-primary-soft: #16294a;
+    --brand-secondary: #5f9bd4;
+    --brand-secondary-soft: #15284a;
+    --area-sap: #7fb2e6;
+    --area-sap-fill: #14274a;
+    --on-brand: #0b1a33;
+    --info: #7fb2e6;
+    --info-soft: #16294a;
+    --focus: #7fb2e6;
+    --code-bg: #0e1727;
+  }
+}
+
+/* WTCO backdrop (components/workspace/Backdrop.tsx): a clean wash that deepens
+   slightly toward the bottom. */
+.brand-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--background) 60%, color-mix(in srgb, var(--brand-primary) 7%, var(--background)) 100%);
+}
+/* The company symbol as a watermark: centered, large and faint enough that text and cards stay the subject. */
+.brand-watermark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(62%, 720px);
+  height: auto;
+  transform: translate(-50%, -50%);
+  opacity: 0.06;
+  pointer-events: none;
+  user-select: none;
+}
+/* The composer strip normally fades to the page color; here the backdrop shows through. */
+:root[data-brand='wtco'] .brand-clear {
+  background-image: none;
+}
+
+:root[data-brand='wtco'] .brand-nav,
+:root[data-brand='wtco'] .brand-bar {
+  --surface: rgb(255 255 255 / 0.1);
+  --surface-elevated: #245a9f;
+  --surface-muted: rgb(255 255 255 / 0.12);
+  --border: rgb(255 255 255 / 0.2);
+  --border-strong: rgb(255 255 255 / 0.4);
+  --text-primary: #ffffff;
+  --text-secondary: #eaf3fd;
+  --text-tertiary: #dcebfb;
+  --brand-primary: #ffffff;
+  --brand-primary-soft: rgb(255 255 255 / 0.16);
+  --brand-secondary-soft: #245a9f;
+  --on-brand: #1c4f90;
+  --info: #ffffff;
+  --info-soft: rgb(255 255 255 / 0.16);
+  --focus: #ffffff;
+  color-scheme: dark;
+}
+:root[data-brand='wtco'] .brand-nav {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 620 360' preserveAspectRatio='xMinYMax slice'%3E%3Cmask id='m' maskUnits='userSpaceOnUse' x='-60' y='0' width='700' height='360'%3E%3Cg fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M-40 96 H96 Q150 96 170 150 L232 312 L330 104 L428 312 L494 140 Q514 76 590 76 H1500' stroke='%23fff' stroke-width='62'/%3E%3Cpath d='M-40 96 H96 Q150 96 170 150 L232 312 L330 104 L428 312 L494 140 Q514 76 590 76 H1500' stroke='%23000' stroke-width='54'/%3E%3Cpath d='M-40 96 H96 Q150 96 170 150 L232 312 L330 104 L428 312 L494 140 Q514 76 590 76 H1500' stroke='%23fff' stroke-width='4'/%3E%3C/g%3E%3C/mask%3E%3Crect x='-60' width='700' height='360' fill='%23fff' fill-opacity='.2' mask='url(%23m)'/%3E%3C/svg%3E") left bottom / 100% auto no-repeat,
+    linear-gradient(180deg, #1f5599 0%, #1c4f90 45%, #17427b 100%);
+}
+:root[data-brand='wtco'] .brand-bar {
+  background: linear-gradient(90deg, #1f5599 0%, #1c4f90 100%);
+}
+
 @theme inline {
   --color-bg: var(--background);
   --color-surface: var(--surface);
@@ -180,6 +301,17 @@ html {
   font-size: 15px;
 }
 
+/* Arabic interface: IBM Plex Sans Arabic (self-hosted) for Arabic script; Latin text keeps the usual faces. */
+:root[lang='ar'] body {
+  font-family: 'IBM Plex Sans Arabic', '72', '72full', Arial, Helvetica, ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Codes, document numbers and amounts keep their own left-to-right order inside Arabic text. */
+.font-mono,
+.tabular-nums {
+  unicode-bidi: isolate;
+}
+
 body {
   background: var(--background);
   color: var(--text-primary);
@@ -205,7 +337,7 @@ body {
 
 .skip-link {
   position: absolute;
-  left: 12px;
+  inset-inline-start: 12px;
   top: -48px;
   z-index: 100;
   padding: 8px 12px;
@@ -244,11 +376,11 @@ body {
 }
 .prose-prowess ul {
   list-style: disc;
-  padding-left: 1.35em;
+  padding-inline-start: 1.35em;
 }
 .prose-prowess ol {
   list-style: decimal;
-  padding-left: 1.35em;
+  padding-inline-start: 1.35em;
 }
 .prose-prowess li + li {
   margin-top: 0.25em;
@@ -283,8 +415,8 @@ body {
   padding: 0;
 }
 .prose-prowess blockquote {
-  border-left: 3px solid var(--border-strong);
-  padding-left: 0.9em;
+  border-inline-start: 3px solid var(--border-strong);
+  padding-inline-start: 0.9em;
   color: var(--text-secondary);
 }
 .prose-prowess table {
@@ -298,7 +430,7 @@ body {
 .prose-prowess td {
   border-bottom: 1px solid var(--border);
   padding: 0.45em 0.75em;
-  text-align: left;
+  text-align: start;
 }
 .prose-prowess th {
   font-weight: 600;
@@ -333,7 +465,7 @@ body {
   display: inline-block;
   width: 0.5em;
   height: 1em;
-  margin-left: 2px;
+  margin-inline-start: 2px;
   vertical-align: -0.15em;
   background: var(--brand-primary);
   border-radius: 1px;
